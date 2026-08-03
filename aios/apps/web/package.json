@@ -1,0 +1,42 @@
+{
+  "name": "@aios/web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AIOS Next.js 14 frontend",
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aios/db": "workspace:*",
+    "@hookform/resolvers": "^3.6.0",
+    "@radix-ui/react-slot": "^1.3.3",
+    "@tanstack/react-query": "^5.45.1",
+    "axios": "^1.7.2",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.400.0",
+    "next": "14.2.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-hook-form": "^7.52.0",
+    "react-hot-toast": "^2.4.1",
+    "recharts": "^2.12.7",
+    "tailwind-merge": "^2.3.0",
+    "zod": "^3.23.8",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "@aios/config": "workspace:*",
+    "@types/node": "^20.14.2",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.39",
+    "tailwindcss": "^3.4.4",
+    "typescript": "^5.4.5"
+  }
+}

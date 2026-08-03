@@ -1,0 +1,150 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300;0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;0,14..32,800;1,14..32,400&display=swap');
+
+@layer base {
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-bg text-navy-900;
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-teal-600 outline-offset-2;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 8px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+  }
+}
+
+@layer components {
+  /* ── Dashboard Layout ──────────────────────────────────────────────────── */
+  .dashboard-layout {
+    @apply flex h-screen overflow-hidden bg-bg;
+  }
+
+  .dashboard-sidebar {
+    @apply flex-shrink-0 w-sidebar bg-sidebar h-full overflow-y-auto flex flex-col;
+    box-shadow: 2px 0 8px rgba(0,0,0,0.15);
+  }
+
+  .dashboard-main {
+    @apply flex-1 overflow-y-auto min-w-0;
+  }
+
+  /* ── Sidebar Nav Item ──────────────────────────────────────────────────── */
+  .sidebar-item {
+    @apply flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] font-medium text-slate-400 
+           hover:bg-sidebar-hover hover:text-white transition-all duration-150 cursor-pointer mx-2;
+  }
+
+  .sidebar-item-active {
+    @apply sidebar-item bg-sidebar-active text-white;
+  }
+
+  /* ── Buttons ────────────────────────────────────────────────────────────── */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 font-medium transition-all duration-150
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 select-none
+           text-sm rounded-btn;
+    padding: 8px 16px;
+  }
+
+  .btn-primary {
+    @apply btn bg-indigo-600 text-white hover:bg-indigo-700 focus-visible:ring-indigo-600 active:scale-[0.98];
+  }
+
+  .btn-teal {
+    @apply btn bg-teal-600 text-white hover:bg-teal-700 focus-visible:ring-teal-600 active:scale-[0.98];
+  }
+
+  .btn-emerald {
+    @apply btn bg-emerald-600 text-white hover:bg-emerald-700 focus-visible:ring-emerald-600 active:scale-[0.98];
+  }
+
+  .btn-secondary {
+    @apply btn bg-white text-navy-900 border border-border hover:bg-slate-50 focus-visible:ring-navy-900 active:scale-[0.98];
+  }
+
+  .btn-destructive {
+    @apply btn bg-error text-white hover:bg-error-dark focus-visible:ring-error active:scale-[0.98];
+  }
+
+  .btn-ghost {
+    @apply btn text-slate-600 hover:bg-slate-100 hover:text-slate-800;
+  }
+
+  /* ── Cards ──────────────────────────────────────────────────────────────── */
+  .card {
+    @apply bg-white rounded-card shadow-card border border-slate-100 p-5;
+  }
+
+  .card-sm {
+    @apply bg-white rounded-card shadow-card border border-slate-100 p-4;
+  }
+
+  /* ── Inputs ─────────────────────────────────────────────────────────────── */
+  .input {
+    @apply w-full bg-white text-navy-900 border border-border rounded-btn px-3 py-2 text-sm
+           placeholder:text-navy-400 transition-all duration-150
+           focus:outline-none focus:border-teal-600 focus:shadow-input
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  /* ── Status Chips ────────────────────────────────────────────────────────── */
+  .chip {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-chip text-[11px] font-semibold;
+  }
+
+  .chip-success { @apply chip bg-emerald-50 text-emerald-700; }
+  .chip-error   { @apply chip bg-rose-50 text-rose-700; }
+  .chip-warning { @apply chip bg-amber-50 text-amber-700; }
+  .chip-navy    { @apply chip bg-indigo-50 text-indigo-700; }
+  .chip-high    { @apply chip bg-rose-50 text-rose-600; }
+  .chip-medium  { @apply chip bg-amber-50 text-amber-600; }
+  .chip-low     { @apply chip bg-emerald-50 text-emerald-600; }
+
+  /* Role badges */
+  .badge-student     { @apply chip bg-indigo-100 text-indigo-700; }
+  .badge-teacher     { @apply chip bg-emerald-100 text-emerald-700; }
+  .badge-admin       { @apply chip bg-sky-100 text-sky-700; }
+  .badge-super-admin { @apply chip bg-violet-100 text-violet-700; }
+
+  /* ── Section headers ─────────────────────────────────────────────────────── */
+  .section-title {
+    @apply text-[13.5px] font-semibold text-slate-700 mb-3;
+  }
+
+  .view-all-link {
+    @apply text-[12px] font-medium text-indigo-600 hover:text-indigo-800 hover:underline cursor-pointer;
+  }
+}
+
+@layer utilities {
+  .animate-fadein {
+    animation: 0.35s ease-out fadein;
+  }
+
+  @keyframes fadein {
+    0%   { opacity: 0; transform: translateY(6px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+}

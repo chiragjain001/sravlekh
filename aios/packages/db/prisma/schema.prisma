@@ -1,0 +1,889 @@
+// This is the AIOS Prisma schema — the single source of truth for all database tables.
+// LOCKED: Do not add, remove, or rename tables without updating the Technical Architecture document.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+generator client_py {
+  provider             = "prisma-client-py"
+  interface            = "asyncio"
+  recursive_type_depth = 5
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// ENUMS
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  STUDENT
+  TEACHER
+  ADMIN
+  FOUNDER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  PENDING
+  SUSPENDED
+}
+
+enum InstitutePlan {
+  TRIAL
+  BASIC
+  PRO
+  ENTERPRISE
+}
+
+enum InstituteStatus {
+  ACTIVE
+  SUSPENDED
+  ONBOARDING
+}
+
+enum ExamType {
+  UNIT_TEST
+  CHAPTER_TEST
+  WEEKLY_TEST
+  MONTHLY_TEST
+  MOCK_TEST
+  REVISION_TEST
+  PRE_BOARD
+  SUBJECT_TEST
+  PRACTICE_TEST
+}
+
+enum ExamStatus {
+  DRAFT
+  REVIEW
+  APPROVED
+  PUBLISHED
+  ONGOING
+  EVALUATING
+  LOCKED
+}
+
+enum QuestionType {
+  MCQ
+  MULTI_CORRECT
+  SHORT_ANSWER
+  LONG_ANSWER
+  NUMERICAL
+  MATCH_THE_FOLLOWING
+  PASSAGE_BASED
+}
+
+enum DifficultyLevel {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum PaperStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  PUBLISHED
+  ARCHIVED
+}
+
+enum TimetableSlotType {
+  CLASS
+  EXAM
+  REVISION
+  REMEDIAL
+  EXTRA_CLASS
+  BREAK
+  HOLIDAY
+}
+
+enum CaptureMode {
+  MANUAL_GRID
+  CSV_IMPORT
+  PHOTO_CAPTURE
+  OMR_IMPORT
+}
+
+enum MistakeTagType {
+  CONCEPT_ERROR
+  FORMULA_ERROR
+  CALCULATION_ERROR
+  CARELESS
+  NOT_ATTEMPTED
+  PRESENTATION_ERROR
+}
+
+enum DoubtStatus {
+  OPEN
+  ASSIGNED
+  ANSWERED
+  CLOSED
+  ESCALATED
+}
+
+enum AssignmentStatus {
+  PENDING
+  SUBMITTED
+  LATE_SUBMITTED
+  GRADED
+  MISSED
+}
+
+enum NoticeChannel {
+  IN_APP
+  EMAIL
+  SMS
+  WHATSAPP
+}
+
+enum DeliveryStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+  READ
+}
+
+enum ReportType {
+  REPORT_CARD
+  PROGRESS_CARD
+  CLASS_REPORT
+  CHAPTER_REPORT
+  TEACHER_REPORT
+  BATCH_REPORT
+  IMPROVEMENT_SHEET
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  APPROVE
+  PUBLISH
+  LOCK
+  UNLOCK
+  TRANSFER
+  ROLE_CHANGE
+  LOGIN
+  LOGIN_FAILED
+}
+
+// ---------------------------------------------------------------------------
+// FOUNDATION — AUTH, TENANCY, ROLES
+// ---------------------------------------------------------------------------
+
+model Institute {
+  id              String          @id @default(cuid())
+  name            String
+  domainAllowlist String[]        // list of allowed email domains/emails
+  plan            InstitutePlan   @default(TRIAL)
+  status          InstituteStatus @default(ONBOARDING)
+  logoUrl         String?
+  address         String?
+  phone           String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  branches        Branch[]
+  users           User[]
+  batches         Batch[]
+  subjects        Subject[]
+  timetableSlots  TimetableSlot[]
+  exams           Exam[]
+  questions       Question[]
+  papers          Paper[]
+  blueprints      Blueprint[]
+  notices         Notice[]
+  reports         Report[]
+  auditLogs       AuditLog[]
+  interventions   Intervention[]
+  allowListEntries AllowListEntry[]
+
+  @@map("institutes")
+}
+
+model Branch {
+  id          String    @id @default(cuid())
+  instituteId String
+  name        String
+  address     String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  institute   Institute @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  batches     Batch[]
+
+  @@map("branches")
+}
+
+/// Pre-approved email-to-role mapping for each institute.
+/// This is what controls who can log in and as which role.
+model AllowListEntry {
+  id          String    @id @default(cuid())
+  instituteId String
+  email       String
+  role        UserRole
+  addedByUserId String?
+  createdAt   DateTime  @default(now())
+
+  institute   Institute @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+
+  @@unique([instituteId, email])
+  @@map("allow_list_entries")
+}
+
+model User {
+  id          String     @id @default(cuid())
+  instituteId String
+  googleSub   String     @unique // Google's stable subject identifier
+  email       String
+  name        String
+  avatarUrl   String?
+  role        UserRole
+  status      UserStatus @default(ACTIVE)
+  lastLoginAt DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  institute          Institute        @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  teacherProfile     TeacherProfile?
+  studentProfile     StudentProfile?
+  auditLogsAsActor   AuditLog[]       @relation("AuditActor")
+  assignedDoubts     DoubtTicket[]    @relation("AssignedTeacher")
+  createdNotices     Notice[]         @relation("NoticeCreator")
+
+  @@unique([instituteId, email])
+  @@index([email])
+  @@index([instituteId, role])
+  @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// STUDENT MANAGEMENT
+// ---------------------------------------------------------------------------
+
+model StudentProfile {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  rollNumber      String?
+  dateOfBirth     DateTime?
+  guardianName    String?
+  guardianPhone   String?
+  guardianEmail   String?
+  address         String?
+  photoUrl        String?
+  documents       String[] // S3/Supabase URLs
+  tags            String[] // e.g. ["high-risk", "needs-revision"]
+  batchId         String?
+  admissionDate   DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  batch           Batch?           @relation(fields: [batchId], references: [id])
+  scoreRecords    ScoreRecord[]
+  masteryScores   MasteryScore[]
+  assignments     Assignment[]
+  doubtTickets    DoubtTicket[]
+  answerSheets    AnswerSheet[]
+  interventions   Intervention[]   @relation("StudentInterventions")
+  profileHistory  StudentHistory[]
+
+  @@index([batchId])
+  @@map("student_profiles")
+}
+
+/// Immutable log of any change to a student profile — promotions, batch transfers, tag changes.
+model StudentHistory {
+  id               String   @id @default(cuid())
+  studentProfileId String
+  eventType        String   // e.g. "BATCH_TRANSFER", "TAG_ADDED", "PROMOTION"
+  description      String
+  oldValue         String?
+  newValue         String?
+  changedAt        DateTime @default(now())
+  changedByUserId  String?
+
+  studentProfile StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+
+  @@map("student_history")
+}
+
+// ---------------------------------------------------------------------------
+// TEACHER MANAGEMENT
+// ---------------------------------------------------------------------------
+
+model TeacherProfile {
+  id                 String   @id @default(cuid())
+  userId             String   @unique
+  qualification      String?
+  subjectIds         String[] // references Subject.id
+  availability       Json?    // weekly schedule blocks
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  user               User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  batchAssignments   BatchTeacher[]
+
+  @@map("teacher_profiles")
+}
+
+// ---------------------------------------------------------------------------
+// BATCHES / CLASSES / SECTIONS
+// ---------------------------------------------------------------------------
+
+model Batch {
+  id          String   @id @default(cuid())
+  instituteId String
+  branchId    String?
+  name        String   // e.g. "JEE Advanced 2026 - Batch A"
+  classYear   String?  // e.g. "Class 11"
+  section     String?
+  academicYear String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  institute   Institute      @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  branch      Branch?        @relation(fields: [branchId], references: [id])
+  teachers    BatchTeacher[]
+  students    StudentProfile[]
+  exams       Exam[]
+  timetableSlots TimetableSlot[]
+  assignments Assignment[]
+
+  @@index([instituteId])
+  @@map("batches")
+}
+
+/// Many-to-many join table for batch ↔ teacher assignments.
+model BatchTeacher {
+  id               String   @id @default(cuid())
+  batchId          String
+  teacherProfileId String
+  subjectId        String?
+  assignedAt       DateTime @default(now())
+  removedAt        DateTime?
+
+  batch          Batch          @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  teacherProfile TeacherProfile @relation(fields: [teacherProfileId], references: [id], onDelete: Cascade)
+
+  @@unique([batchId, teacherProfileId, subjectId])
+  @@map("batch_teachers")
+}
+
+// ---------------------------------------------------------------------------
+// CURRICULUM — SUBJECTS / CHAPTERS / TOPICS
+// ---------------------------------------------------------------------------
+
+model Subject {
+  id          String   @id @default(cuid())
+  instituteId String
+  name        String
+  code        String?
+  createdAt   DateTime @default(now())
+
+  institute   Institute   @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  chapters    Chapter[]
+  questions   Question[]
+  blueprints  Blueprint[]
+  doubtTickets DoubtTicket[]
+  masteryScores MasteryScore[]
+
+  @@unique([instituteId, name])
+  @@map("subjects")
+}
+
+model Chapter {
+  id        String   @id @default(cuid())
+  subjectId String
+  name      String
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  subject   Subject   @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  topics    Topic[]
+  questions Question[]
+
+  @@map("chapters")
+}
+
+model Topic {
+  id        String   @id @default(cuid())
+  chapterId String
+  name      String
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  chapter      Chapter        @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  questions    Question[]
+  masteryScores MasteryScore[]
+  assignments  Assignment[]
+  interventions Intervention[]
+  doubtTickets DoubtTicket[]
+
+  @@map("topics")
+}
+
+// ---------------------------------------------------------------------------
+// QUESTION BANK
+// ---------------------------------------------------------------------------
+
+model Question {
+  id              String          @id @default(cuid())
+  instituteId     String
+  subjectId       String
+  chapterId       String
+  topicId         String
+  type            QuestionType
+  difficulty      DifficultyLevel
+  marks           Float
+  negativeMarks   Float           @default(0)
+  content         String          // question text (supports markdown/LaTeX)
+  options         Json?           // for MCQ — array of {label, text, isCorrect}
+  solution        String?         // explanation
+  sourceRef       String?         // textbook/source reference
+  qualityScore    Float?          // computed by AI review
+  isApproved      Boolean         @default(false)
+  approvedByUserId String?
+  approvedAt      DateTime?
+  createdByUserId String
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  institute    Institute         @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  subject      Subject           @relation(fields: [subjectId], references: [id])
+  chapter      Chapter           @relation(fields: [chapterId], references: [id])
+  topic        Topic             @relation(fields: [topicId], references: [id])
+  versions     QuestionVersion[]
+  paperItems   PaperItem[]
+  responses    Response[]
+
+  @@index([instituteId, subjectId, topicId, difficulty])
+  @@index([isApproved])
+  @@map("questions")
+}
+
+/// Immutable history of every edit to a question — locked once approved.
+model QuestionVersion {
+  id         String   @id @default(cuid())
+  questionId String
+  versionNo  Int
+  content    String
+  options    Json?
+  solution   String?
+  createdBy  String
+  createdAt  DateTime @default(now())
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([questionId, versionNo])
+  @@map("question_versions")
+}
+
+// ---------------------------------------------------------------------------
+// BLUEPRINTS & PAPERS
+// ---------------------------------------------------------------------------
+
+model Blueprint {
+  id            String   @id @default(cuid())
+  instituteId   String
+  subjectId     String
+  name          String
+  totalMarks    Float
+  duration      Int      // minutes
+  instructions  String?
+  distribution  Json     // [{topicId, marks, difficulty, count}]
+  createdByUserId String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  institute Institute  @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  subject   Subject    @relation(fields: [subjectId], references: [id])
+  exams     Exam[]
+  papers    Paper[]
+
+  @@map("blueprints")
+}
+
+model Paper {
+  id              String      @id @default(cuid())
+  instituteId     String
+  blueprintId     String
+  examId          String?
+  title           String
+  status          PaperStatus @default(DRAFT)
+  isPersonalized  Boolean     @default(false)
+  targetStudentId String?     // null = general; set = personalized for specific student
+  targetBatchId   String?
+  submittedAt     DateTime?
+  approvedAt      DateTime?
+  approvedByUserId String?
+  createdByUserId String
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  institute  Institute      @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  blueprint  Blueprint      @relation(fields: [blueprintId], references: [id])
+  exam       Exam?          @relation(fields: [examId], references: [id])
+  items      PaperItem[]
+  versions   PaperVersion[]
+
+  @@index([instituteId, status])
+  @@map("papers")
+}
+
+model PaperVersion {
+  id          String   @id @default(cuid())
+  paperId     String
+  versionNo   Int
+  setLabel    String?  // "Set A", "Set B" for anti-cheating sets
+  createdAt   DateTime @default(now())
+
+  paper Paper @relation(fields: [paperId], references: [id], onDelete: Cascade)
+
+  @@unique([paperId, versionNo])
+  @@map("paper_versions")
+}
+
+model PaperItem {
+  id         String @id @default(cuid())
+  paperId    String
+  questionId String
+  order      Int
+  marks      Float  // override if different from question default
+
+  paper    Paper    @relation(fields: [paperId], references: [id], onDelete: Cascade)
+  question Question @relation(fields: [questionId], references: [id])
+
+  @@unique([paperId, questionId])
+  @@map("paper_items")
+}
+
+// ---------------------------------------------------------------------------
+// EXAMS
+// ---------------------------------------------------------------------------
+
+model Exam {
+  id              String     @id @default(cuid())
+  instituteId     String
+  batchId         String
+  blueprintId     String
+  title           String
+  type            ExamType
+  status          ExamStatus @default(DRAFT)
+  scheduledDate   DateTime?
+  durationMinutes Int?
+  venue           String?
+  createdByUserId String
+  approvedByUserId String?
+  approvedAt      DateTime?
+  publishedAt     DateTime?
+  lockedAt        DateTime?
+  lockedByUserId  String?
+  unlockReason    String?    // required when Admin unlocks a locked exam
+  captureMode     CaptureMode @default(MANUAL_GRID)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  institute    Institute     @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  batch        Batch         @relation(fields: [batchId], references: [id])
+  blueprint    Blueprint     @relation(fields: [blueprintId], references: [id])
+  papers       Paper[]
+  answerSheets AnswerSheet[]
+  scoreRecords ScoreRecord[]
+
+  @@index([instituteId, status])
+  @@index([batchId])
+  @@map("exams")
+}
+
+// ---------------------------------------------------------------------------
+// MARKS CAPTURE
+// ---------------------------------------------------------------------------
+
+model AnswerSheet {
+  id               String   @id @default(cuid())
+  examId           String
+  studentProfileId String
+  captureMode      CaptureMode
+  photoUrl         String?  // for PHOTO_CAPTURE mode
+  omrFilePath      String?  // for OMR_IMPORT mode
+  isVerified       Boolean  @default(false)
+  verifiedByUserId String?
+  verifiedAt       DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  exam           Exam           @relation(fields: [examId], references: [id], onDelete: Cascade)
+  studentProfile StudentProfile @relation(fields: [studentProfileId], references: [id])
+  responses      Response[]
+
+  @@unique([examId, studentProfileId])
+  @@map("answer_sheets")
+}
+
+model ScoreRecord {
+  id               String   @id @default(cuid())
+  examId           String
+  studentProfileId String
+  totalMarks       Float    // max possible
+  obtainedMarks    Float
+  percentage       Float
+  rank             Int?
+  evaluatedByUserId String?
+  evaluatedAt      DateTime?
+  isFinalized      Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  exam           Exam           @relation(fields: [examId], references: [id], onDelete: Cascade)
+  studentProfile StudentProfile @relation(fields: [studentProfileId], references: [id])
+
+  @@unique([examId, studentProfileId])
+  @@index([studentProfileId])
+  @@map("score_records")
+}
+
+/// Question-level response with mistake tagging.
+model Response {
+  id               String          @id @default(cuid())
+  answerSheetId    String
+  questionId       String
+  marksAwarded     Float
+  marksAvailable   Float
+  isCorrect        Boolean?
+  studentAnswer    String?         // text or option label
+  mistakeTags      MistakeTagType[]
+  teacherComment   String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  answerSheet AnswerSheet @relation(fields: [answerSheetId], references: [id], onDelete: Cascade)
+  question    Question    @relation(fields: [questionId], references: [id])
+
+  @@unique([answerSheetId, questionId])
+  @@map("responses")
+}
+
+// ---------------------------------------------------------------------------
+// ANALYSIS — MASTERY SCORES & INTERVENTIONS
+// ---------------------------------------------------------------------------
+
+model MasteryScore {
+  id               String   @id @default(cuid())
+  studentProfileId String
+  subjectId        String
+  topicId          String
+  masteryValue     Float    // 0.0 – 1.0
+  trend            Float    @default(0) // positive = improving, negative = declining
+  sampleCount      Int      @default(0) // number of responses used to compute this
+  lastUpdatedAt    DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  studentProfile StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+  subject        Subject        @relation(fields: [subjectId], references: [id])
+  topic          Topic          @relation(fields: [topicId], references: [id])
+
+  @@unique([studentProfileId, topicId])
+  @@index([studentProfileId, subjectId])
+  @@map("mastery_scores")
+}
+
+model Intervention {
+  id               String   @id @default(cuid())
+  instituteId      String
+  studentProfileId String
+  topicId          String
+  type             String   // "EXTRA_CLASS", "ASSIGNMENT", "DOUBT_SESSION", "REMEDIAL_GROUP"
+  description      String?
+  beforeMastery    Float?
+  afterMastery     Float?
+  scheduledAt      DateTime?
+  completedAt      DateTime?
+  createdByUserId  String
+  createdAt        DateTime @default(now())
+
+  institute      Institute      @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  studentProfile StudentProfile @relation("StudentInterventions", fields: [studentProfileId], references: [id])
+  topic          Topic          @relation(fields: [topicId], references: [id])
+
+  @@map("interventions")
+}
+
+// ---------------------------------------------------------------------------
+// TIMETABLE
+// ---------------------------------------------------------------------------
+
+model TimetableSlot {
+  id          String            @id @default(cuid())
+  instituteId String
+  batchId     String?
+  type        TimetableSlotType
+  title       String
+  teacherUserId String?
+  subjectId   String?
+  roomRef     String?
+  startTime   DateTime
+  endTime     DateTime
+  isRecurring Boolean           @default(false)
+  recurRule   String?           // iCal RRULE string for recurring slots
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  institute Institute @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  batch     Batch?    @relation(fields: [batchId], references: [id])
+
+  @@index([instituteId, startTime])
+  @@index([batchId, startTime])
+  @@map("timetable_slots")
+}
+
+// ---------------------------------------------------------------------------
+// DOUBTS
+// ---------------------------------------------------------------------------
+
+model DoubtTicket {
+  id               String      @id @default(cuid())
+  studentProfileId String
+  subjectId        String
+  topicId          String?
+  urgency          Int         @default(1) // 1=low, 2=medium, 3=high
+  status           DoubtStatus @default(OPEN)
+  content          String      // text description
+  attachmentUrls   String[]
+  assignedTeacherId String?
+  resolvedAt       DateTime?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  studentProfile  StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+  subject         Subject        @relation(fields: [subjectId], references: [id])
+  topic           Topic?         @relation(fields: [topicId], references: [id])
+  assignedTeacher User?          @relation("AssignedTeacher", fields: [assignedTeacherId], references: [id])
+
+  @@index([studentProfileId, status])
+  @@map("doubt_tickets")
+}
+
+// ---------------------------------------------------------------------------
+// ASSIGNMENTS
+// ---------------------------------------------------------------------------
+
+model Assignment {
+  id               String           @id @default(cuid())
+  batchId          String?
+  studentProfileId String?          // null = batch-wide; set = individual
+  topicId          String
+  title            String
+  description      String?
+  dueDate          DateTime
+  status           AssignmentStatus @default(PENDING)
+  submissionUrl    String?
+  submittedAt      DateTime?
+  gradedMarks      Float?
+  gradedByUserId   String?
+  gradedAt         DateTime?
+  isAutoGenerated  Boolean          @default(false) // true = generated from weak topics
+  createdByUserId  String
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  batch          Batch?          @relation(fields: [batchId], references: [id])
+  studentProfile StudentProfile? @relation(fields: [studentProfileId], references: [id])
+  topic          Topic           @relation(fields: [topicId], references: [id])
+
+  @@index([batchId, dueDate])
+  @@map("assignments")
+}
+
+// ---------------------------------------------------------------------------
+// COMMUNICATION CENTER
+// ---------------------------------------------------------------------------
+
+model Notice {
+  id              String        @id @default(cuid())
+  instituteId     String
+  createdByUserId String
+  title           String
+  body            String
+  targetAudience  Json          // {roles: [], batchIds: [], studentIds: []}
+  channels        NoticeChannel[]
+  scheduledAt     DateTime?
+  sentAt          DateTime?
+  createdAt       DateTime      @default(now())
+
+  institute    Institute        @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  createdBy    User             @relation("NoticeCreator", fields: [createdByUserId], references: [id])
+  deliveries   NoticeDelivery[]
+
+  @@map("notices")
+}
+
+model NoticeDelivery {
+  id        String         @id @default(cuid())
+  noticeId  String
+  userId    String
+  channel   NoticeChannel
+  status    DeliveryStatus @default(QUEUED)
+  sentAt    DateTime?
+  readAt    DateTime?
+
+  notice Notice @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+
+  @@index([noticeId, status])
+  @@map("notice_deliveries")
+}
+
+// ---------------------------------------------------------------------------
+// REPORTS
+// ---------------------------------------------------------------------------
+
+model Report {
+  id            String     @id @default(cuid())
+  instituteId   String
+  type          ReportType
+  generatedFor  String     // userId, batchId, or teacherUserId
+  fileUrl       String?    // S3/Supabase URL to PDF or Excel
+  format        String     @default("PDF") // "PDF" | "EXCEL"
+  generatedByUserId String
+  createdAt     DateTime   @default(now())
+
+  institute Institute @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+
+  @@index([instituteId, type])
+  @@map("reports")
+}
+
+// ---------------------------------------------------------------------------
+// AUDIT LOG — cross-cuts every sensitive action
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id          String      @id @default(cuid())
+  instituteId String
+  actorId     String      // User.id
+  action      AuditAction
+  entity      String      // table name, e.g. "exams", "papers"
+  entityId    String
+  oldValue    Json?
+  newValue    Json?
+  reason      String?     // required for unlock / sensitive actions
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime    @default(now())
+
+  institute Institute @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  actor     User      @relation("AuditActor", fields: [actorId], references: [id])
+
+  @@index([instituteId, createdAt])
+  @@index([actorId])
+  @@index([entity, entityId])
+  @@map("audit_logs")
+}

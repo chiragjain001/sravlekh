@@ -1,0 +1,13 @@
+# AIOS Monorepo
+node_modules/
+.env
+.env.local
+.env.*.local
+.next/
+dist/
+build/
+*.tsbuildinfo
+.turbo/
+.pnpm-store/
+coverage/
+*.log

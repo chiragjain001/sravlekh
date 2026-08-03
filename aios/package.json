@@ -1,0 +1,22 @@
+{
+  "name": "aios",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Academic Intelligence Operating System — monorepo root",
+  "scripts": {
+    "dev": "pnpm --parallel --filter \"./apps/*\" dev",
+    "build": "pnpm --filter \"./packages/*\" build && pnpm --filter \"./apps/*\" build",
+    "lint": "pnpm --recursive lint",
+    "typecheck": "pnpm --recursive typecheck",
+    "db:generate": "pnpm --filter @aios/db generate",
+    "db:migrate": "pnpm --filter @aios/db migrate:dev",
+    "db:studio": "pnpm --filter @aios/db studio"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  }
+}
