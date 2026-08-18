@@ -1,356 +1,710 @@
 'use client';
 
-import { useState } from 'react';
+import React, { useState } from 'react';
 import {
-  ChevronRight, ChevronLeft, Check, Sparkles,
-  Plus, Minus, Eye, RotateCcw,
+  Sparkles,
+  BookOpen,
+  FolderKanban,
+  FileCheck,
+  HelpCircle,
+  X,
+  ChevronRight,
+  Moon,
+  Bell,
+  CheckCircle2,
+  ChevronDown,
+  Trash2,
+  Clock,
+  Search,
+  Plus,
+  ArrowRight,
+  Check
 } from 'lucide-react';
-import { questions, teacherProfile, classes, subjects } from '@/lib/mock-data/teacher';
+import { useDashboardStore } from '@/store/dashboard-store';
+import { batches, teacherProfile } from '@/lib/mock-data/teacher';
 
-// ─── Step config ─────────────────────────────────────────────────────────────
-const STEPS = ['Context', 'Blueprint', 'Questions', 'Preview & Publish'] as const;
-type Step = 0 | 1 | 2 | 3;
+// Subcomponents
+import { AssessmentSummaryPanel, AssessmentState } from '../assessment-builder/AssessmentSummaryPanel';
+import { AiAssistantModal } from '../assessment-builder/AiAssistantModal';
+import { Step1Details } from '../assessment-builder/steps/Step1Details';
+import { Step2Sources } from '../assessment-builder/steps/Step2Sources';
+import { Step3Syllabus } from '../assessment-builder/steps/Step3Syllabus';
+import { Step4Planning } from '../assessment-builder/steps/Step4Planning';
+import { Step5Rules } from '../assessment-builder/steps/Step5Rules';
+import { Step6Strategy } from '../assessment-builder/steps/Step6Strategy';
+import { Step7Preview } from '../assessment-builder/steps/Step7Preview';
+import { Step8Generate } from '../assessment-builder/steps/Step8Generate';
 
-const EXAM_TYPES   = ['JEE Main', 'JEE Advanced', 'NEET', 'Board', 'Unit Test', 'Chapter Test'];
-const DIFFICULTIES = ['Easy', 'Medium', 'Hard'];
-const BATCHES_MAP: Record<string, string[]> = {
-  '11': ['11A', '11B', '11C'],
-  '12': ['12A', '12B', '12C'],
-};
-const CHAPTERS_MAP: Record<string, string[]> = {
-  physics: ['Rotational Motion', 'Work, Power, Energy', 'Thermodynamics', 'Modern Physics', 'Electrostatics'],
-};
+const STEP_NAMES = [
+  { num: 1, label: 'Details' },
+  { num: 2, label: 'Sources' },
+  { num: 3, label: 'Syllabus' },
+  { num: 4, label: 'Planning' },
+  { num: 5, label: 'Rules' },
+  { num: 6, label: 'Strategy' },
+  { num: 7, label: 'Preview' },
+  { num: 8, label: 'Generate' },
+];
 
 export function TeacherPaperBuilder() {
-  const [step,          setStep]          = useState<Step>(0);
-  const [classId,       setClassId]       = useState('');
-  const [batchIds,      setBatchIds]      = useState<string[]>([]);
-  const [examType,      setExamType]      = useState('');
-  const [totalMarks,    setTotalMarks]    = useState('50');
-  const [duration,      setDuration]      = useState('60');
-  const [blueprint,     setBlueprint]     = useState<Record<string, Record<string, number>>>({});
-  const [selectedQIds,  setSelectedQIds]  = useState<string[]>([]);
-  const [published,     setPublished]     = useState(false);
+  const { teacherCtx, setTeacherNav } = useDashboardStore();
+  const { classId, subjectId, batchId } = teacherCtx;
 
-  const myClasses   = classes.filter(c => teacherProfile.assignments.some(a => a.classId === c.id));
-  const mySubject   = subjects[0] ?? { id: 'physics', label: 'Physics' };
-  const chapters    = CHAPTERS_MAP[mySubject.id] ?? [];
-  const batchList   = BATCHES_MAP[classId] ?? [];
+  // Active step (1 to 8)
+  const [currentStep, setCurrentStep] = useState<number>(1);
+  const [isAiModalOpen, setIsAiModalOpen] = useState(false);
 
-  const toggleBatch = (b: string) =>
-    setBatchIds(prev => prev.includes(b) ? prev.filter(x => x !== b) : [...prev, b]);
+  // Pre-fill initial context details based on active class / batch context
+  const initialContext = React.useMemo(() => {
+    const activeSubLabel = subjectId === 'maths' ? 'Mathematics' : subjectId === 'chemistry' ? 'Chemistry' : subjectId === 'biology' ? 'Biology' : 'Physics';
+    const activeExamLabel = classId === '12' ? 'NEET 2026' : 'NEET 2027';
 
-  const setBlueprintVal = (chapter: string, diff: string, val: number) =>
-    setBlueprint(prev => ({ ...prev, [chapter]: { ...(prev[chapter] ?? {}), [diff]: Math.max(0, val) } }));
+    let defaultBatches: string[] = ['Batch 11A', 'Batch 11B', 'Batch 11C'];
+    let defaultTitle = 'Physics Weekly Test 08';
 
-  const getBlueprintTotal = (chapter: string) =>
-    DIFFICULTIES.reduce((acc, d) => acc + (blueprint[chapter]?.[d] ?? 0), 0);
+    if (batchId) {
+      const matchBatch = batches.find(b => b.id === batchId);
+      const labelText = matchBatch ? matchBatch.label : batchId;
+      defaultBatches = [`Batch ${labelText}`];
+      defaultTitle = `${activeSubLabel} Test (Batch ${labelText})`;
+    } else if (classId) {
+      const classBatches = batches.filter(b => b.classId === classId);
+      if (classBatches.length > 0) {
+        defaultBatches = classBatches.map(b => `Batch ${b.label}`);
+      }
+      defaultTitle = `Class ${classId} ${activeSubLabel} Weekly Test`;
+    }
 
-  const totalQuestions = chapters.reduce((acc, ch) => acc + getBlueprintTotal(ch), 0);
+    return {
+      exam: activeExamLabel,
+      subject: activeSubLabel,
+      batches: defaultBatches,
+      title: defaultTitle,
+    };
+  }, [classId, subjectId, batchId]);
 
-  const toggleQ = (id: string) =>
-    setSelectedQIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  // Modals state for header utilities
+  const [isTemplatesOpen, setIsTemplatesOpen] = useState(false);
+  const [isDraftsOpen, setIsDraftsOpen] = useState(false);
+  const [isQuestionBankOpen, setIsQuestionBankOpen] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  const canNextStep0 = classId && batchIds.length > 0 && examType && totalMarks && duration;
-  const canNextStep1 = totalQuestions > 0;
+  // Saved Drafts List
+  const [draftsList, setDraftsList] = useState([
+    {
+      id: 'draft-1',
+      title: 'Physics Weekly Mock Test 07',
+      type: 'Weekly Test',
+      date: '2 hours ago',
+      questions: 35,
+      subject: 'Physics',
+    },
+    {
+      id: 'draft-2',
+      title: 'Rotational Motion Chapter Quiz',
+      type: 'Chapter Test',
+      date: 'Yesterday',
+      questions: 20,
+      subject: 'Physics',
+    },
+    {
+      id: 'draft-3',
+      title: 'NEET Gravitation Practice Set',
+      type: 'DPP',
+      date: '3 days ago',
+      questions: 15,
+      subject: 'Physics',
+    },
+  ]);
 
-  if (published) {
-    return (
-      <div className="flex flex-col items-center justify-center h-[60vh] animate-fadein gap-4">
-        <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center">
-          <Check className="w-8 h-8 text-emerald-600" />
-        </div>
-        <h2 className="text-[20px] font-bold text-slate-800">Paper Published!</h2>
-        <p className="text-[13px] text-slate-500">Assigned to {batchIds.join(', ')} · {examType}</p>
-        <button onClick={() => { setPublished(false); setStep(0); setClassId(''); setBatchIds([]); setExamType(''); setBlueprint({}); setSelectedQIds([]); }}
-          className="mt-2 px-6 py-2.5 bg-indigo-600 text-white text-[13px] font-bold rounded-xl hover:bg-indigo-700 transition-colors">
-          Create Another Paper
-        </button>
-      </div>
-    );
-  }
+  // Global Assessment State
+  const [assessmentState, setAssessmentState] = useState<AssessmentState>(() => ({
+    title: initialContext.title,
+    type: 'Weekly Test',
+    exam: initialContext.exam,
+    subject: initialContext.subject,
+    batches: initialContext.batches,
+    duration: 120,
+    totalMarks: 240,
+    negativeMarking: '-1 for each wrong answer',
+    instructions: 'Add special instructions for students...',
+    scheduleType: 'later',
+    dueDate: '2024-05-28',
+    startTime: '09:00',
+    endTime: '11:00',
+    shuffleQuestions: true,
+    shuffleOptions: true,
+    showSolutions: false,
+    selectedSources: ['NCERT', 'PYQ', 'Institute Module', 'DPP', 'Teacher Questions'],
+    selectedChapters: ['ch_rotational', 'ch_gravitation', 'ch_electricity'],
+    selectedTopics: ['top_torque', 'top_moi', 'top_angular_momentum', 'top_escape_velocity', 'top_orbital_motion'],
+    chapterQuestionPlan: {
+      ch_rotational: { easy: 4, medium: 6, hard: 2 },
+      ch_gravitation: { easy: 3, medium: 5, hard: 2 },
+      ch_electricity: { easy: 2, medium: 4, hard: 2 },
+    },
+    questionTypes: ['MCQ', 'Numerical'],
+    allowRepeat: false,
+    avoidRecentDays: 60,
+    minRating: 4.0,
+    paperSetsCount: 1,
+    strategy: 'general',
+  }));
+
+  // Sync state if initialContext changes
+  React.useEffect(() => {
+    setAssessmentState((prev) => ({
+      ...prev,
+      title: initialContext.title,
+      exam: initialContext.exam,
+      subject: initialContext.subject,
+      batches: initialContext.batches,
+    }));
+  }, [initialContext]);
+
+  const updateState = (updates: Partial<AssessmentState>) => {
+    setAssessmentState((prev) => ({ ...prev, ...updates }));
+  };
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 2500);
+  };
+
+  const handleSaveDraft = () => {
+    const newDraft = {
+      id: `draft-${Date.now()}`,
+      title: assessmentState.title || 'Untitled Draft',
+      type: assessmentState.type,
+      date: 'Just now',
+      questions: 30,
+      subject: assessmentState.subject,
+    };
+    setDraftsList((prev) => [newDraft, ...prev]);
+    showToast('Draft successfully saved to cloud drafts!');
+  };
+
+  // Compute stats for summary panel
+  let easyCount = 0;
+  let medCount = 0;
+  let hardCount = 0;
+
+  Object.values(assessmentState.chapterQuestionPlan).forEach((plan) => {
+    easyCount += plan.easy || 0;
+    medCount += plan.medium || 0;
+    hardCount += plan.hard || 0;
+  });
+
+  const totalQuestions = easyCount + medCount + hardCount || 40;
+  const easyPct = Math.round((easyCount / totalQuestions) * 100) || 30;
+  const medPct = Math.round((medCount / totalQuestions) * 100) || 50;
+  const hardPct = 100 - easyPct - medPct;
+
+  const estimatedTime = Math.round(totalQuestions * 3);
+  const qualityScore = 82;
+  const availableQuestionsCount = 12540;
+
+  // AI Prompt fill handler
+  const handleApplyAiPrompt = (promptText: string) => {
+    updateState({
+      title: 'AI Generated NEET Physics Test',
+      type: 'Weekly Test',
+      exam: 'NEET 2027',
+      duration: 120,
+      totalMarks: 240,
+      selectedSources: ['NCERT', 'PYQ', 'Institute Module'],
+      selectedChapters: ['ch_rotational', 'ch_gravitation'],
+      selectedTopics: ['top_torque', 'top_moi', 'top_escape_velocity'],
+      chapterQuestionPlan: {
+        ch_rotational: { easy: 5, medium: 7, hard: 3 },
+        ch_gravitation: { easy: 4, medium: 6, hard: 2 },
+      },
+      strategy: 'personalized',
+    });
+    setCurrentStep(4);
+    showToast('AI filled assessment state!');
+  };
+
+  // Progress calculation
+  const progressPct = Math.round((currentStep / 8) * 100);
+
+  // ── Step Validation (P2-1) ───────────────────────────────────────────
+  const canAdvance = (stepNum: number): { valid: boolean; error?: string } => {
+    if (stepNum === 1) {
+      if (!assessmentState.title.trim()) return { valid: false, error: 'Please enter an Assessment Title.' };
+      if (!assessmentState.batches.length) return { valid: false, error: 'Please select at least one Batch.' };
+    }
+    if (stepNum === 2) {
+      if (!assessmentState.selectedSources.length) return { valid: false, error: 'Please select at least one Question Source.' };
+    }
+    if (stepNum === 3) {
+      if (!assessmentState.selectedChapters.length) return { valid: false, error: 'Please select at least one Chapter.' };
+    }
+    if (stepNum === 4) {
+      if (totalQuestions <= 0) return { valid: false, error: 'Total questions must be greater than 0.' };
+    }
+    if (stepNum === 5) {
+      if (assessmentState.duration <= 0) return { valid: false, error: 'Please set a valid exam duration.' };
+      if (assessmentState.totalMarks <= 0) return { valid: false, error: 'Please set valid total marks.' };
+    }
+    return { valid: true };
+  };
+
+  const handleNextStep = (targetStep: number) => {
+    // Validate current step before advancing
+    const check = canAdvance(currentStep);
+    if (targetStep > currentStep && !check.valid) {
+      showToast(check.error || 'Please complete required fields before advancing.');
+      return;
+    }
+    setCurrentStep(targetStep);
+  };
 
   return (
-    <div className="p-6 animate-fadein space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-[22px] font-bold text-slate-800">Paper Builder</h1>
-        <p className="text-[13px] text-slate-500 mt-0.5">Build and publish test papers for your batches step by step.</p>
+    <div className="flex flex-col h-full bg-slate-50 overflow-hidden font-sans text-slate-800 animate-fadein relative">
+      {/* Toast Notification Banner */}
+      {toastMessage && (
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 px-5 py-2.5 bg-slate-900 text-white font-bold text-[13px] rounded-2xl shadow-2xl flex items-center gap-2 animate-bounce">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
+      {/* ── Top Bar (Institute Context & Header Actions) ────────────────── */}
+      <div className="bg-white border-b border-slate-200 px-6 py-3 flex items-center justify-between flex-shrink-0">
+        {/* Left: Dropdown selectors for Context */}
+        <div className="flex items-center gap-3 text-[12.5px] font-bold">
+          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50/80 text-indigo-900 border border-indigo-200/80 rounded-xl cursor-pointer hover:bg-indigo-100 transition-colors">
+            <span>{assessmentState.exam}</span>
+            <ChevronDown className="w-3.5 h-3.5 text-indigo-600" />
+          </div>
+
+          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50/80 text-indigo-900 border border-indigo-200/80 rounded-xl cursor-pointer hover:bg-indigo-100 transition-colors">
+            <span>{assessmentState.subject}</span>
+            <ChevronDown className="w-3.5 h-3.5 text-indigo-600" />
+          </div>
+
+          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 border border-slate-200 rounded-xl cursor-pointer hover:bg-slate-200 transition-colors">
+            <span className="text-slate-600 font-normal">
+              🏫 {batchId ? `Batch ${batchId}` : classId ? `Class ${classId}` : 'Ahmedabad Branch'}
+            </span>
+            <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
+          </div>
+        </div>
+
+        {/* Right Top Bar Utility Items */}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => showToast('Dark mode toggled')}
+            className="p-2 rounded-xl text-slate-500 hover:bg-slate-100 transition-colors"
+          >
+            <Moon className="w-4.5 h-4.5" />
+          </button>
+
+          <div
+            onClick={() => showToast('12 Notifications')}
+            className="relative p-2 rounded-xl text-slate-500 hover:bg-slate-100 cursor-pointer transition-colors"
+          >
+            <Bell className="w-4.5 h-4.5" />
+            <span className="absolute top-1 right-1 bg-rose-500 text-white text-[9px] font-extrabold px-1 rounded-full">
+              12
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
+            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-600 to-purple-600 text-white font-bold flex items-center justify-center text-[12px] shadow-2xs">
+              RS
+            </div>
+            <div className="text-left hidden sm:block">
+              <p className="text-[12.5px] font-bold text-slate-800 leading-tight">Rahul Sharma</p>
+              <p className="text-[10px] text-slate-400 font-semibold">Physics Faculty</p>
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* Step indicator */}
-      <div className="flex items-center gap-0">
-        {STEPS.map((s, i) => (
-          <div key={s} className="flex items-center">
-            <div className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[12.5px] font-bold transition-all ${
-              step === i ? 'bg-indigo-600 text-white shadow-sm' :
-              step > i   ? 'text-emerald-600 bg-emerald-50'      :
-                           'text-slate-400 bg-slate-50'
-            }`}>
-              {step > i ? <Check className="w-3.5 h-3.5" /> : <span className="w-4 h-4 rounded-full border-2 border-current flex items-center justify-center text-[10px]">{i+1}</span>}
-              <span className="hidden sm:block">{s}</span>
-            </div>
-            {i < STEPS.length - 1 && <ChevronRight className="w-4 h-4 text-slate-300 mx-1" />}
-          </div>
-        ))}
-      </div>
+      {/* ── Sub Header Bar: Title & Utility Buttons ──────────────────────── */}
+      <div className="bg-white border-b border-slate-200 px-6 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 flex-shrink-0">
+        <div>
+          <h1 className="text-[19px] font-extrabold text-slate-800 flex items-center gap-2">
+            Assessment Builder <Sparkles className="w-4.5 h-4.5 text-indigo-600 fill-indigo-600" />
+          </h1>
+          <p className="text-[12px] text-slate-500">Create high-quality tests in less than 2 minutes</p>
+        </div>
 
-      {/* ── STEP 0: Context ─────────────────────────────────────────────────── */}
-      {step === 0 && (
-        <div className="max-w-lg space-y-5 animate-fadein">
-          <div>
-            <label className="block text-[12px] font-bold text-slate-600 mb-2">Class *</label>
-            <div className="flex gap-3">
-              {myClasses.map(c => (
-                <button key={c.id} onClick={() => { setClassId(c.id); setBatchIds([]); }}
-                  className={`px-6 py-2.5 rounded-xl text-[13px] font-bold border transition-all ${
-                    classId === c.id ? 'bg-indigo-600 text-white border-indigo-600' : 'border-slate-200 text-slate-700 hover:border-indigo-300'
-                  }`}>{c.label}</button>
-              ))}
-            </div>
-          </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setIsTemplatesOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 bg-white hover:bg-indigo-50 text-indigo-700 text-[12px] font-bold rounded-xl transition-colors shadow-2xs"
+          >
+            <FolderKanban className="w-4 h-4 text-indigo-600" /> Template Library
+          </button>
 
-          {classId && (
-            <div>
-              <label className="block text-[12px] font-bold text-slate-600 mb-2">Assign to Batches *</label>
-              <div className="flex flex-wrap gap-2">
-                {batchList.map(b => (
-                  <button key={b} onClick={() => toggleBatch(b)}
-                    className={`px-5 py-2 rounded-xl text-[13px] font-bold border transition-all ${
-                      batchIds.includes(b) ? 'bg-indigo-50 text-indigo-700 border-indigo-300' : 'border-slate-200 text-slate-600 hover:border-slate-300'
-                    }`}>{b} {batchIds.includes(b) && <Check className="w-3 h-3 inline ml-1" />}</button>
-                ))}
-              </div>
-            </div>
-          )}
+          <button
+            onClick={() => setIsDraftsOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-[12px] font-bold rounded-xl transition-colors shadow-2xs"
+          >
+            <FileCheck className="w-4 h-4 text-slate-500" /> Saved Drafts ({draftsList.length})
+          </button>
 
-          <div>
-            <label className="block text-[12px] font-bold text-slate-600 mb-2">Subject</label>
-            <div className="px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[13px] text-slate-600 font-semibold">
-              {mySubject.label} (auto-set)
-            </div>
-          </div>
+          <button
+            onClick={() => setIsQuestionBankOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 bg-white hover:bg-indigo-50 text-indigo-700 text-[12px] font-bold rounded-xl transition-colors shadow-2xs"
+          >
+            <BookOpen className="w-4 h-4 text-indigo-600" /> Question Bank
+          </button>
 
-          <div>
-            <label className="block text-[12px] font-bold text-slate-600 mb-2">Exam Type *</label>
-            <div className="flex flex-wrap gap-2">
-              {EXAM_TYPES.map(et => (
-                <button key={et} onClick={() => setExamType(et)}
-                  className={`px-4 py-2 rounded-xl text-[12.5px] font-bold border transition-all ${
-                    examType === et ? 'bg-indigo-600 text-white border-indigo-600' : 'border-slate-200 text-slate-600 hover:border-slate-300'
-                  }`}>{et}</button>
-              ))}
-            </div>
-          </div>
+          <button
+            onClick={() => showToast('AIOS Assessment Help Center')}
+            className="p-2 border border-slate-200 rounded-xl text-slate-500 hover:bg-slate-100 transition-colors"
+          >
+            <HelpCircle className="w-4 h-4" />
+          </button>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-[12px] font-bold text-slate-600 mb-2">Total Marks *</label>
-              <input type="number" value={totalMarks} onChange={e => setTotalMarks(e.target.value)}
-                className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-[13px] focus:outline-none focus:ring-2 focus:ring-indigo-400/30" />
-            </div>
-            <div>
-              <label className="block text-[12px] font-bold text-slate-600 mb-2">Duration (min) *</label>
-              <input type="number" value={duration} onChange={e => setDuration(e.target.value)}
-                className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-[13px] focus:outline-none focus:ring-2 focus:ring-indigo-400/30" />
-            </div>
-          </div>
-
-          <button disabled={!canNextStep0} onClick={() => setStep(1)}
-            className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 text-white text-[13px] font-bold rounded-xl hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all">
-            Next: Blueprint <ChevronRight className="w-4 h-4" />
+          <button
+            onClick={() => setTeacherNav('today')}
+            className="p-2 border border-slate-200 rounded-xl text-slate-500 hover:bg-rose-50 hover:text-rose-600 transition-colors"
+          >
+            <X className="w-4 h-4" />
           </button>
         </div>
-      )}
+      </div>
 
-      {/* ── STEP 1: Blueprint ───────────────────────────────────────────────── */}
-      {step === 1 && (
-        <div className="space-y-5 animate-fadein">
-          <div className="p-4 bg-indigo-50 border border-indigo-100 rounded-2xl text-[13px] text-indigo-800 flex items-start gap-2">
-            <Sparkles className="w-4 h-4 mt-0.5 text-indigo-500 flex-shrink-0" />
-            <p>Set the number of questions per topic and difficulty. <strong>AI Tip:</strong> Add more Rotational Motion questions — 18 students are weak in this topic.</p>
-          </div>
-
-          <div className="card border border-slate-100 rounded-2xl overflow-x-auto">
-            <table className="w-full text-[13px]">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-100">
-                  <th className="text-left text-[11px] font-bold text-slate-500 uppercase py-3 px-5">Chapter</th>
-                  {DIFFICULTIES.map(d => (
-                    <th key={d} className="text-center text-[11px] font-bold text-slate-500 uppercase py-3 px-4">{d}</th>
-                  ))}
-                  <th className="text-center text-[11px] font-bold text-slate-500 uppercase py-3 px-5">Total</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-50">
-                {chapters.map(ch => (
-                  <tr key={ch} className="hover:bg-slate-50/40">
-                    <td className="py-4 px-5 font-semibold text-slate-800">{ch}</td>
-                    {DIFFICULTIES.map(d => (
-                      <td key={d} className="py-4 px-4 text-center">
-                        <div className="flex items-center justify-center gap-2">
-                          <button onClick={() => setBlueprintVal(ch, d, (blueprint[ch]?.[d] ?? 0) - 1)}
-                            className="w-6 h-6 rounded-lg border border-slate-200 flex items-center justify-center hover:bg-slate-100 transition-colors">
-                            <Minus className="w-3 h-3 text-slate-500" />
-                          </button>
-                          <span className="w-6 text-center font-bold text-slate-800">{blueprint[ch]?.[d] ?? 0}</span>
-                          <button onClick={() => setBlueprintVal(ch, d, (blueprint[ch]?.[d] ?? 0) + 1)}
-                            className="w-6 h-6 rounded-lg border border-slate-200 flex items-center justify-center hover:bg-slate-100 transition-colors">
-                            <Plus className="w-3 h-3 text-slate-500" />
-                          </button>
-                        </div>
-                      </td>
-                    ))}
-                    <td className="py-4 px-5 text-center">
-                      <span className={`font-black text-[15px] ${getBlueprintTotal(ch) > 0 ? 'text-indigo-600' : 'text-slate-300'}`}>
-                        {getBlueprintTotal(ch)}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr className="bg-slate-50 border-t border-slate-100">
-                  <td colSpan={4} className="py-3 px-5 text-[12px] font-bold text-slate-600">Total Questions</td>
-                  <td className="py-3 px-5 text-center text-[16px] font-black text-indigo-600">{totalQuestions}</td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-
-          <div className="flex gap-3">
-            <button onClick={() => setStep(0)} className="flex items-center gap-2 px-5 py-2.5 border border-slate-200 text-slate-600 text-[13px] font-bold rounded-xl hover:bg-slate-50">
-              <ChevronLeft className="w-4 h-4" /> Back
-            </button>
-            <button disabled={!canNextStep1} onClick={() => setStep(2)}
-              className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 text-white text-[13px] font-bold rounded-xl hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all">
-              Next: Select Questions <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ── STEP 2: Questions ───────────────────────────────────────────────── */}
-      {step === 2 && (
-        <div className="space-y-4 animate-fadein">
-          <div className="flex items-center justify-between">
-            <p className="text-[13px] text-slate-600">{selectedQIds.length} questions selected</p>
-            <button className="flex items-center gap-1.5 px-4 py-2 bg-indigo-50 text-indigo-700 text-[12.5px] font-bold rounded-xl hover:bg-indigo-100 transition-colors border border-indigo-100">
-              <Sparkles className="w-3.5 h-3.5" /> AI Auto-Select
-            </button>
-          </div>
-
-          <div className="card border border-slate-100 rounded-2xl overflow-hidden">
-            <table className="w-full text-[13px]">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-100">
-                  <th className="py-3 px-5 w-10" />
-                  <th className="text-left text-[11px] font-bold text-slate-500 uppercase py-3 px-3">Question</th>
-                  <th className="text-left text-[11px] font-bold text-slate-500 uppercase py-3 px-3 hidden sm:table-cell">Topic</th>
-                  <th className="text-center text-[11px] font-bold text-slate-500 uppercase py-3 px-3">Type</th>
-                  <th className="text-center text-[11px] font-bold text-slate-500 uppercase py-3 px-3">Diff</th>
-                  <th className="text-center text-[11px] font-bold text-slate-500 uppercase py-3 px-5">Used</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-50">
-                {questions.map(q => {
-                  const sel = selectedQIds.includes(q.id);
-                  return (
-                    <tr key={q.id} onClick={() => toggleQ(q.id)}
-                      className={`cursor-pointer transition-colors ${sel ? 'bg-indigo-50/40' : 'hover:bg-slate-50/40'}`}>
-                      <td className="py-3.5 px-5">
-                        <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
-                          sel ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300'
-                        }`}>
-                          {sel && <Check className="w-3 h-3 text-white" />}
-                        </div>
-                      </td>
-                      <td className="py-3.5 px-3">
-                        <p className="text-[12.5px] font-semibold text-slate-800">{q.id}</p>
-                        <p className="text-[11px] text-slate-500">{q.source}</p>
-                      </td>
-                      <td className="py-3.5 px-3 hidden sm:table-cell">
-                        <p className="text-[12px] font-semibold text-slate-700">{q.chapter}</p>
-                        <p className="text-[11px] text-slate-500">{q.topic}</p>
-                      </td>
-                      <td className="py-3.5 px-3 text-center">
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${
-                          q.type === 'mcq' ? 'bg-indigo-100 text-indigo-700' : 'bg-purple-100 text-purple-700'
-                        }`}>{q.type}</span>
-                      </td>
-                      <td className="py-3.5 px-3 text-center">
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded capitalize ${
-                          q.difficulty === 'hard'   ? 'bg-rose-100 text-rose-700'     :
-                          q.difficulty === 'medium' ? 'bg-amber-100 text-amber-700'   :
-                                                      'bg-emerald-100 text-emerald-700'
-                        }`}>{q.difficulty}</span>
-                      </td>
-                      <td className="py-3.5 px-5 text-center text-slate-500">{q.usedCount}×</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="flex gap-3">
-            <button onClick={() => setStep(1)} className="flex items-center gap-2 px-5 py-2.5 border border-slate-200 text-slate-600 text-[13px] font-bold rounded-xl hover:bg-slate-50">
-              <ChevronLeft className="w-4 h-4" /> Back
-            </button>
-            <button disabled={selectedQIds.length === 0} onClick={() => setStep(3)}
-              className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 text-white text-[13px] font-bold rounded-xl hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all">
-              Preview Paper <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ── STEP 3: Preview & Publish ───────────────────────────────────────── */}
-      {step === 3 && (
-        <div className="space-y-6 animate-fadein">
-          <div className="border border-slate-100 rounded-2xl p-6 space-y-4">
-            <div className="flex items-start justify-between">
-              <div>
-                <h2 className="text-[18px] font-bold text-slate-800">{examType} — {mySubject.label}</h2>
-                <p className="text-[13px] text-slate-500 mt-0.5">
-                  Class {classId} · Batches: {batchIds.join(', ')} · {totalMarks} Marks · {duration} mins
-                </p>
-              </div>
-              <button className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 text-slate-600 text-[12px] font-bold rounded-xl hover:bg-slate-50">
-                <Eye className="w-3.5 h-3.5" /> Full Preview
-              </button>
+      {/* ── 8-Step Wizard Stepper Header Bar ────────────────────────────── */}
+      <div className="bg-white border-b border-slate-200 px-4 sm:px-6 py-3 flex-shrink-0">
+        {/* Mobile Compact Stepper (sm:hidden) */}
+        <div className="sm:hidden flex items-center justify-between">
+          <span className="text-[12.5px] font-bold text-slate-800">
+            Step {currentStep} of 8: <span className="text-indigo-600">{STEP_NAMES[currentStep - 1]?.label}</span>
+          </span>
+          <div className="flex items-center gap-2">
+            <div className="w-20 bg-slate-200 h-2 rounded-full overflow-hidden">
+              <div className="bg-indigo-600 h-full transition-all" style={{ width: `${progressPct}%` }} />
             </div>
-            <div className="border-t border-slate-100 pt-4 space-y-2">
-              {questions.filter(q => selectedQIds.includes(q.id)).map((q, i) => (
-                <div key={q.id} className="flex items-center gap-3 py-2">
-                  <span className="text-[12px] text-slate-400 w-5 text-right">{i+1}.</span>
-                  <div className="flex-1">
-                    <span className="text-[12.5px] font-semibold text-slate-700">[{q.id}]</span>
-                    <span className="text-[12.5px] text-slate-600 ml-2">{q.chapter} → {q.topic}</span>
+            <span className="text-[11px] font-bold text-slate-500">{progressPct}%</span>
+          </div>
+        </div>
+
+        {/* Desktop Full Stepper (hidden sm:block) */}
+        <div className="hidden sm:block overflow-x-auto custom-scrollbar">
+          <div className="flex items-center justify-between min-w-[760px] gap-2">
+            {STEP_NAMES.map((step, idx) => {
+              const isActive = currentStep === step.num;
+              const isCompleted = currentStep > step.num;
+
+              return (
+                <React.Fragment key={step.num}>
+                  <div
+                    onClick={() => handleNextStep(step.num)}
+                    className={`flex items-center gap-2 cursor-pointer p-1.5 rounded-xl transition-all ${
+                      isActive
+                        ? 'bg-indigo-50 text-indigo-900 font-extrabold'
+                        : isCompleted
+                        ? 'text-slate-700 font-bold hover:bg-slate-50'
+                        : 'text-slate-400 font-medium hover:bg-slate-50'
+                    }`}
+                  >
+                    <div
+                      className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-extrabold transition-all ${
+                        isActive
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : isCompleted
+                          ? 'bg-emerald-500 text-white'
+                          : 'bg-slate-200 text-slate-600'
+                      }`}
+                    >
+                      {isCompleted ? '✓' : step.num}
+                    </div>
+                    <span className="text-[12.5px] whitespace-nowrap">{step.label}</span>
+                  </div>
+
+                  {idx < STEP_NAMES.length - 1 && (
+                    <ChevronRight className="w-4 h-4 text-slate-300 flex-shrink-0" />
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Main Workspace Body (Flex 1: Left Form Steps, Right Live Summary) ─ */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Active Step Workspace Content (Scrollable) */}
+        <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+          {currentStep === 1 && (
+            <Step1Details
+              state={assessmentState}
+              onChange={updateState}
+              availableBatches={batches.map((b) => ({ id: b.id, name: `Batch ${b.label}` }))}
+              onNext={() => handleNextStep(2)}
+            />
+          )}
+
+          {currentStep === 2 && (
+            <Step2Sources
+              state={assessmentState}
+              onChange={updateState}
+              onNext={() => handleNextStep(3)}
+              onPrev={() => setCurrentStep(1)}
+            />
+          )}
+
+          {currentStep === 3 && (
+            <Step3Syllabus
+              state={assessmentState}
+              onChange={updateState}
+              onNext={() => handleNextStep(4)}
+              onPrev={() => setCurrentStep(2)}
+            />
+          )}
+
+          {currentStep === 4 && (
+            <Step4Planning
+              state={assessmentState}
+              onChange={updateState}
+              onNext={() => handleNextStep(5)}
+              onPrev={() => setCurrentStep(3)}
+            />
+          )}
+
+          {currentStep === 5 && (
+            <Step5Rules
+              state={assessmentState}
+              onChange={updateState}
+              onNext={() => handleNextStep(6)}
+              onPrev={() => setCurrentStep(4)}
+            />
+          )}
+
+          {currentStep === 6 && (
+            <Step6Strategy
+              state={assessmentState}
+              onChange={updateState}
+              onNext={() => handleNextStep(7)}
+              onPrev={() => setCurrentStep(5)}
+            />
+          )}
+
+          {currentStep === 7 && (
+            <Step7Preview
+              state={assessmentState}
+              onChange={updateState}
+              onNext={() => handleNextStep(8)}
+              onPrev={() => setCurrentStep(6)}
+            />
+          )}
+
+          {currentStep === 8 && (
+            <Step8Generate
+              state={assessmentState}
+              onPrev={() => setCurrentStep(7)}
+              onPublishSuccess={() => setTeacherNav('tests-exams')}
+            />
+          )}
+        </div>
+
+        {/* Live Summary Side Panel (Desktop Right Side) */}
+        <AssessmentSummaryPanel
+          state={assessmentState}
+          totalQuestions={totalQuestions}
+          difficultyMix={{ easyPct, medPct, hardPct }}
+          estimatedTime={estimatedTime}
+          qualityScore={qualityScore}
+          availableQuestionsCount={availableQuestionsCount}
+          onOpenAiAssistant={() => setIsAiModalOpen(true)}
+        />
+      </div>
+
+      {/* ── Bottom Overall Progress Footer Bar ──────────────────────────── */}
+      <div className="bg-white border-t border-slate-200 px-6 py-3 flex items-center justify-between flex-shrink-0">
+        <div className="flex items-center gap-4 w-full sm:w-72">
+          <span className="text-[12px] font-bold text-slate-600 whitespace-nowrap">Overall Progress</span>
+          <div className="h-2.5 w-full bg-slate-100 rounded-full overflow-hidden">
+            <div
+              style={{ width: `${progressPct}%` }}
+              className="h-full bg-indigo-600 transition-all duration-300"
+            />
+          </div>
+          <span className="text-[12px] font-extrabold text-indigo-700 whitespace-nowrap">
+            {progressPct}% Completed
+          </span>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleSaveDraft}
+            className="px-4 py-2 border border-slate-300 text-slate-700 hover:bg-slate-50 text-[12.5px] font-bold rounded-xl transition-colors"
+          >
+            Save Draft
+          </button>
+
+          {currentStep < 8 ? (
+            <button
+              onClick={() => setCurrentStep((prev) => Math.min(8, prev + 1))}
+              className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[13px] rounded-xl shadow-xs transition-all flex items-center gap-1.5"
+            >
+              Next: {STEP_NAMES[currentStep]?.label || 'Next'} →
+            </button>
+          ) : (
+            <button
+              onClick={() => setTeacherNav('tests-exams')}
+              className="px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[13px] rounded-xl shadow-xs transition-all flex items-center gap-1.5"
+            >
+              Finish & Done ✓
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Floating AI Prompt Modal */}
+      <AiAssistantModal
+        isOpen={isAiModalOpen}
+        onClose={() => setIsAiModalOpen(false)}
+        onApplyPrompt={handleApplyAiPrompt}
+      />
+
+      {/* Template Library Modal */}
+      {isTemplatesOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadein">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-xl space-y-4 shadow-2xl relative border border-slate-200">
+            <button
+              onClick={() => setIsTemplatesOpen(false)}
+              className="absolute top-5 right-5 p-1 text-slate-400 hover:text-slate-800"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <div className="flex items-center gap-3">
+              <FolderKanban className="w-6 h-6 text-indigo-600" />
+              <div>
+                <h3 className="text-[17px] font-bold text-slate-800">Standard Template Library</h3>
+                <p className="text-[12px] text-slate-500">Load pre-configured blueprints for NEET & JEE</p>
+              </div>
+            </div>
+
+            <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
+              {[
+                { name: 'NEET 2027 Weekly 40-Q Standard Blueprint', qs: 40, duration: 120 },
+                { name: 'Class 11 Rotational Motion Chapter Drill', qs: 25, duration: 60 },
+                { name: 'Grand Physics Mock Exam (NEET Pattern)', qs: 50, duration: 180 },
+              ].map((t, idx) => (
+                <div
+                  key={idx}
+                  onClick={() => {
+                    updateState({ title: t.name, duration: t.duration });
+                    setIsTemplatesOpen(false);
+                    showToast(`Loaded Template: ${t.name}`);
+                  }}
+                  className="p-3.5 bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 rounded-2xl cursor-pointer transition-all flex items-center justify-between"
+                >
+                  <div>
+                    <h4 className="text-[13.5px] font-bold text-slate-800">{t.name}</h4>
+                    <p className="text-[11.5px] text-slate-500">
+                      {t.qs} Questions • {t.duration} Minutes
+                    </p>
+                  </div>
+                  <ArrowRight className="w-4 h-4 text-indigo-600" />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Saved Drafts Drawer / Modal */}
+      {isDraftsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadein">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-xl space-y-4 shadow-2xl relative border border-slate-200">
+            <button
+              onClick={() => setIsDraftsOpen(false)}
+              className="absolute top-5 right-5 p-1 text-slate-400 hover:text-slate-800"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <div className="flex items-center gap-3">
+              <FileCheck className="w-6 h-6 text-slate-700" />
+              <div>
+                <h3 className="text-[17px] font-bold text-slate-800">Saved Cloud Drafts</h3>
+                <p className="text-[12px] text-slate-500">Resume unfinished assessment drafts</p>
+              </div>
+            </div>
+
+            <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
+              {draftsList.map((d) => (
+                <div
+                  key={d.id}
+                  className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between hover:border-indigo-200 transition-all"
+                >
+                  <div>
+                    <h4 className="text-[13.5px] font-bold text-slate-800">{d.title}</h4>
+                    <p className="text-[11.5px] text-slate-500">
+                      {d.type} • Saved {d.date}
+                    </p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded capitalize ${
-                      q.difficulty === 'hard'   ? 'bg-rose-100 text-rose-700'     :
-                      q.difficulty === 'medium' ? 'bg-amber-100 text-amber-700'   :
-                                                  'bg-emerald-100 text-emerald-700'
-                    }`}>{q.difficulty}</span>
-                    <button className="p-1 rounded hover:bg-slate-100 text-slate-400 hover:text-rose-500 transition-colors">
-                      <RotateCcw className="w-3.5 h-3.5" />
+                    <button
+                      onClick={() => {
+                        updateState({ title: d.title, type: d.type });
+                        setIsDraftsOpen(false);
+                        showToast(`Loaded draft: ${d.title}`);
+                      }}
+                      className="px-3 py-1.5 bg-indigo-600 text-white font-bold text-[11.5px] rounded-xl hover:bg-indigo-700"
+                    >
+                      Load
+                    </button>
+                    <button
+                      onClick={() => {
+                        setDraftsList((prev) => prev.filter((x) => x.id !== d.id));
+                        showToast('Draft deleted');
+                      }}
+                      className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg"
+                    >
+                      <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
               ))}
             </div>
           </div>
+        </div>
+      )}
 
-          <div className="flex gap-3">
-            <button onClick={() => setStep(2)} className="flex items-center gap-2 px-5 py-2.5 border border-slate-200 text-slate-600 text-[13px] font-bold rounded-xl hover:bg-slate-50">
-              <ChevronLeft className="w-4 h-4" /> Back
+      {/* Question Bank Modal */}
+      {isQuestionBankOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadein">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-2xl space-y-4 shadow-2xl relative border border-slate-200">
+            <button
+              onClick={() => setIsQuestionBankOpen(false)}
+              className="absolute top-5 right-5 p-1 text-slate-400 hover:text-slate-800"
+            >
+              <X className="w-5 h-5" />
             </button>
-            <button onClick={() => setPublished(true)}
-              className="flex items-center gap-2 px-6 py-2.5 bg-emerald-600 text-white text-[13px] font-bold rounded-xl hover:bg-emerald-700 transition-colors shadow-sm">
-              <Check className="w-4 h-4" /> Publish Paper
-            </button>
+
+            <div className="flex items-center gap-3">
+              <BookOpen className="w-6 h-6 text-indigo-600" />
+              <div>
+                <h3 className="text-[17px] font-bold text-slate-800">AIOS Master Question Repository</h3>
+                <p className="text-[12px] text-slate-500">Search 12,540+ authentic NEET questions</p>
+              </div>
+            </div>
+
+            <div className="relative">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+              <input
+                type="text"
+                placeholder="Search questions by topic, keyword, or formula..."
+                className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[13px]"
+              />
+            </div>
+
+            <div className="p-4 bg-indigo-50/70 border border-indigo-100 rounded-2xl text-[12px] space-y-1 text-indigo-900">
+              <p className="font-bold flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4 text-indigo-600" /> Integrated Question Bank
+              </p>
+              <p className="text-slate-600 text-[11.5px]">
+                Questions selected here will auto-merge into Step 2 (Question Sources) & Step 3 (Syllabus Builder).
+              </p>
+            </div>
           </div>
         </div>
       )}

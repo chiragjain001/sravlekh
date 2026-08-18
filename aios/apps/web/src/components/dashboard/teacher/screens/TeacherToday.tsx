@@ -1,21 +1,37 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Calendar, Users, FileText, PenTool, ChevronRight, Sparkles,
   ArrowRight, CheckCircle2, Clock, BarChart2, Zap, AlertTriangle
 } from 'lucide-react';
 import { useDashboardStore } from '@/store/dashboard-store';
+import {
+  todaySchedule, batches, tests, doubts, urgentActions,
+  batchWeakTopics, aiBriefings, getBatchById,
+} from '@/lib/mock-data/teacher';
 
-// ─── Heatmap Data ─────────────────────────────────────────────────────────────
-const BATCH_COLS = ['11A', '11B', '11C', '12A', '12B'];
-const HEATMAP_DATA = [
-  { topic: 'Rotational Motion',   scores: { '11A': 85, '11B': 72, '11C': 60, '12A': 78, '12B': 91 } },
-  { topic: 'Work, Power, Energy', scores: { '11A': 70, '11B': 80, '11C': 55, '12A': 65, '12B': 75 } },
-  { topic: 'Thermodynamics',      scores: { '11A': 60, '11B': 65, '11C': 70, '12A': 82, '12B': 58 } },
-  { topic: 'Modern Physics',      scores: { '11A': 75, '11B': 88, '11C': 79, '12A': 63, '12B': 70 } },
-  { topic: 'Electrostatics',      scores: { '11A': 90, '11B': 77, '11C': 84, '12A': 71, '12B': 68 } },
-];
+// ── Heatmap: derive topic-level batch scores from batchWeakTopics ─────────────
+// We build a matrix of [topic × batchId] → avgScore, using batchWeakTopics where
+// available and falling back to the batch's overall avgScore.
+const HEATMAP_TOPICS = ['Rotational Motion', 'Work-Energy', 'Thermodynamics', 'Electrostatics', 'Modern Physics'];
+const HEATMAP_BATCHES = ['11A', '11B', '11C', '12A', '12B'];
+
+function buildHeatmapRows() {
+  return HEATMAP_TOPICS.map(topic => {
+    const scores: Record<string, number> = {};
+    HEATMAP_BATCHES.forEach(bid => {
+      const batch = getBatchById(bid);
+      const weakList = (batchWeakTopics as Record<string, { topic: string; avgScore: number }[]>)[bid];
+      const prefix = (topic.split(' ')[0] || '').toLowerCase();
+      const weakEntry = weakList?.find(w =>
+        w.topic.toLowerCase().includes(prefix)
+      );
+      scores[bid] = weakEntry ? weakEntry.avgScore : (batch?.avgScore ?? 70);
+    });
+    return { topic, scores };
+  });
+}
 
 function getScoreColor(val: number) {
   if (val >= 80) return 'bg-emerald-400 text-white font-bold';
@@ -24,71 +40,107 @@ function getScoreColor(val: number) {
   return 'bg-rose-500 text-white font-bold';
 }
 
-// ─── Evaluation Queue Data ───────────────────────────────────────────────────
-const EVAL_QUEUE = [
-  { id: 'E1', test: 'JEE Main Mock Test 07 (Physics)', batch: '11A', copies: '45 Copies', pct: 20, barColor: 'bg-rose-500',   classId: '11' },
-  { id: 'E2', test: 'JEE Main Mock Test 07 (Physics)', batch: '11B', copies: '48 Copies', pct: 40, barColor: 'bg-amber-400',  classId: '11' },
-  { id: 'E3', test: 'JEE Main Mock Test 07 (Physics)', batch: '12A', copies: '50 Copies', pct: 10, barColor: 'bg-emerald-400', classId: '12' },
-];
-
-// ─── AI Actions Data ─────────────────────────────────────────────────────────
-const AI_ACTIONS = [
-  {
-    id: 'A1',
-    text: '32 students are weak in Rotational Motion',
-    cta: 'Create remedial class →',
-    style: 'bg-rose-50 border-rose-100 text-rose-900 hover:bg-rose-100/80',
-    btnStyle: 'text-rose-600 hover:text-rose-800 font-bold',
-    navTo: 'remedial-extra' as const,
-  },
-  {
-    id: 'A2',
-    text: '18 students need practice in Integrals',
-    cta: 'Assign practice set →',
-    style: 'bg-amber-50 border-amber-100 text-amber-900 hover:bg-amber-100/80',
-    btnStyle: 'text-amber-700 hover:text-amber-900 font-bold',
-    navTo: 'assignments' as const,
-  },
-  {
-    id: 'A3',
-    text: 'Class test average is low',
-    cta: 'Review and plan revision →',
-    style: 'bg-indigo-50 border-indigo-100 text-indigo-900 hover:bg-indigo-100/80',
-    btnStyle: 'text-indigo-600 hover:text-indigo-800 font-bold',
-    navTo: 'classes' as const,
-  },
-];
-
-// ─── Weak Topics Data ────────────────────────────────────────────────────────
-const WEAK_TOPICS = [
-  { topic: 'Rotational Motion', pct: 62, barColor: 'bg-rose-500'   },
-  { topic: 'Integrals',         pct: 65, barColor: 'bg-amber-500'  },
-  { topic: 'Thermodynamics',    pct: 68, barColor: 'bg-purple-500' },
-  { topic: 'Modern Physics',    pct: 72, barColor: 'bg-cyan-500'   },
-];
-
-// ─── Schedule Data ───────────────────────────────────────────────────────────
-const TODAY_SCHEDULE = [
-  { time: '09:00 AM', label: '11A – Physics',          type: 'class',     badgeBg: 'bg-emerald-50 text-emerald-700', batchId: '11A', classId: '11' },
-  { time: '10:00 AM', label: '11B – Physics',          type: 'class',     badgeBg: 'bg-emerald-50 text-emerald-700', batchId: '11B', classId: '11' },
-  { time: '11:00 AM', label: '12A – Physics Practical',type: 'practical', badgeBg: 'bg-purple-50 text-purple-700',   batchId: '12A', classId: '12' },
-  { time: '02:00 PM', label: 'Extra Class – Weak Students', type: 'extra',badgeBg: 'bg-amber-50 text-amber-700',    batchId: '11A', classId: '11' },
-];
-
-// ─── Recent Tests Data ───────────────────────────────────────────────────────
-const RECENT_TESTS = [
-  { name: 'JEE Main Mock Test 07', date: '3 May 2025',  avg: '76%' },
-  { name: 'Physics Unit Test 05',  date: '28 Apr 2025', avg: '70%' },
-  { name: 'Physics Unit Test 04',  date: '20 Apr 2025', avg: '68%' },
-];
-
 export function TeacherToday() {
-  const { setTeacherNav, setTeacherCtx } = useDashboardStore();
+  const { teacherCtx, setTeacherNav, setTeacherCtx } = useDashboardStore();
   const [hoverCell, setHoverCell] = useState<{ topic: string; batch: string; score: number } | null>(null);
 
+  // ── Derived KPI values from central mock data ────────────────────────────────
+  const classesToday  = todaySchedule.length;
+  const totalStudents = useMemo(() => batches.reduce((sum, b) => sum + b.strength, 0), []);
+  const testsCount    = tests.length;
+  const pendingPapers = useMemo(() =>
+    tests.filter(t => t.status === 'grading')
+         .reduce((sum, t) => sum + Math.max(0, t.attempted - t.graded), 0),
+    []
+  );
+  const pendingDoubts = doubts.filter(d => d.status === 'pending').length;
+
+  // ── Heatmap rows ─────────────────────────────────────────────────────────────
+  const heatmapRows = useMemo(buildHeatmapRows, []);
+
+  // ── Evaluation Queue: derive from tests in 'grading' status ─────────────────
+  const evalQueue = useMemo(() =>
+    tests
+      .filter(t => t.status === 'grading')
+      .map(t => {
+        const pct = t.attempted > 0 ? Math.round((t.graded / t.attempted) * 100) : 0;
+        return {
+          id: t.id,
+          test: t.name,
+          batch: t.batchId,
+          copies: `${t.attempted} Copies`,
+          pct,
+          barColor: pct < 30 ? 'bg-rose-500' : pct < 70 ? 'bg-amber-400' : 'bg-emerald-400',
+          classId: t.batchId.startsWith('12') ? '12' : '11',
+        };
+      }),
+    []
+  );
+
+  // ── AI Actions: derive from urgentActions in central data ────────────────────
+  const AI_ACTION_CONFIG = [
+    { sev: 'high',   style: 'bg-rose-50 border-rose-100 text-rose-900 hover:bg-rose-100/80',     btnStyle: 'text-rose-600 hover:text-rose-800 font-bold',   navTo: 'remedial-extra' as const,  cta: 'Create remedial class →' },
+    { sev: 'high',   style: 'bg-amber-50 border-amber-100 text-amber-900 hover:bg-amber-100/80', btnStyle: 'text-amber-700 hover:text-amber-900 font-bold', navTo: 'evaluation-queue' as const, cta: 'Start grading →' },
+    { sev: 'medium', style: 'bg-indigo-50 border-indigo-100 text-indigo-900 hover:bg-indigo-100/80', btnStyle: 'text-indigo-600 hover:text-indigo-800 font-bold', navTo: 'doubt-center' as const, cta: 'View doubts →' },
+  ];
+
+  const aiActions = urgentActions.map((ua, i) => {
+    const config = AI_ACTION_CONFIG[i % AI_ACTION_CONFIG.length]!;
+    return {
+      id: ua.id,
+      text: ua.message,
+      style: config.style,
+      btnStyle: config.btnStyle,
+      navTo: config.navTo,
+      cta: config.cta,
+    };
+  });
+
+  // ── Weak Topics ──────────────────────────────────────────────────────────────
+  const weakTopics = useMemo(() => {
+    const all = Object.values(batchWeakTopics).flat();
+    const grouped: Record<string, { total: number; count: number }> = {};
+    all.forEach(w => {
+      const entry = grouped[w.topic] ?? { total: 0, count: 0 };
+      entry.total += w.avgScore;
+      entry.count += 1;
+      grouped[w.topic] = entry;
+    });
+    const COLORS = ['bg-rose-500', 'bg-amber-500', 'bg-purple-500', 'bg-cyan-500'];
+    return Object.entries(grouped)
+      .map(([topic, { total, count }], i) => ({ topic, pct: Math.round(total / count), barColor: COLORS[i % COLORS.length] }))
+      .sort((a, b) => a.pct - b.pct)
+      .slice(0, 4);
+  }, []);
+
+  // ── Recent Tests ─────────────────────────────────────────────────────────────
+  const recentTests = useMemo(() =>
+    tests
+      .filter(t => t.status === 'completed' || t.status === 'grading')
+      .slice(0, 3)
+      .map(t => ({ name: t.name, date: t.date, avg: t.avgScore > 0 ? `${t.avgScore}%` : '—' })),
+    []
+  );
+
+  // ── Schedule ─────────────────────────────────────────────────────────────────
+  const todaySlots = useMemo(() =>
+    todaySchedule.map(s => ({
+      time:     s.time,
+      label:    `${s.batchId} – ${s.topic}`,
+      type:     s.type,
+      badgeBg:  s.type === 'class' ? 'bg-emerald-50 text-emerald-700' :
+                s.type === 'practical' ? 'bg-purple-50 text-purple-700' :
+                s.type === 'extra' ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700',
+      batchId:  s.batchId,
+      classId:  s.batchId.startsWith('12') ? '12' : '11',
+      status:   s.status,
+    })),
+    []
+  );
+
   const goToBatch = (batchId: string, classId: string = '11') => {
+    setTeacherCtx({ classId, subjectId: teacherCtx.subjectId || 'physics', batchId, batchTab: 'overview', studentId: null, testId: null });
     setTeacherNav('classes');
-    setTeacherCtx({ classId, subjectId: 'physics', batchId, batchTab: 'overview' });
   };
 
   return (
@@ -107,12 +159,15 @@ export function TeacherToday() {
               <Calendar className="w-5 h-5" />
             </div>
           </div>
-          <p className="text-[28px] font-black text-slate-800 leading-none">08</p>
+          <p className="text-[28px] font-black text-slate-800 leading-none">{classesToday}</p>
         </div>
 
         {/* Card 2 */}
         <div
-          onClick={() => setTeacherNav('classes')}
+          onClick={() => {
+            setTeacherCtx({ classId: null, batchId: null, studentId: null, testId: null, batchTab: 'students' });
+            setTeacherNav('classes');
+          }}
           className="bg-white border border-slate-100 rounded-2xl p-5 shadow-sm hover:shadow-md hover:border-sky-200 transition-all cursor-pointer group"
         >
           <div className="flex items-center justify-between mb-3">
@@ -121,7 +176,7 @@ export function TeacherToday() {
               <Users className="w-5 h-5" />
             </div>
           </div>
-          <p className="text-[28px] font-black text-slate-800 leading-none">256</p>
+          <p className="text-[28px] font-black text-slate-800 leading-none">{totalStudents}</p>
         </div>
 
         {/* Card 3 */}
@@ -135,7 +190,7 @@ export function TeacherToday() {
               <FileText className="w-5 h-5" />
             </div>
           </div>
-          <p className="text-[28px] font-black text-slate-800 leading-none">12</p>
+          <p className="text-[28px] font-black text-slate-800 leading-none">{testsCount}</p>
         </div>
 
         {/* Card 4 */}
@@ -150,7 +205,7 @@ export function TeacherToday() {
                 <PenTool className="w-5 h-5" />
               </div>
             </div>
-            <p className="text-[28px] font-black text-slate-800 leading-none">23</p>
+            <p className="text-[28px] font-black text-slate-800 leading-none">{pendingPapers}</p>
           </div>
           <div className="text-right mt-2">
             <span className="text-[11.5px] font-bold text-indigo-600 hover:text-indigo-800 group-hover:underline">View All</span>
@@ -169,31 +224,31 @@ export function TeacherToday() {
             </div>
 
             {/* Heatmap Grid */}
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-[12px]">
+            <div className="overflow-x-auto custom-scrollbar pb-2">
+              <table className="w-full min-w-[340px] text-left text-[12px]">
                 <thead>
                   <tr>
                     <th className="py-2 text-[11px] font-semibold text-slate-400">Topics</th>
-                    {BATCH_COLS.map(b => (
+                    {HEATMAP_BATCHES.map(b => (
                       <th key={b} className="py-2 text-center text-[11px] font-bold text-slate-500 w-11">{b}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {HEATMAP_DATA.map(row => (
+                  {heatmapRows.map(row => (
                     <tr key={row.topic}>
                       <td className="py-2.5 font-medium text-slate-700 pr-2 text-[12.5px] truncate max-w-[130px]">{row.topic}</td>
-                      {BATCH_COLS.map(b => {
+                      {HEATMAP_BATCHES.map(b => {
                         const score = row.scores[b as keyof typeof row.scores];
                         return (
-                          <td key={b} className="py-1 px-1 text-center">
+                     <td key={b} className="py-1 px-1 text-center">
                             <button
                               onClick={() => goToBatch(b, b.startsWith('12') ? '12' : '11')}
-                              onMouseEnter={() => setHoverCell({ topic: row.topic, batch: b, score })}
+                              onMouseEnter={() => setHoverCell({ topic: row.topic, batch: b, score: row.scores[b as keyof typeof row.scores] ?? 0 })}
                               onMouseLeave={() => setHoverCell(null)}
-                              className={`w-9 h-8 rounded-lg ${getScoreColor(score)} flex items-center justify-center text-[12px] transition-transform hover:scale-110 shadow-xs mx-auto`}
+                              className={`w-9 h-8 rounded-lg ${getScoreColor(row.scores[b as keyof typeof row.scores] ?? 0)} flex items-center justify-center text-[12px] transition-transform hover:scale-110 shadow-xs mx-auto`}
                             >
-                              {score}
+                              {row.scores[b as keyof typeof row.scores] ?? 0}
                             </button>
                           </td>
                         );
@@ -233,7 +288,7 @@ export function TeacherToday() {
             </div>
 
             <div className="space-y-4">
-              {EVAL_QUEUE.map(item => (
+              {evalQueue.map(item => (
                 <div
                   key={item.id}
                   onClick={() => goToBatch(item.batch, item.classId)}
@@ -264,7 +319,7 @@ export function TeacherToday() {
             </div>
 
             <div className="space-y-3">
-              {AI_ACTIONS.map(action => (
+              {aiActions.map(action => (
                 <div
                   key={action.id}
                   className={`p-3.5 border rounded-xl transition-all ${action.style}`}
@@ -291,10 +346,13 @@ export function TeacherToday() {
         <div className="lg:col-span-4 bg-white border border-slate-100 rounded-2xl p-5 shadow-sm hover:shadow-md transition-all">
           <h3 className="text-[15px] font-bold text-slate-800 mb-4">Top Weak Topics</h3>
           <div className="space-y-4">
-            {WEAK_TOPICS.map(wt => (
+            {weakTopics.map(wt => (
               <div
                 key={wt.topic}
-                onClick={() => setTeacherNav('classes')}
+                onClick={() => {
+                  setTeacherCtx({ classId: null, batchId: null, studentId: null, testId: null, batchTab: 'weak-topics' });
+                  setTeacherNav('classes');
+                }}
                 className="cursor-pointer group"
               >
                 <div className="flex items-center justify-between text-[12.5px] mb-1.5">
@@ -323,7 +381,7 @@ export function TeacherToday() {
             </div>
 
             <div className="space-y-3">
-              {TODAY_SCHEDULE.map(slot => (
+              {todaySlots.map(slot => (
                 <div
                   key={slot.time + slot.label}
                   onClick={() => goToBatch(slot.batchId, slot.classId)}
@@ -356,7 +414,7 @@ export function TeacherToday() {
             </div>
 
             <div className="space-y-3">
-              {RECENT_TESTS.map(t => (
+              {recentTests.map(t => (
                 <div
                   key={t.name}
                   onClick={() => setTeacherNav('tests-exams')}

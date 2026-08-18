@@ -4,58 +4,70 @@ import { useAuth } from '@/contexts/auth.context';
 import { useDashboardStore } from '@/store/dashboard-store';
 import type { TeacherTopNav } from '@/store/dashboard-store';
 import { teacherProfile } from '@/lib/mock-data/teacher';
+import { Suspense } from 'react';
 
 // Shared layout
-import { Sidebar }    from '@/components/shared/Sidebar';
-import { TopHeader }  from '@/components/shared/TopHeader';
-import { Calendar }   from 'lucide-react';
+import { Sidebar }   from '@/components/shared/Sidebar';
+import { TopHeader } from '@/components/shared/TopHeader';
+import { Calendar }  from 'lucide-react';
+
+// Foundation components (Phase 0)
+import { RouteGuard, FullPageSkeleton } from '@/components/ui/RouteGuard';
+import { PageErrorBoundary }            from '@/components/ui/ErrorBoundary';
+import { OfflineBanner }                from '@/components/ui/foundation';
+
+// URL sync (Phase 1)
+import { useContextUrlSync } from '@/hooks/useContextUrlSync';
+import { useNetworkStatus }  from '@/hooks/useContextUrlSync';
 
 // Teacher screens — each is a self-contained full page
 import { TeacherToday }           from '@/components/dashboard/teacher/screens/TeacherToday';
 import { TeacherClasses }         from '@/components/dashboard/teacher/screens/TeacherClasses';
 import { TeacherPaperBuilder }    from '@/components/dashboard/teacher/screens/TeacherPaperBuilder';
-import { TeacherQuestionBank }    from '@/components/dashboard/teacher/screens/TeacherQuestionBank';
 import { TeacherDoubtCenter }     from '@/components/dashboard/teacher/screens/TeacherDoubtCenter';
-import { TeacherReports }             from '@/components/dashboard/teacher/screens/TeacherReports';
-import { TeacherSettings }            from '@/components/dashboard/teacher/screens/TeacherSettings';
-import { TeacherTestsExams }          from '@/components/dashboard/teacher/screens/TeacherTestsExams';
-import { TeacherEvaluationQueue }     from '@/components/dashboard/teacher/screens/TeacherEvaluationQueue';
-import { TeacherAnalytics }           from '@/components/dashboard/teacher/screens/TeacherAnalytics';
-import { TeacherAssignments }         from '@/components/dashboard/teacher/screens/TeacherAssignments';
-import { TeacherRemedialExtraClass }  from '@/components/dashboard/teacher/screens/TeacherRemedialExtraClass';
-import { TeacherTimeTable }           from '@/components/dashboard/teacher/screens/TeacherTimeTable';
+import { TeacherReports }         from '@/components/dashboard/teacher/screens/TeacherReports';
+import { TeacherSettings }        from '@/components/dashboard/teacher/screens/TeacherSettings';
+import { TeacherTestsExams }      from '@/components/dashboard/teacher/screens/TeacherTestsExams';
+import { TeacherEvaluationQueue } from '@/components/dashboard/teacher/screens/TeacherEvaluationQueue';
+import { TeacherAnalytics }       from '@/components/dashboard/teacher/screens/TeacherAnalytics';
+import { TeacherAssignments }     from '@/components/dashboard/teacher/screens/TeacherAssignments';
+import { TeacherRemedialExtraClass } from '@/components/dashboard/teacher/screens/TeacherRemedialExtraClass';
+import { TeacherTimeTable }          from '@/components/dashboard/teacher/screens/TeacherTimeTable';
 
-// ─── Sidebar nav config matching mockup ─────────────────────────────────────────
+// ─── Sidebar nav items ────────────────────────────────────────────────────────
 const NAV_ITEMS: { key: TeacherTopNav; label: string }[] = [
-  { key: 'today',            label: 'Overview'               },
-  { key: 'classes',          label: 'My Classes'             },
-  { key: 'paper-builder',    label: 'Paper Builder'          },
-  { key: 'question-bank',    label: 'Question Bank'          },
-  { key: 'tests-exams',      label: 'Tests & Exams'          },
-  { key: 'evaluation-queue', label: 'Evaluation Queue'     },
-  { key: 'analytics',        label: 'Analytics'             },
-  { key: 'assignments',      label: 'Assignments'           },
-  { key: 'remedial-extra',   label: 'Remedial & Extra Class' },
-  { key: 'doubt-center',     label: 'Doubt Center'           },
-  { key: 'timetable',        label: 'Time Table'             },
-  { key: 'reports',          label: 'Reports'                },
-  { key: 'settings',         label: 'Settings'               },
+  { key: 'today',          label: 'Overview'               },
+  { key: 'classes',        label: 'My Classes'             },
+  { key: 'paper-builder',  label: 'Paper Builder'          },
+  { key: 'tests-exams',    label: 'Tests & Exams'          },
+  { key: 'analytics',      label: 'Analytics'              },
+  { key: 'assignments',    label: 'Assignments'            },
+  { key: 'remedial-extra', label: 'Remedial & Extra Class' },
+  { key: 'doubt-center',   label: 'Doubt Center'           },
+  { key: 'timetable',      label: 'Time Table'             },
+  { key: 'reports',        label: 'Reports'                },
+  { key: 'settings',       label: 'Settings'               },
 ];
 
-export default function TeacherDashboardPage() {
-  const { logout }                             = useAuth();
-  const { teacherNav, setTeacherNav, setTeacherCtx } = useDashboardStore();
+import { useNavigationHistory } from '@/hooks/useNavigationHistory';
 
-  const handleNavClick = (key: TeacherTopNav) => {
-    setTeacherNav(key);
-  };
+// ─── Inner Dashboard (rendered after auth guard passes) ───────────────────────
+function TeacherDashboardInner() {
+  const { user, logout }                            = useAuth();
+  const { teacherNav, setTeacherNav, setTeacherCtx } = useDashboardStore();
+  const { canGoBack, previousNav, goBack }           = useNavigationHistory('teacher');
+
+  // Phase 1: Sync context ↔ URL (enables deep linking + browser back)
+  useContextUrlSync('teacher');
+
+  // Phase 1: Monitor network status for OfflineBanner
+  useNetworkStatus();
 
   const renderScreen = () => {
     switch (teacherNav) {
       case 'today':            return <TeacherToday />;
       case 'classes':          return <TeacherClasses />;
       case 'paper-builder':    return <TeacherPaperBuilder />;
-      case 'question-bank':    return <TeacherQuestionBank />;
       case 'tests-exams':      return <TeacherTestsExams />;
       case 'evaluation-queue': return <TeacherEvaluationQueue />;
       case 'analytics':        return <TeacherAnalytics />;
@@ -69,28 +81,44 @@ export default function TeacherDashboardPage() {
     }
   };
 
-
-  const activeLabel = NAV_ITEMS.find(n => n.key === teacherNav)?.label ?? 'Today';
+  const activeLabel = NAV_ITEMS.find(n => n.key === teacherNav)?.label ?? 'Overview';
+  const previousNavLabel = NAV_ITEMS.find(n => n.key === previousNav)?.label ?? previousNav;
+  const teacherName = user?.name ?? teacherProfile.name;
+  const firstName   = teacherName.split(' ')[0];
 
   return (
     <div className="flex h-screen overflow-hidden bg-bg">
+      {/* Global offline banner */}
+      <OfflineBanner />
+
       <Sidebar
         role="TEACHER"
-        userName={teacherProfile.name}
+        userName={teacherName}
         designation={teacherProfile.designation}
-        avatarInitials={teacherProfile.avatarInitials}
+        avatarInitials={user?.avatarInitials ?? teacherProfile.avatarInitials}
         navItems={NAV_ITEMS.map(n => n.label)}
         activeNav={activeLabel}
         onNavChange={(label) => {
           const match = NAV_ITEMS.find(n => n.label === label);
-          if (match) handleNavClick(match.key);
+          if (match) {
+            if (match.key === 'classes') {
+              setTeacherCtx({
+                classId: null,
+                batchId: null,
+                studentId: null,
+                testId: null,
+                batchTab: 'overview',
+              });
+            }
+            setTeacherNav(match.key);
+          }
         }}
         onLogout={logout}
       />
 
       <div className="flex-1 overflow-y-auto min-w-0 flex flex-col">
         <TopHeader
-          greeting={`Good Morning, ${teacherProfile.name.split(' ')[0]} Sir! ☀️`}
+          greeting={`Good Morning, ${firstName} Sir! ☀️`}
           subtitle="Here's what's happening in your classes."
           rightContent={
             <div className="flex items-center gap-1.5 bg-indigo-50 rounded-lg px-3 py-1.5">
@@ -101,9 +129,22 @@ export default function TeacherDashboardPage() {
           }
         />
         <div className="flex-1 overflow-y-auto">
-          {renderScreen()}
+          <PageErrorBoundary>
+            {renderScreen()}
+          </PageErrorBoundary>
         </div>
       </div>
     </div>
+  );
+}
+
+// ─── Page Export ──────────────────────────────────────────────────────────────
+export default function TeacherDashboardPage() {
+  return (
+    <RouteGuard allowedRoles={['TEACHER', 'ADMIN', 'ACADEMIC_HEAD']}>
+      <Suspense fallback={<FullPageSkeleton />}>
+        <TeacherDashboardInner />
+      </Suspense>
+    </RouteGuard>
   );
 }

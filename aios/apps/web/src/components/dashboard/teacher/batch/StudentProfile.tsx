@@ -136,33 +136,103 @@ export function StudentProfile({ student, topicMastery, testHistory, doubts }: {
 
       {/* ── Topic Mastery Tab ───────────────────────────────────────────────── */}
       {tab === 'Topic Mastery' && (
-        <div className="animate-fadein space-y-3">
+        <div className="animate-fadein space-y-5">
           {topicMastery.length === 0 ? (
             <p className="py-10 text-center text-[13px] text-slate-400">No topic data yet.</p>
           ) : (
-            topicMastery.map(t => (
-              <div key={t.topic} className="border border-slate-100 rounded-2xl p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-3">
-                    <TrendIcon t={t.trend} />
-                    <div>
-                      <p className="text-[14px] font-bold text-slate-800">{t.topic}</p>
-                      <p className="text-[11.5px] text-slate-500">{t.attempts} test{t.attempts !== 1 ? 's' : ''}</p>
-                    </div>
+            <>
+              {/* Overview strip */}
+              <div className="grid grid-cols-3 gap-3">
+                {[
+                  { label: 'Strong',  count: topicMastery.filter(t => t.mastery >= 75).length, color: 'bg-emerald-50 border-emerald-100', text: 'text-emerald-700' },
+                  { label: 'Average', count: topicMastery.filter(t => t.mastery >= 60 && t.mastery < 75).length, color: 'bg-amber-50 border-amber-100', text: 'text-amber-700' },
+                  { label: 'Weak',    count: topicMastery.filter(t => t.mastery < 60).length,  color: 'bg-rose-50 border-rose-100',    text: 'text-rose-700' },
+                ].map(k => (
+                  <div key={k.label} className={`border rounded-2xl p-4 text-center ${k.color}`}>
+                    <p className={`text-[24px] font-black leading-tight ${k.text}`}>{k.count}</p>
+                    <p className={`text-[11px] font-bold ${k.text} opacity-80`}>{k.label} Topics</p>
                   </div>
-                  <span className={`text-[16px] font-black ${
-                    t.mastery >= 75 ? 'text-emerald-600' :
-                    t.mastery >= 60 ? 'text-amber-600'   : 'text-rose-600'
-                  }`}>{t.mastery}%</span>
-                </div>
-                <div className="w-full bg-slate-100 rounded-full h-2.5">
-                  <div className={`h-2.5 rounded-full transition-all ${
-                    t.mastery >= 75 ? 'bg-emerald-500' :
-                    t.mastery >= 60 ? 'bg-amber-500'   : 'bg-rose-500'
-                  }`} style={{ width: `${t.mastery}%` }} />
-                </div>
+                ))}
               </div>
-            ))
+
+              {/* Strong topics */}
+              {topicMastery.filter(t => t.mastery >= 75).length > 0 && (
+                <div>
+                  <p className="text-[11px] font-bold text-emerald-600 uppercase tracking-wider mb-2 flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" /> Strong Topics
+                  </p>
+                  <div className="space-y-2">
+                    {topicMastery.filter(t => t.mastery >= 75).map(t => (
+                      <div key={t.topic} className="border border-emerald-100 bg-emerald-50/40 rounded-xl p-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2.5">
+                            <TrendIcon t={t.trend} />
+                            <p className="text-[13.5px] font-bold text-slate-800">{t.topic}</p>
+                            <span className="text-[10px] text-slate-400">{t.attempts} tests</span>
+                          </div>
+                          <span className="text-[16px] font-black text-emerald-600">{t.mastery}%</span>
+                        </div>
+                        <div className="w-full bg-emerald-100 rounded-full h-2">
+                          <div className="h-2 rounded-full bg-emerald-500 transition-all" style={{ width: `${t.mastery}%` }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Average topics */}
+              {topicMastery.filter(t => t.mastery >= 60 && t.mastery < 75).length > 0 && (
+                <div>
+                  <p className="text-[11px] font-bold text-amber-600 uppercase tracking-wider mb-2 flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-amber-500 inline-block" /> Average Topics
+                  </p>
+                  <div className="space-y-2">
+                    {topicMastery.filter(t => t.mastery >= 60 && t.mastery < 75).map(t => (
+                      <div key={t.topic} className="border border-amber-100 bg-amber-50/40 rounded-xl p-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2.5">
+                            <TrendIcon t={t.trend} />
+                            <p className="text-[13.5px] font-bold text-slate-800">{t.topic}</p>
+                            <span className="text-[10px] text-slate-400">{t.attempts} tests</span>
+                          </div>
+                          <span className="text-[16px] font-black text-amber-600">{t.mastery}%</span>
+                        </div>
+                        <div className="w-full bg-amber-100 rounded-full h-2">
+                          <div className="h-2 rounded-full bg-amber-500 transition-all" style={{ width: `${t.mastery}%` }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Weak topics */}
+              {topicMastery.filter(t => t.mastery < 60).length > 0 && (
+                <div>
+                  <p className="text-[11px] font-bold text-rose-600 uppercase tracking-wider mb-2 flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-rose-500 inline-block" /> Weak Topics — Needs Focus
+                  </p>
+                  <div className="space-y-2">
+                    {topicMastery.filter(t => t.mastery < 60).map(t => (
+                      <div key={t.topic} className="border border-rose-200 bg-rose-50/50 rounded-xl p-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2.5">
+                            <TrendIcon t={t.trend} />
+                            <p className="text-[13.5px] font-bold text-slate-800">{t.topic}</p>
+                            <span className="text-[10px] text-slate-400">{t.attempts} tests</span>
+                          </div>
+                          <span className="text-[16px] font-black text-rose-600">{t.mastery}%</span>
+                        </div>
+                        <div className="w-full bg-rose-100 rounded-full h-2">
+                          <div className="h-2 rounded-full bg-rose-500 transition-all" style={{ width: `${t.mastery}%` }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}

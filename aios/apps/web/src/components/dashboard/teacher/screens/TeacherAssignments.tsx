@@ -2,32 +2,53 @@
 
 import { useState } from 'react';
 import { BookOpen, Plus, Search, Calendar, ChevronRight } from 'lucide-react';
-import { assignments, batches } from '@/lib/mock-data/teacher';
+import { assignments as initialAssignments, batches } from '@/lib/mock-data/teacher';
 import { useDashboardStore } from '@/store/dashboard-store';
+import { AssignmentDetailModal } from '../shared/AssignmentDetailModal';
+import { CreateAssignmentModal } from '../shared/CreateAssignmentModal';
 
 export function TeacherAssignments() {
   const { setTeacherNav, setTeacherCtx } = useDashboardStore();
+  const [assignmentList, setAssignmentList] = useState<any[]>(initialAssignments);
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedAssignment, setSelectedAssignment] = useState<any | null>(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
 
-  const enrichedAssignments = assignments.map(a => ({
+  const enrichedAssignments = assignmentList.map(a => ({
     ...a,
     batchLabel: batches.find(b => b.id === a.batchId)?.label || a.batchId
   })).filter(a => a.title.toLowerCase().includes(searchTerm.toLowerCase()));
 
-  const handleAssignmentClick = (batchId: string) => {
-    setTeacherCtx({ batchId, batchTab: 'assignments' });
-    setTeacherNav('classes');
+  const handleAssignmentCreated = (newAssignment: any) => {
+    setAssignmentList(prev => [newAssignment, ...prev]);
   };
 
   return (
     <div className="p-6 animate-fadein space-y-6 max-w-6xl mx-auto">
+      {/* Create Assignment Modal Wizard */}
+      {showCreateModal && (
+        <CreateAssignmentModal
+          onClose={() => setShowCreateModal(false)}
+          onSuccess={handleAssignmentCreated}
+        />
+      )}
+
+      {/* Assignment Detail Modal */}
+      {selectedAssignment && (
+        <AssignmentDetailModal
+          assignment={selectedAssignment}
+          onClose={() => setSelectedAssignment(null)}
+        />
+      )}
+
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-[22px] font-bold text-slate-800">Global Assignments</h1>
           <p className="text-[13px] text-slate-500 mt-0.5">Manage assignments and track submissions across all your batches.</p>
         </div>
         <button
-          className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white text-[13px] font-bold rounded-xl hover:bg-indigo-700 transition-colors shadow-sm"
+          onClick={() => setShowCreateModal(true)}
+          className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white text-[13px] font-bold rounded-xl hover:bg-indigo-700 transition-colors shadow-sm cursor-pointer"
         >
           <Plus className="w-4 h-4" /> Create Assignment
         </button>
@@ -58,13 +79,17 @@ export function TeacherAssignments() {
           </thead>
           <tbody className="divide-y divide-slate-50">
             {enrichedAssignments.map(a => (
-              <tr key={a.id} className="hover:bg-slate-50/50 transition-colors group">
+              <tr 
+                key={a.id} 
+                onClick={() => setSelectedAssignment(a)}
+                className="hover:bg-slate-50/50 transition-colors group cursor-pointer"
+              >
                 <td className="py-4 px-5">
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-500 flex-shrink-0">
                       <BookOpen className="w-4 h-4" />
                     </div>
-                    <span className="font-semibold text-slate-800">{a.title}</span>
+                    <span className="font-semibold text-slate-800 group-hover:text-indigo-600 transition-colors">{a.title}</span>
                   </div>
                 </td>
                 <td className="py-4 px-4 font-medium text-slate-600">{a.batchLabel}</td>
@@ -85,10 +110,13 @@ export function TeacherAssignments() {
                 </td>
                 <td className="py-4 px-4 text-right">
                   <button
-                    onClick={() => handleAssignmentClick(a.batchId)}
-                    className="inline-flex items-center gap-1 text-[12px] font-bold text-indigo-600 hover:text-indigo-800 transition-colors opacity-0 group-hover:opacity-100"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedAssignment(a);
+                    }}
+                    className="inline-flex items-center gap-1 text-[12px] font-bold text-indigo-600 hover:text-indigo-800 transition-colors"
                   >
-                    View <ChevronRight className="w-3 h-3" />
+                    View Submissions <ChevronRight className="w-3 h-3" />
                   </button>
                 </td>
               </tr>

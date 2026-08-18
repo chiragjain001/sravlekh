@@ -1,26 +1,58 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type ElementType } from 'react';
 import { User, Bell, Shield, Mail, Phone, BookOpen, Calendar, CheckCircle2, LogOut } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { teacherProfile } from '@/lib/mock-data/teacher';
+import { useAuth } from '@/contexts/auth.context';
+import { ConfirmDialog } from '@/components/ui/foundation';
 
 const TABS = ['Profile', 'Preferences', 'Security'] as const;
 type Tab = typeof TABS[number];
 
 export function TeacherSettings() {
+  const { logout } = useAuth();
   const [tab, setTab]           = useState<Tab>('Profile');
-  const [notifications, setNot] = useState({
-    doubts:      true,
-    submissions: true,
-    testRemind:  true,
-    weeklyDigest:false,
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [notifications, setNot] = useState(() => {
+    // Rehydrate from localStorage if previously saved
+    try {
+      const stored = localStorage.getItem('aios_teacher_notif_prefs');
+      if (stored) return JSON.parse(stored);
+    } catch { /* ignore */ }
+    return {
+      doubts:      true,
+      submissions: true,
+      testRemind:  true,
+      weeklyDigest:false,
+    };
   });
 
+
   const toggle = (k: keyof typeof notifications) =>
-    setNot(prev => ({ ...prev, [k]: !prev[k] }));
+    setNot((prev: typeof notifications) => ({ ...prev, [k]: !prev[k] }));
+
+  const handleSavePreferences = () => {
+    try {
+      localStorage.setItem('aios_teacher_notif_prefs', JSON.stringify(notifications));
+      toast.success('Preferences saved successfully.');
+    } catch {
+      toast.error('Failed to save preferences.');
+    }
+  };
 
   return (
     <div className="p-6 animate-fadein space-y-6">
+      {/* Logout Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={showLogoutConfirm}
+        title="Log out of all devices"
+        description="This will immediately end all active sessions across every device. You will need to log in again."
+        confirmLabel="Log Out Everywhere"
+        variant="danger"
+        onConfirm={() => { setShowLogoutConfirm(false); logout(); }}
+        onCancel={() => setShowLogoutConfirm(false)}
+      />
       <div>
         <h1 className="text-[22px] font-bold text-slate-800">Settings</h1>
         <p className="text-[13px] text-slate-500 mt-0.5">Manage your account preferences and notification settings.</p>
@@ -33,7 +65,7 @@ export function TeacherSettings() {
             { id: 'Profile',     icon: User,   sub: 'Your information'     },
             { id: 'Preferences', icon: Bell,   sub: 'Notifications'        },
             { id: 'Security',    icon: Shield, sub: 'Connected accounts'   },
-          ] as { id: Tab; icon: React.ElementType; sub: string }[]).map(t => (
+          ] as { id: Tab; icon: ElementType; sub: string }[]).map(t => (
             <button key={t.id} onClick={() => setTab(t.id)}
               className={`flex items-center gap-3 p-3 rounded-xl text-left transition-all ${
                 tab === t.id ? 'bg-indigo-50 border border-indigo-100 shadow-sm' : 'border border-transparent hover:bg-slate-50'
@@ -107,7 +139,7 @@ export function TeacherSettings() {
                   { key: 'submissions',  label: 'Assignment Submissions',     desc: 'When students submit assignments'        },
                   { key: 'testRemind',   label: 'Test Reminders',            desc: 'Reminder 24 hours before a scheduled test'},
                   { key: 'weeklyDigest', label: 'Weekly Performance Summary', desc: 'A weekly digest of your class performance'},
-                ] as { key: keyof typeof notifications; label: string; desc: string }[]).map(s => (
+                ] as { key: keyof typeof notifications & string; label: string; desc: string }[]).map(s => (
                   <div key={s.key} className="flex items-center justify-between p-4 border border-slate-100 rounded-xl hover:border-slate-200 transition-colors">
                     <div>
                       <p className="text-[13.5px] font-bold text-slate-800">{s.label}</p>
@@ -121,7 +153,8 @@ export function TeacherSettings() {
                 ))}
               </div>
 
-              <button className="px-6 py-2.5 bg-indigo-600 text-white text-[13px] font-bold rounded-xl hover:bg-indigo-700 transition-colors shadow-sm">
+              <button onClick={handleSavePreferences}
+                className="px-6 py-2.5 bg-indigo-600 text-white text-[13px] font-bold rounded-xl hover:bg-indigo-700 transition-colors shadow-sm">
                 Save Preferences
               </button>
             </div>
@@ -168,7 +201,7 @@ export function TeacherSettings() {
                   <LogOut className="w-4 h-4" /> Active Sessions
                 </h4>
                 <p className="text-[12.5px] text-rose-600/80 mb-4">If you notice any suspicious activity, you can log out of all other devices immediately.</p>
-                <button className="px-5 py-2 bg-rose-100 text-rose-700 border border-rose-200 hover:bg-rose-600 hover:text-white text-[12px] font-bold rounded-xl transition-colors">
+                <button onClick={() => setShowLogoutConfirm(true)} className="px-5 py-2 bg-rose-100 text-rose-700 border border-rose-200 hover:bg-rose-600 hover:text-white text-[12px] font-bold rounded-xl transition-colors">
                   Log out of all devices
                 </button>
               </div>

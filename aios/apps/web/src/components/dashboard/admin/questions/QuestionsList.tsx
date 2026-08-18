@@ -116,7 +116,7 @@ export function QuestionsList() {
                     <td className="px-6 py-4 text-navy-700">{q.marks} ({q.negativeMarks})</td>
                     <td className="px-6 py-4">
                       <span className={q.isApproved ? 'chip-success' : 'chip-navy'}>
-                        {q.isApproved ? 'Approved' : 'Draft'}
+                        {q.isApproved ? 'Approved' : 'Pending'}
                       </span>
                     </td>
                     <td className="px-6 py-4 text-right">

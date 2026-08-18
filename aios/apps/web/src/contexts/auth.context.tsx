@@ -28,41 +28,71 @@ const TOKEN_KEY = 'aios_access_token';
 const USER_KEY  = 'aios_user';
 
 // ── Mock users for test mode ───────────────────────────────────────────────────
+import { DEFAULT_PERMISSIONS_BY_ROLE } from '@/lib/permissions/rbac';
+import { DEMO_FEATURE_FLAGS } from '@/lib/feature-flags';
+import type { AcademicSession, BranchConfig, InstituteConfig, FeatureFlags } from '@/types/academic-context.types';
+
+const DEMO_SESSION: AcademicSession = {
+  id: '2025-26', label: 'Academic Year 2025-26',
+  startDate: '2025-04-01', endDate: '2026-03-31', isActive: true,
+};
+
+const DEMO_BRANCH_CONFIG: Pick<BranchConfig, 'name' | 'city' | 'timezone' | 'activeExams'> = {
+  name: 'Ahmedabad Main Branch', city: 'Ahmedabad',
+  timezone: 'Asia/Kolkata', activeExams: ['jee-main', 'neet-ug'],
+};
+
+const DEMO_INSTITUTE_CONFIG: Pick<InstituteConfig, 'name' | 'type' | 'logo' | 'theme' | 'activeExams'> = {
+  name: 'Sarvlekh Academy', type: 'COACHING', logo: null,
+  theme: { primaryColor: '#4f46e5', secondaryColor: '#7c3aed', logoUrl: null },
+  activeExams: [],
+};
 
 const MOCK_USERS: Record<string, AuthenticatedUser> = {
   STUDENT: {
-    id: 'mock-student-001',
-    email: 'aryan@aios.test',
-    name: 'Aryan Sharma',
-    role: 'STUDENT',
-    instituteId: 'inst-001',
-    avatarUrl: undefined,
+    id: 'mock-student-001', email: 'aryan@aios.test', name: 'Aryan Sharma',
+    role: 'STUDENT', avatarUrl: undefined, avatarInitials: 'AS',
+    instituteId: 'inst-001', branchId: 'branch-001', sessionId: '2025-26',
+    studentId: 'STU-002',
+    permissions: DEFAULT_PERMISSIONS_BY_ROLE['STUDENT'],
+    featureFlags: DEMO_FEATURE_FLAGS,
+    instituteConfig: DEMO_INSTITUTE_CONFIG,
+    branchConfig: DEMO_BRANCH_CONFIG,
+    activeSessions: [DEMO_SESSION],
   },
   TEACHER: {
-    id: 'mock-teacher-001',
-    email: 'rahul@aios.test',
-    name: 'Rahul Verma',
-    role: 'TEACHER',
-    instituteId: 'inst-001',
-    avatarUrl: undefined,
+    id: 'mock-teacher-001', email: 'rahul@aios.test', name: 'Rahul Verma',
+    role: 'TEACHER', avatarUrl: undefined, avatarInitials: 'RV',
+    instituteId: 'inst-001', branchId: 'branch-001', sessionId: '2025-26',
+    teacherId: 'TCH-2023-042',
+    permissions: DEFAULT_PERMISSIONS_BY_ROLE['TEACHER'],
+    featureFlags: DEMO_FEATURE_FLAGS,
+    instituteConfig: DEMO_INSTITUTE_CONFIG,
+    branchConfig: DEMO_BRANCH_CONFIG,
+    activeSessions: [DEMO_SESSION],
   },
   ADMIN: {
-    id: 'mock-admin-001',
-    email: 'neha@aios.test',
-    name: 'Neha Malhotra',
-    role: 'ADMIN',
-    instituteId: 'inst-001',
-    avatarUrl: undefined,
+    id: 'mock-admin-001', email: 'neha@aios.test', name: 'Neha Malhotra',
+    role: 'ADMIN', avatarUrl: undefined, avatarInitials: 'NM',
+    instituteId: 'inst-001', branchId: 'branch-001', sessionId: '2025-26',
+    permissions: DEFAULT_PERMISSIONS_BY_ROLE['ADMIN'],
+    featureFlags: DEMO_FEATURE_FLAGS,
+    instituteConfig: DEMO_INSTITUTE_CONFIG,
+    branchConfig: DEMO_BRANCH_CONFIG,
+    activeSessions: [DEMO_SESSION],
   },
   FOUNDER: {
-    id: 'mock-founder-001',
-    email: 'admin@aios.platform',
-    name: 'Super Admin',
-    role: 'FOUNDER',
-    instituteId: 'platform',
-    avatarUrl: undefined,
+    id: 'mock-founder-001', email: 'admin@aios.platform', name: 'Super Admin',
+    role: 'FOUNDER', avatarUrl: undefined, avatarInitials: 'SA',
+    instituteId: 'platform', branchId: 'platform', sessionId: '2025-26',
+    permissions: DEFAULT_PERMISSIONS_BY_ROLE['FOUNDER'],
+    featureFlags: DEMO_FEATURE_FLAGS,
+    instituteConfig: DEMO_INSTITUTE_CONFIG,
+    branchConfig: DEMO_BRANCH_CONFIG,
+    activeSessions: [DEMO_SESSION],
   },
 };
+
 
 // ── Provider ───────────────────────────────────────────────────────────────────
 

@@ -2,26 +2,52 @@
 
 import { useState } from 'react';
 import { Video, Plus, Calendar, Users, MapPin, Search } from 'lucide-react';
-import { extraClasses, batches, batchWeakTopics } from '@/lib/mock-data/teacher';
+import toast from 'react-hot-toast';
+import { extraClasses as initialExtraClasses, batches, batchWeakTopics } from '@/lib/mock-data/teacher';
 import { useDashboardStore } from '@/store/dashboard-store';
+import { ScheduleExtraClassModal } from '@/components/dashboard/teacher/shared/ScheduleExtraClassModal';
 
 export function TeacherRemedialExtraClass() {
-  const { setTeacherNav, setTeacherCtx } = useDashboardStore();
+  const { teacherCtx, setTeacherNav, setTeacherCtx } = useDashboardStore();
   const [searchTerm, setSearchTerm] = useState('');
+  const [sessions, setSessions] = useState(initialExtraClasses);
 
-  const enrichedClasses = extraClasses.map(ec => ({
+  // Modal State
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalBatchId, setModalBatchId] = useState('');
+  const [modalTopic, setModalTopic] = useState('');
+
+  const handleOpenSchedule = (batchId = '', topic = '') => {
+    setModalBatchId(batchId);
+    setModalTopic(topic);
+    setModalOpen(true);
+  };
+
+  const enrichedClasses = sessions.map(ec => ({
     ...ec,
     batchLabel: batches.find(b => b.id === ec.batchId)?.label || ec.batchId
   })).filter(ec => ec.topic.toLowerCase().includes(searchTerm.toLowerCase()));
 
   return (
     <div className="p-6 animate-fadein space-y-6 max-w-6xl mx-auto">
+      <ScheduleExtraClassModal
+        isOpen={modalOpen}
+        onClose={() => setModalOpen(false)}
+        initialBatchId={modalBatchId}
+        initialTopic={modalTopic}
+        onSchedule={(newSession) => {
+          setSessions(prev => [newSession, ...prev]);
+          toast.success('Extra class scheduled successfully!');
+        }}
+      />
+
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-[22px] font-bold text-slate-800">Remedial & Extra Classes</h1>
           <p className="text-[13px] text-slate-500 mt-0.5">Manage extra sessions and address weak topics across all your batches.</p>
         </div>
         <button
+          onClick={() => handleOpenSchedule()}
           className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white text-[13px] font-bold rounded-xl hover:bg-indigo-700 transition-colors shadow-sm"
         >
           <Plus className="w-4 h-4" /> Schedule Extra Class
@@ -78,7 +104,14 @@ export function TeacherRemedialExtraClass() {
 
                 <button
                   onClick={() => {
-                    setTeacherCtx({ batchId: session.batchId, batchTab: 'extra-classes' });
+                    setTeacherCtx({
+                      classId: session.batchId.startsWith('12') ? '12' : '11',
+                      subjectId: teacherCtx.subjectId || 'physics',
+                      batchId: session.batchId,
+                      batchTab: 'extra-classes',
+                      studentId: null,
+                      testId: null,
+                    });
                     setTeacherNav('classes');
                   }}
                   className="w-full py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 text-[12.5px] font-bold rounded-xl transition-colors border border-slate-200"
@@ -110,7 +143,10 @@ export function TeacherRemedialExtraClass() {
                       <span className="text-[10px] font-bold bg-white border border-rose-200 text-rose-600 px-1.5 py-0.5 rounded">Batch {batches.find(b => b.id === batchId)?.label || batchId}</span>
                     </div>
                     <p className="text-[11.5px] text-slate-600 mb-3">{t.weakCount} students struggling. Avg score: {t.avgScore}%</p>
-                    <button className="text-[11.5px] font-bold text-rose-600 hover:text-rose-800 flex items-center gap-1">
+                    <button
+                      onClick={() => handleOpenSchedule(batchId, t.topic)}
+                      className="text-[11.5px] font-bold text-rose-600 hover:text-rose-800 flex items-center gap-1 transition-colors"
+                    >
                       <Plus className="w-3 h-3" /> Schedule Remedial
                     </button>
                   </div>
@@ -123,3 +159,4 @@ export function TeacherRemedialExtraClass() {
     </div>
   );
 }
+

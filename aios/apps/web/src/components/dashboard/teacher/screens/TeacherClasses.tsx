@@ -1,6 +1,6 @@
 'use client';
 
-import { ChevronRight, TrendingUp, TrendingDown, Minus, AlertCircle } from 'lucide-react';
+import { ChevronRight, TrendingUp, TrendingDown, Minus, AlertCircle, Users2 } from 'lucide-react';
 import {
   teacherProfile, classes, subjects,
   getBatchesByClassSubject, getTestsByBatch, getAssignmentsByBatch,
@@ -9,9 +9,11 @@ import {
   evaluations, testQuestionAnalysis, students,
   studentTopicMastery, studentTestHistory, doubts,
   extraClasses, assignments, tests,
+  getCoTeachersByBatch,
 } from '@/lib/mock-data/teacher';
 import { useDashboardStore } from '@/store/dashboard-store';
 import type { BatchTab } from '@/store/dashboard-store';
+import { useSwitchBatch } from '@/contexts/academic-context';
 
 // ─── Sub-screens ─────────────────────────────────────────────────────────────
 import { BatchOverview }    from '../batch/BatchOverview';
@@ -61,6 +63,19 @@ const BATCH_TABS: { key: BatchTab; label: string }[] = [
 export function TeacherClasses() {
   const { teacherCtx, setTeacherCtx } = useDashboardStore();
   const { classId, subjectId, batchId, batchTab, studentId } = teacherCtx;
+  const switchBatch = useSwitchBatch();
+
+  // When teacher selects a batch, set the AcademicContext (clears stale cache + emits event)
+  const handleSelectBatch = (newBatchId: string, newSubjectId: string) => {
+    switchBatch(newBatchId, classId ?? undefined);
+    setTeacherCtx({
+      subjectId: newSubjectId,
+      batchId: newBatchId,
+      batchTab: 'overview',
+      studentId: null,
+      testId: null,
+    });
+  };
 
   // Assigned classes filtered to this teacher
   const myClasses = classes.filter(c =>
@@ -82,7 +97,7 @@ export function TeacherClasses() {
             return (
               <button
                 key={cls.id}
-                onClick={() => setTeacherCtx({ classId: cls.id })}
+                onClick={() => setTeacherCtx({ classId: cls.id, batchId: null, studentId: null, testId: null, batchTab: 'overview' })}
                 className="w-full flex items-center justify-between p-5 border border-slate-100 rounded-2xl hover:border-indigo-200 hover:shadow-md hover:bg-indigo-50/20 transition-all text-left group"
               >
                 <div>
@@ -106,7 +121,7 @@ export function TeacherClasses() {
     return (
       <div className="p-6 animate-fadein">
         <Breadcrumb parts={[
-          { label: 'My Classes', onClick: () => setTeacherCtx({ classId: null }) },
+          { label: 'My Classes', onClick: () => setTeacherCtx({ classId: null, batchId: null, studentId: null, testId: null }) },
           { label: selectedClass?.label ?? classId },
         ]} />
 
@@ -119,7 +134,7 @@ export function TeacherClasses() {
                 {batchList.map(b => (
                   <button
                     key={b.id}
-                    onClick={() => setTeacherCtx({ subjectId: sub.id, batchId: b.id, batchTab: 'overview' })}
+                    onClick={() => handleSelectBatch(b.id, sub.id)}
                     className="text-left p-5 border border-slate-100 rounded-2xl hover:border-indigo-200 hover:shadow-md hover:bg-indigo-50/10 transition-all group"
                   >
                     <div className="flex items-center justify-between mb-4">
@@ -194,8 +209,8 @@ export function TeacherClasses() {
   return (
     <div className="p-6 animate-fadein">
       <Breadcrumb parts={[
-        { label: 'My Classes', onClick: () => setTeacherCtx({ classId: null, batchId: null }) },
-        { label: cls?.label ?? classId, onClick: () => setTeacherCtx({ batchId: null }) },
+        { label: 'My Classes', onClick: () => setTeacherCtx({ classId: null, batchId: null, studentId: null, testId: null }) },
+        { label: cls?.label ?? classId, onClick: () => setTeacherCtx({ batchId: null, studentId: null, testId: null }) },
         { label: `${batch?.label ?? batchId} ${sub?.label ?? ''}` },
       ]} />
 
@@ -214,11 +229,35 @@ export function TeacherClasses() {
         ))}
       </div>
 
+      {/* Co-Teacher Awareness Panel */}
+      {(() => {
+        const coTeachers = getCoTeachersByBatch(batchId);
+        return coTeachers.length > 0 ? (
+          <div className="mb-4 p-4 bg-sky-50 border border-sky-200 rounded-2xl">
+            <div className="flex items-center gap-2 mb-3">
+              <Users2 className="w-4 h-4 text-sky-500" />
+              <p className="text-[13px] font-bold text-sky-800">Other Teachers in This Batch</p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              {coTeachers.map(ct => (
+                <div key={ct.id} className="flex items-center gap-2.5 bg-white border border-sky-100 rounded-xl px-3 py-2">
+                  <div className="w-7 h-7 rounded-full bg-sky-100 text-sky-700 flex items-center justify-center text-[10px] font-black">{ct.initials}</div>
+                  <div>
+                    <p className="text-[12.5px] font-bold text-slate-800">{ct.name}</p>
+                    <p className="text-[11px] text-slate-500">{ct.subject} · Last taught {ct.lastTaught} · {ct.topicsCovered} topics</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null;
+      })()}
+
       {/* Tab Content */}
       {batchTab === 'overview'      && <BatchOverview     batch={batch!} briefing={batchBriefing} students={batchStudents} tests={batchTests} />}
       {batchTab === 'students'      && <BatchStudents     students={batchStudents} onSelectStudent={(id) => setTeacherCtx({ studentId: id })} />}
-      {batchTab === 'tests'         && <BatchTests        tests={batchTests} evaluations={evaluations} questionAnalysis={testQuestionAnalysis} />}
-      {batchTab === 'assignments'   && <BatchAssignments  assignments={batchAssignments} batchStrength={batch?.strength ?? 0} />}
+      {batchTab === 'tests'         && <BatchTests        tests={batchTests} evaluations={evaluations} questionAnalysis={testQuestionAnalysis} batchId={batchId ?? undefined} />}
+      {batchTab === 'assignments'   && <BatchAssignments  assignments={batchAssignments} batchStrength={batch?.strength ?? 0} batchId={batchId} />}
       {batchTab === 'weak-topics'   && <BatchWeakTopics   weakTopics={batchWeak} topicWeakStudents={topicWeakStudents} onSelectStudent={(id) => setTeacherCtx({ studentId: id, batchTab: 'students' })} />}
       {batchTab === 'extra-classes' && <BatchExtraClasses sessions={batchExtra} />}
     </div>

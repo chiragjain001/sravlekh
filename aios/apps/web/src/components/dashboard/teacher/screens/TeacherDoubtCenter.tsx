@@ -22,7 +22,8 @@ export function TeacherDoubtCenter() {
   const [resolved,  setResolved]  = useState<string[]>([]);
 
   const filtered = doubts.filter(d => {
-    const matchStatus   = statusF   === 'All' || d.status   === statusF;
+    const effectiveStatus = resolved.includes(d.id) ? 'resolved' : d.status;
+    const matchStatus   = statusF   === 'All' || effectiveStatus === statusF;
     const matchPriority = priorityF === 'All' || d.priority === priorityF;
     const matchSearch   = search === '' ||
       d.studentName.toLowerCase().includes(search.toLowerCase()) ||
@@ -42,7 +43,7 @@ export function TeacherDoubtCenter() {
 
   const pending  = doubts.filter(d => d.status === 'pending' && !resolved.includes(d.id)).length;
   const total    = doubts.length;
-  const resCount = doubts.filter(d => d.status === 'resolved').length + resolved.length;
+  const resCount = doubts.filter(d => d.status === 'resolved' || resolved.includes(d.id)).length;
 
   return (
     <div className="p-6 animate-fadein space-y-6">
@@ -73,19 +74,37 @@ export function TeacherDoubtCenter() {
         <div className="xl:col-span-2 space-y-3">
           {/* Filters */}
           <div className="flex flex-wrap gap-2">
-            {(['All', 'pending', 'resolved'] as StatusFilter[]).map(f => (
-              <button key={f} onClick={() => setStatusF(f)}
-                className={`px-3 py-1.5 text-[12px] font-bold rounded-xl capitalize transition-all ${
-                  statusF === f ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}>{f}</button>
-            ))}
+            <div role="tablist" aria-label="Doubt status filters" className="flex gap-1">
+              {(['All', 'pending', 'resolved'] as StatusFilter[]).map(f => (
+                <button
+                  key={f}
+                  role="tab"
+                  aria-selected={statusF === f}
+                  onClick={() => setStatusF(f)}
+                  className={`px-3 py-1.5 text-[12px] font-bold rounded-xl capitalize transition-all ${
+                    statusF === f ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
             <div className="w-px h-5 bg-slate-200 self-center" />
-            {(['All', 'high', 'medium', 'low'] as PriorityFilter[]).map(p => (
-              <button key={p} onClick={() => setPriorityF(p)}
-                className={`px-3 py-1.5 text-[12px] font-bold rounded-xl capitalize transition-all ${
-                  priorityF === p ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}>{p}</button>
-            ))}
+            <div role="tablist" aria-label="Doubt priority filters" className="flex gap-1">
+              {(['All', 'high', 'medium', 'low'] as PriorityFilter[]).map(p => (
+                <button
+                  key={p}
+                  role="tab"
+                  aria-selected={priorityF === p}
+                  onClick={() => setPriorityF(p)}
+                  className={`px-3 py-1.5 text-[12px] font-bold rounded-xl capitalize transition-all ${
+                    priorityF === p ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="relative">
             <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />

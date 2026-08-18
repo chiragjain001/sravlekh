@@ -1,21 +1,26 @@
-import { create } from 'zustand';
+// ─── dashboard-store.ts ───────────────────────────────────────────────────────
+// MIGRATED: This file now re-exports from the new role-specific stores.
+// All new code should import directly from the source stores.
+// This file exists ONLY for backward compatibility during gradual migration.
+//
+// Migration guide:
+//   OLD: useDashboardStore(s => s.teacherNav)
+//   NEW: useTeacherStore(s => s.teacherNav)
+//
+//   OLD: useDashboardStore(s => s.teacherCtx)
+//   NEW: useAcademicContextStore(s => s.ctx)
+//
+//   OLD: useDashboardStore(s => s.sidebarCollapsed)
+//   NEW: useUIStore(s => s.sidebarCollapsed)
 
-// ─── Teacher hierarchical navigation context ────────────────────────────────
-export type TeacherTopNav =
-  | 'today'            // Overview
-  | 'classes'          // My Classes
-  | 'paper-builder'    // Paper Builder
-  | 'question-bank'    // Question Bank
-  | 'tests-exams'      // Tests & Exams
-  | 'evaluation-queue' // Evaluation Queue
-  | 'analytics'        // Analytics
-  | 'assignments'      // Assignments
-  | 'remedial-extra'   // Remedial & Extra Class
-  | 'doubt-center'     // Doubt Center
-  | 'timetable'        // Time Table
-  | 'reports'          // Reports
-  | 'settings';        // Settings
+// ── Re-exports for backward compatibility ─────────────────────────────────────
+export { useTeacherStore } from './teacher-store';
+export type { TeacherTopNav } from './teacher-store';
+export { useAcademicContextStore } from './academic-context-store';
+export { useUIStore, useNotificationStore, useDraftStore, useFilterStore } from './ui-stores';
+export { useStudentStore, useAdminStore, useFounderStore } from './role-stores';
 
+// ── Legacy types (kept for any code still importing from here)
 export type BatchTab =
   | 'overview'
   | 'students'
@@ -25,71 +30,71 @@ export type BatchTab =
   | 'extra-classes';
 
 export interface TeacherContext {
-  classId:   string | null;   // e.g. "11", "12", "dropper"
-  subjectId: string | null;   // e.g. "physics"
-  batchId:   string | null;   // e.g. "11A", "11B"
+  classId:   string | null;
+  subjectId: string | null;
+  batchId:   string | null;
   batchTab:  BatchTab;
-  studentId: string | null;   // e.g. "STU-001"
-  testId:    string | null;   // e.g. "T1"
+  studentId: string | null;
+  testId:    string | null;
 }
 
-interface DashboardStore {
-  sidebarCollapsed: boolean;
-  toggleSidebar: () => void;
-  setSidebarCollapsed: (v: boolean) => void;
+// ── Legacy useDashboardStore hook ─────────────────────────────────────────────
+// Provides the OLD interface by composing from new stores.
+// Remove usages one component at a time and delete this when done.
+import { useTeacherStore } from './teacher-store';
+import { useAcademicContextStore } from './academic-context-store';
+import { useUIStore } from './ui-stores';
+import { useStudentStore, useAdminStore, useFounderStore } from './role-stores';
+import type { TeacherTopNav } from './teacher-store';
 
-  // ── Student ──────────────────────────────────────────────────────────────
-  studentActiveNav: string;
-  setStudentActiveNav: (nav: string) => void;
+export function useDashboardStore() {
+  const teacherNav    = useTeacherStore(s => s.teacherNav);
+  const setTeacherNav = useTeacherStore(s => s.setTeacherNav);
+  const ctx           = useAcademicContextStore(s => s.ctx);
+  const setCtx        = useAcademicContextStore(s => s.setCtx);
+  const resetCtx      = useAcademicContextStore(s => s.resetCtx);
+  const sidebar       = useUIStore(s => s.sidebarCollapsed);
+  const toggleSidebar = useUIStore(s => s.toggleSidebar);
+  const setSidebarCollapsed = useUIStore(s => s.setSidebarCollapsed);
+  const studentNav    = useStudentStore(s => s.studentNav);
+  const setStudentNav = useStudentStore(s => s.setStudentNav);
+  const adminNav      = useAdminStore(s => s.adminNav);
+  const setAdminNav   = useAdminStore(s => s.setAdminNav);
+  const founderNav    = useFounderStore(s => s.founderNav);
+  const setFounderNav = useFounderStore(s => s.setFounderNav);
 
-  // ── Teacher — hierarchical ────────────────────────────────────────────────
-  teacherNav: TeacherTopNav;
-  teacherCtx: TeacherContext;
-  setTeacherNav:   (nav: TeacherTopNav) => void;
-  setTeacherCtx:   (ctx: Partial<TeacherContext>) => void;
-  resetTeacherCtx: () => void;
+  return {
+    // ── Sidebar
+    sidebarCollapsed: sidebar,
+    toggleSidebar,
+    setSidebarCollapsed,
 
-  // ── Admin / Founder ────────────────────────────────────────────────────────
-  adminActiveNav:   string;
-  founderActiveNav: string;
-  setAdminActiveNav:   (nav: string) => void;
-  setFounderActiveNav: (nav: string) => void;
+    // ── Teacher (maps new store to old interface)
+    teacherNav,
+    setTeacherNav: (nav: TeacherTopNav) => setTeacherNav(nav),
+    teacherActiveNav: teacherNav,
+    setTeacherActiveNav: (nav: string) => setTeacherNav(nav as TeacherTopNav),
 
-  // Legacy alias — keeps student/admin pages working unchanged
-  teacherActiveNav: string;
-  setTeacherActiveNav: (nav: string) => void;
+    // teacherCtx maps to new AcademicContext (partial compatibility)
+    teacherCtx: {
+      classId:   ctx.classId,
+      subjectId: ctx.subjectId,
+      batchId:   ctx.batchId,
+      batchTab:  ctx.batchTab,
+      studentId: ctx.studentId,
+      testId:    ctx.testId,
+    } as TeacherContext,
+    setTeacherCtx: (patch: Partial<TeacherContext>) => setCtx(patch),
+    resetTeacherCtx: () => resetCtx(),
+
+    // ── Student
+    studentActiveNav: studentNav,
+    setStudentActiveNav: (nav: string) => setStudentNav(nav as any),
+
+    // ── Admin / Founder
+    adminActiveNav:   adminNav,
+    founderActiveNav: founderNav,
+    setAdminActiveNav:   (nav: string) => setAdminNav(nav as any),
+    setFounderActiveNav: (nav: string) => setFounderNav(nav as any),
+  };
 }
-
-const DEFAULT_TEACHER_CTX: TeacherContext = {
-  classId:   null,
-  subjectId: null,
-  batchId:   null,
-  batchTab:  'overview',
-  studentId: null,
-  testId:    null,
-};
-
-export const useDashboardStore = create<DashboardStore>((set, get) => ({
-  sidebarCollapsed: false,
-  toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
-  setSidebarCollapsed: (v) => set({ sidebarCollapsed: v }),
-
-  studentActiveNav: 'Overview',
-  setStudentActiveNav: (nav) => set({ studentActiveNav: nav }),
-
-  teacherNav: 'today',
-  teacherCtx: DEFAULT_TEACHER_CTX,
-  setTeacherNav: (nav) => set({ teacherNav: nav, teacherCtx: DEFAULT_TEACHER_CTX }),
-  setTeacherCtx: (ctx) => set((s) => ({ teacherCtx: { ...s.teacherCtx, ...ctx } })),
-  resetTeacherCtx: () => set({ teacherCtx: DEFAULT_TEACHER_CTX }),
-
-  adminActiveNav:   'Dashboard',
-  founderActiveNav: 'Overview',
-  setAdminActiveNav:   (nav) => set({ adminActiveNav: nav }),
-  setFounderActiveNav: (nav) => set({ founderActiveNav: nav }),
-
-  // Legacy alias — teacherActiveNav maps to teacherNav label
-  get teacherActiveNav() { return get().teacherNav; },
-  setTeacherActiveNav: (nav) => set({ teacherNav: nav as TeacherTopNav }),
-}));
-

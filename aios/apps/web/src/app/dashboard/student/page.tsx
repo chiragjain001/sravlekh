@@ -1,5 +1,6 @@
 'use client';
 
+import { Suspense } from 'react';
 import { useAuth } from '@/contexts/auth.context';
 import { Sidebar } from '@/components/shared/Sidebar';
 import { TopHeader } from '@/components/shared/TopHeader';
@@ -20,9 +21,15 @@ import { StudentLeaderboard } from '@/components/dashboard/student/StudentLeader
 import { StudentResources } from '@/components/dashboard/student/StudentResources';
 import { StudentSettings } from '@/components/dashboard/student/StudentSettings';
 
-export default function StudentDashboardPage() {
+import { useNavigationHistory } from '@/hooks/useNavigationHistory';
+
+// ── Inner component — uses useNavigationHistory (which calls useSearchParams)
+// Must be wrapped in <Suspense> at the page level per Next.js 14 requirements.
+function StudentDashboardInner() {
   const { logout } = useAuth();
   const { studentActiveNav, setStudentActiveNav } = useDashboardStore();
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { canGoBack, previousNav, goBack } = useNavigationHistory('student');
 
   const renderContent = () => {
     switch (studentActiveNav) {
@@ -41,7 +48,7 @@ export default function StudentDashboardPage() {
       default:
         return (
           <div className="flex items-center justify-center h-[50vh] text-slate-400 animate-fadein">
-            <p>Section "{studentActiveNav}" is under construction.</p>
+            <p>Section &quot;{studentActiveNav}&quot; is under construction.</p>
           </div>
         );
     }
@@ -49,7 +56,6 @@ export default function StudentDashboardPage() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-bg">
-      {/* Sidebar */}
       <Sidebar
         role="STUDENT"
         userName={d.user.name}
@@ -60,22 +66,27 @@ export default function StudentDashboardPage() {
         onNavChange={setStudentActiveNav}
         onLogout={logout}
       />
-
-      {/* Main Content */}
       <div className="flex-1 overflow-y-auto min-w-0 flex flex-col">
-        {/* Top Header */}
         <TopHeader
-          greeting={`Good Morning, ${d.user.name.split(' ')[0]}! ☀️`}
-          subtitle="Let's make today productive and impactful."
-          showStreak
+          greeting={studentActiveNav === 'Overview' ? `Good Morning, ${d.user.name.split(' ')[0]}! ☀️` : studentActiveNav}
+          subtitle={studentActiveNav === 'Overview' ? "Let's make today productive and impactful." : `View and manage your ${studentActiveNav.toLowerCase()}`}
+          showStreak={studentActiveNav === 'Overview'}
           streakCount={d.user.streak}
         />
-
-        {/* Dynamic Section Content */}
-        <div className="flex-1">
-          {renderContent()}
-        </div>
+        <div className="flex-1">{renderContent()}</div>
       </div>
     </div>
+  );
+}
+
+export default function StudentDashboardPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex h-screen items-center justify-center bg-bg text-slate-400 text-[14px]">
+        Loading…
+      </div>
+    }>
+      <StudentDashboardInner />
+    </Suspense>
   );
 }

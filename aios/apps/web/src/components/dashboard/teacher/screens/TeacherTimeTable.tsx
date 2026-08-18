@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { Calendar as CalendarIcon, Clock, MapPin, Search } from 'lucide-react';
 import { weeklyTimetable, batches } from '@/lib/mock-data/teacher';
 import { useDashboardStore } from '@/store/dashboard-store';
@@ -7,11 +8,35 @@ import { useDashboardStore } from '@/store/dashboard-store';
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 
 export function TeacherTimeTable() {
-  const { setTeacherNav, setTeacherCtx } = useDashboardStore();
+  const { teacherCtx, setTeacherNav, setTeacherCtx } = useDashboardStore();
+  // P1-4: search state wired to filter timetable slots
+  const [search, setSearch] = useState('');
+  const q = search.trim().toLowerCase();
 
   const handleSlotClick = (batchId: string) => {
-    setTeacherCtx({ batchId, batchTab: 'overview' });
+    setTeacherCtx({
+      classId: batchId.startsWith('12') ? '12' : '11',
+      subjectId: teacherCtx.subjectId || 'physics',
+      batchId,
+      batchTab: 'overview',
+      studentId: null,
+      testId: null,
+    });
     setTeacherNav('classes');
+  };
+
+  /** Filter a day's slots based on the search query */
+  const filterSlots = (slots: (typeof weeklyTimetable)[keyof typeof weeklyTimetable]) => {
+    if (!q) return slots ?? [];
+    return (slots ?? []).filter(slot => {
+      const batchLabel = batches.find(b => b.id === slot.batchId)?.label ?? slot.batchId;
+      return (
+        slot.topic.toLowerCase().includes(q) ||
+        slot.room.toLowerCase().includes(q) ||
+        batchLabel.toLowerCase().includes(q) ||
+        slot.type.toLowerCase().includes(q)
+      );
+    });
   };
 
   return (
@@ -25,9 +50,14 @@ export function TeacherTimeTable() {
           <Search className="w-4 h-4 text-slate-400 ml-2" />
           <input
             type="text"
-            placeholder="Search classes..."
-            className="w-48 text-[13px] outline-none placeholder:text-slate-400 bg-transparent"
+            placeholder="Search by topic, batch, or room…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="w-52 text-[13px] outline-none placeholder:text-slate-400 bg-transparent"
           />
+          {search && (
+            <button onClick={() => setSearch('')} className="text-slate-400 hover:text-slate-600 text-[11px] font-bold mr-1">✕</button>
+          )}
         </div>
       </div>
 
@@ -38,7 +68,7 @@ export function TeacherTimeTable() {
               {day}
             </div>
             <div className="bg-white border-x border-b border-slate-200 rounded-b-2xl p-3 flex-1 space-y-3 shadow-sm min-h-[500px]">
-              {weeklyTimetable[day]?.map((slot, idx) => {
+              {filterSlots(weeklyTimetable[day]).map((slot, idx) => {
                 const batchLabel = batches.find(b => b.id === slot.batchId)?.label || slot.batchId;
                 return (
                   <div
@@ -77,10 +107,10 @@ export function TeacherTimeTable() {
                   </div>
                 );
               })}
-              {(!weeklyTimetable[day] || weeklyTimetable[day].length === 0) && (
+              {filterSlots(weeklyTimetable[day]).length === 0 && (
                 <div className="h-full flex flex-col items-center justify-center opacity-50 py-10">
                   <CalendarIcon className="w-6 h-6 text-slate-300 mb-2" />
-                  <span className="text-[11px] font-semibold text-slate-400">No classes</span>
+                  <span className="text-[11px] font-semibold text-slate-400 text-center">{q ? 'No matches' : 'No classes'}</span>
                 </div>
               )}
             </div>

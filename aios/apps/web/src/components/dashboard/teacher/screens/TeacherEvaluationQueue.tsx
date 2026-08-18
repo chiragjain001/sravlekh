@@ -5,9 +5,15 @@ import { tests, batches } from '@/lib/mock-data/teacher';
 import { useDashboardStore } from '@/store/dashboard-store';
 
 export function TeacherEvaluationQueue() {
-  const { setTeacherNav, setTeacherCtx } = useDashboardStore();
+  const { teacherCtx, setTeacherNav, setTeacherCtx } = useDashboardStore();
 
   const gradingTests = tests.filter(t => t.status === 'grading');
+
+  // P0-1 fix: derive pending count from actual data, not hardcoded constant
+  const pendingCopiesCount = gradingTests.reduce(
+    (sum, t) => sum + Math.max(0, t.attempted - t.graded),
+    0
+  );
 
   const getProgress = (graded: number, total: number) => {
     if (total === 0) return 0;
@@ -15,7 +21,14 @@ export function TeacherEvaluationQueue() {
   };
 
   const handleStartGrading = (batchId: string, testId: string) => {
-    setTeacherCtx({ batchId, testId, batchTab: 'tests' });
+    setTeacherCtx({
+      classId: batchId.startsWith('12') ? '12' : '11',
+      subjectId: teacherCtx.subjectId || 'physics',
+      batchId,
+      testId,
+      batchTab: 'tests',
+      studentId: null,
+    });
     setTeacherNav('classes');
   };
 
@@ -29,7 +42,7 @@ export function TeacherEvaluationQueue() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
           <p className="text-[13px] font-semibold text-slate-500 mb-1">Total Pending Copies</p>
-          <p className="text-[28px] font-black text-rose-600">39</p>
+          <p className="text-[28px] font-black text-rose-600">{pendingCopiesCount}</p>
         </div>
         <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
           <p className="text-[13px] font-semibold text-slate-500 mb-1">Tests in Queue</p>
@@ -40,8 +53,8 @@ export function TeacherEvaluationQueue() {
             <AlertCircle className="w-4 h-4 text-indigo-200" />
             <p className="text-[13px] font-semibold text-indigo-200">Next Deadline</p>
           </div>
-          <p className="text-[22px] font-bold">Tomorrow, 10:00 AM</p>
-          <p className="text-[12px] text-indigo-300 mt-0.5">JEE Main Mock Test 07</p>
+          <p className="text-[22px] font-bold">{gradingTests[0]?.date ?? 'No deadline'}</p>
+          <p className="text-[12px] text-indigo-300 mt-0.5">{gradingTests[0]?.name ?? '—'}</p>
         </div>
       </div>
 

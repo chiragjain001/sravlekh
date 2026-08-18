@@ -70,11 +70,41 @@ const ROLE_CONFIG: Record<UserRole, { accent: string; badge: string; badgeBg: st
     badgeBg:   'bg-emerald-900/60',
     badgeText: 'text-emerald-300',
   },
+  ACADEMIC_HEAD: {
+    accent:    'bg-teal-500',
+    badge:     'Academic Head',
+    badgeBg:   'bg-teal-900/60',
+    badgeText: 'text-teal-300',
+  },
+  COORDINATOR: {
+    accent:    'bg-cyan-500',
+    badge:     'Coordinator',
+    badgeBg:   'bg-cyan-900/60',
+    badgeText: 'text-cyan-300',
+  },
   ADMIN: {
     accent:    'bg-sky-500',
     badge:     'Admin',
     badgeBg:   'bg-sky-900/60',
     badgeText: 'text-sky-300',
+  },
+  RECEPTIONIST: {
+    accent:    'bg-amber-500',
+    badge:     'Receptionist',
+    badgeBg:   'bg-amber-900/60',
+    badgeText: 'text-amber-300',
+  },
+  ACCOUNTANT: {
+    accent:    'bg-orange-500',
+    badge:     'Accountant',
+    badgeBg:   'bg-orange-900/60',
+    badgeText: 'text-orange-300',
+  },
+  PARENT: {
+    accent:    'bg-pink-500',
+    badge:     'Parent',
+    badgeBg:   'bg-pink-900/60',
+    badgeText: 'text-pink-300',
   },
   FOUNDER: {
     accent:    'bg-violet-500',
@@ -83,6 +113,7 @@ const ROLE_CONFIG: Record<UserRole, { accent: string; badge: string; badgeBg: st
     badgeText: 'text-violet-300',
   },
 };
+
 
 interface SidebarProps {
   role: UserRole;
@@ -173,8 +204,8 @@ export function Sidebar({
               title={sidebarCollapsed ? item : undefined}
               className={`w-full flex items-center gap-3 px-3 py-2 mx-0 rounded-none text-[13px] font-medium transition-all duration-150 cursor-pointer
                 ${isActive
-                  ? 'bg-sidebar-active text-white border-r-2 border-indigo-400'
-                  : 'text-slate-400 hover:bg-sidebar-hover hover:text-slate-200'
+                  ? 'bg-blue-600 text-white font-semibold shadow-sm'
+                  : 'text-slate-400 hover:bg-slate-800/60 hover:text-slate-200'
                 }
                 ${sidebarCollapsed ? 'justify-center px-0' : 'pl-4'}
               `}

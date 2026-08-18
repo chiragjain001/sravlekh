@@ -1,0 +1,136 @@
+// ─── Reports Module: Mock Dataset ──────────────────────────────────────────
+
+import type {
+  ReportItem,
+  ReportsAnalytics,
+} from '../types/reports.types';
+
+export const MOCK_REPORTS_CATALOG: ReportItem[] = [
+  {
+    id:             'rep-1',
+    title:          'JEE Performance Report',
+    category:       'Academic Reports',
+    generatedDate:  '23 May 2025',
+    downloadsCount: 124,
+    downloadsText:  'Downloaded 124 times',
+    fileSize:       '3.2 MB',
+    format:         'PDF',
+    program:        'JEE',
+    batch:          'JEE 2025 Star',
+  },
+  {
+    id:             'rep-2',
+    title:          'Fee Collection Summary',
+    category:       'Financial Reports',
+    generatedDate:  '22 May 2025',
+    downloadsCount: 90,
+    downloadsText:  'Downloaded 90 times',
+    fileSize:       '1.8 MB',
+    format:         'PDF',
+    program:        'NEET',
+    batch:          'NEET 2025 Target',
+  },
+  {
+    id:             'rep-3',
+    title:          'Attendance Summary',
+    category:       'Student Reports',
+    generatedDate:  '21 May 2025',
+    downloadsCount: 87,
+    downloadsText:  'Downloaded 87 times',
+    fileSize:       '2.1 MB',
+    format:         'PDF',
+    program:        'Foundation',
+    batch:          'Foundation 11A',
+  },
+  {
+    id:             'rep-4',
+    title:          'Student Progress Report',
+    category:       'Student Reports',
+    generatedDate:  '20 May 2025',
+    downloadsCount: 76,
+    downloadsText:  'Downloaded 76 times',
+    fileSize:       '4.5 MB',
+    format:         'PDF',
+    program:        'JEE',
+    batch:          'JEE 2025 Star',
+  },
+  {
+    id:             'rep-5',
+    title:          'Teacher Performance Report',
+    category:       'Faculty Reports',
+    generatedDate:  '19 May 2025',
+    downloadsCount: 65,
+    downloadsText:  'Downloaded 65 times',
+    fileSize:       '2.0 MB',
+    format:         'PDF',
+    program:        'NEET',
+    batch:          'NEET 2025 Target',
+  },
+  {
+    id:             'rep-6',
+    title:          'System Health Audit',
+    category:       'Operational Reports',
+    generatedDate:  '18 May 2025',
+    downloadsCount: 48,
+    downloadsText:  'Downloaded 48 times',
+    fileSize:       '1.2 MB',
+    format:         'PDF',
+  },
+  {
+    id:             'rep-7',
+    title:          'NEET Mock Results Summary',
+    category:       'Academic Reports',
+    generatedDate:  '17 May 2025',
+    downloadsCount: 42,
+    downloadsText:  'Downloaded 42 times',
+    fileSize:       '3.8 MB',
+    format:         'PDF',
+    program:        'NEET',
+    batch:          'NEET 2025 Target',
+  },
+];
+
+export const MOCK_REPORTS_ANALYTICS: ReportsAnalytics = {
+  avgAttendance:     92,
+  avgPerformance:    78,
+  passPercentage:    88,
+  feeCollectionRate: 87,
+
+  performanceTrend: [
+    { date: 'Apr 1-7',   Attendance: 84, Performance: 67, PassPercentage: 43 },
+    { date: 'Apr 8-14',  Attendance: 85, Performance: 59, PassPercentage: 34 },
+    { date: 'Apr 15-21', Attendance: 78, Performance: 57, PassPercentage: 32 },
+    { date: 'Apr 22-30', Attendance: 85, Performance: 62, PassPercentage: 38 },
+    { date: 'May 1-7',   Attendance: 89, Performance: 70, PassPercentage: 46 },
+    { date: 'May 8-14',  Attendance: 88, Performance: 67, PassPercentage: 47 },
+    { date: 'May 15-21', Attendance: 89, Performance: 64, PassPercentage: 42 },
+    { date: 'May 22-23', Attendance: 98, Performance: 80, PassPercentage: 55 },
+  ],
+
+  attendanceSummary: [
+    { name: 'Present', value: 2864, color: '#10b981', percent: '92%' },
+    { name: 'Absent',  value: 248,  color: '#ef4444', percent: '8%' },
+    { name: 'Leave',   value: 78,   color: '#f59e0b', percent: '2%' },
+  ],
+
+  topBatches: [
+    { id: 'b-1', name: 'JEE 2025 Star Batch',    score: 91, color: 'bg-blue-600',  students: 42, topper: 'Rohan Verma (98.4%)' },
+    { id: 'b-2', name: 'NEET 2025 Target Batch', score: 88, color: 'bg-teal-500',  students: 38, topper: 'Ananya Sharma (97.1%)' },
+    { id: 'b-3', name: 'Foundation 11A',        score: 84, color: 'bg-emerald-500',students: 54, topper: 'Kabir Mehta (95.0%)' },
+    { id: 'b-4', name: 'JEE 2026 Early Batch',  score: 82, color: 'bg-purple-600', students: 48, topper: 'Priya Singh (94.2%)' },
+    { id: 'b-5', name: 'Foundation 11B',        score: 79, color: 'bg-amber-500',  students: 50, topper: 'Siddharth Roy (92.5%)' },
+  ],
+
+  financialSummary: {
+    totalCollected: '₹24,80,000',
+    totalExpected:  '₹28,50,000',
+    pendingAmount:  '₹3,70,000',
+    collectionRate: 87,
+    batchDuesList: [
+      { batch: 'JEE 2025 Star Batch',    pending: '₹45,000',   students: 3 },
+      { batch: 'NEET 2025 Target Batch', pending: '₹85,000',   students: 6 },
+      { batch: 'Foundation 11A',        pending: '₹1,20,000', students: 11 },
+      { batch: 'JEE 2026 Early Batch',  pending: '₹1,20,000', students: 9 },
+    ],
+  },
+};

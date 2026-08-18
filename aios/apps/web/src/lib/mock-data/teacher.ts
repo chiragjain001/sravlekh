@@ -18,6 +18,38 @@ export const teacherProfile = {
   ],
 };
 
+// ─── Co-Teachers per batch (multi-teacher support) ────────────────────────────
+// Table: batch_teachers  FK: batchId, teacherId
+export const coTeachers: Record<string, { id: string; name: string; subject: string; initials: string; lastTaught: string; topicsCovered: number }[]> = {
+  '11A': [
+    { id: 'TCH-2023-041', name: 'Meera Joshi',   subject: 'Mathematics', initials: 'MJ', lastTaught: '2 May 2025', topicsCovered: 12 },
+    { id: 'TCH-2023-040', name: 'Sunil Kapoor',  subject: 'Chemistry',   initials: 'SK', lastTaught: '1 May 2025', topicsCovered: 9  },
+  ],
+  '11B': [
+    { id: 'TCH-2023-041', name: 'Meera Joshi',   subject: 'Mathematics', initials: 'MJ', lastTaught: '3 May 2025', topicsCovered: 10 },
+  ],
+  '12A': [
+    { id: 'TCH-2023-039', name: 'Anita Desai',   subject: 'Mathematics', initials: 'AD', lastTaught: '1 May 2025', topicsCovered: 14 },
+    { id: 'TCH-2023-040', name: 'Sunil Kapoor',  subject: 'Chemistry',   initials: 'SK', lastTaught: '30 Apr 2025', topicsCovered: 11 },
+  ],
+};
+
+// ─── Topic Completion (linked to timetable/schedule) ─────────────────────────
+// Table: topic_completions  FK: batchId, teacherId, topicId
+export const topicCompletions: Record<string, { topic: string; chapter: string; completedOn: string; assignmentLinked: boolean; assignmentId?: string }[]> = {
+  '11A': [
+    { topic: 'Rotational Motion – Basics',    chapter: 'Rotational Motion',   completedOn: '28 Apr 2025', assignmentLinked: true,  assignmentId: 'A1' },
+    { topic: 'Torque & Angular Momentum',     chapter: 'Rotational Motion',   completedOn: '1 May 2025',  assignmentLinked: false },
+    { topic: 'Work-Energy Theorem',           chapter: 'Work, Power, Energy', completedOn: '25 Apr 2025', assignmentLinked: true,  assignmentId: 'A2' },
+    { topic: 'Carnot Engine & Efficiency',    chapter: 'Thermodynamics',      completedOn: '29 Apr 2025', assignmentLinked: true,  assignmentId: 'A3' },
+    { topic: 'Second Law of Thermodynamics',  chapter: 'Thermodynamics',      completedOn: '2 May 2025',  assignmentLinked: false },
+  ],
+  '11B': [
+    { topic: 'Laws of Thermodynamics',        chapter: 'Thermodynamics',      completedOn: '30 Apr 2025', assignmentLinked: false },
+    { topic: 'Work-Power Problems',           chapter: 'Work, Power, Energy', completedOn: '2 May 2025',  assignmentLinked: false },
+  ],
+};
+
 // ─── Classes ─────────────────────────────────────────────────────────────────
 // Table: classes
 export const classes = [
@@ -98,7 +130,7 @@ export const tests = [
   { id: 'T3', batchId: '11A', name: 'Physics Unit Test 04',     date: '20 Apr 2025', totalStudents: 48, attempted: 48, graded: 48, avgScore: 68, topScore: 91, status: 'completed'  },
   { id: 'T4', batchId: '11A', name: 'Chapter Test – Kinematics',date: '15 Apr 2025', totalStudents: 48, attempted: 48, graded: 48, avgScore: 74, topScore: 96, status: 'completed'  },
   { id: 'T5', batchId: '11A', name: 'JEE Main Mock Test 08',    date: '10 May 2025', totalStudents: 48, attempted: 0,  graded: 0,  avgScore: 0,  topScore: 0,  status: 'scheduled'  },
-  { id: 'T6', batchId: '11A', name: 'Thermodynamics Test',      date: '12 May 2025', totalStudents: 48, attempted: 0,  graded: 0,  avgScore: 0,  topScore: 0,  status: 'draft'      },
+  { id: 'T6', batchId: '11A', name: 'Thermodynamics Test',      date: '12 May 2025', totalStudents: 48, attempted: 0,  graded: 0,  avgScore: 0,  topScore: 0,  status: 'scheduled'      },
 ];
 
 // ─── Test Question Analysis ───────────────────────────────────────────────────
@@ -130,7 +162,7 @@ export const assignments = [
   { id: 'A1', batchId: '11A', title: 'Rotational Motion – NCERT Q1-Q15',  dueDate: '8 May 2025',  totalStudents: 48, submitted: 35, status: 'active'    },
   { id: 'A2', batchId: '11A', title: 'Work-Energy Theorem Problems',       dueDate: '7 May 2025',  totalStudents: 48, submitted: 48, status: 'completed' },
   { id: 'A3', batchId: '11A', title: 'Thermodynamics – Practice Sheet',    dueDate: '10 May 2025', totalStudents: 48, submitted: 20, status: 'active'    },
-  { id: 'A4', batchId: '11A', title: 'JEE Mechanics Revision Set',         dueDate: '15 May 2025', totalStudents: 48, submitted: 0,  status: 'draft'     },
+  { id: 'A4', batchId: '11A', title: 'JEE Mechanics Revision Set',         dueDate: '15 May 2025', totalStudents: 48, submitted: 0,  status: 'active'     },
 ];
 
 // ─── Weak Topics (per batch, computed from test results) ─────────────────────
@@ -251,7 +283,7 @@ export const doubts = [
 // Table: papers  FK: teacherId, subjectId
 export const papers = [
   { id: 'P1', batchIds: ['11A','11B','11C'], name: 'JEE Main Mock Test 08',         classId: '11', subjectId: 'physics', marks: 50, questions: 25, difficulty: 'hard',   status: 'published', date: '2 May 2025',  scheduledFor: '10 May 2025' },
-  { id: 'P2', batchIds: ['11A','11B'],       name: 'Unit Test – Work, Power, Energy',classId: '11', subjectId: 'physics', marks: 30, questions: 15, difficulty: 'medium', status: 'draft',     date: '28 Apr 2025', scheduledFor: null },
+  { id: 'P2', batchIds: ['11A','11B'],       name: 'Unit Test – Work, Power, Energy',classId: '11', subjectId: 'physics', marks: 30, questions: 15, difficulty: 'medium', status: 'scheduled',     date: '28 Apr 2025', scheduledFor: null },
   { id: 'P3', batchIds: ['12A','12B'],       name: 'Chapter Test – Thermodynamics',  classId: '12', subjectId: 'physics', marks: 20, questions: 10, difficulty: 'medium', status: 'scheduled', date: '25 Apr 2025', scheduledFor: '15 May 2025' },
 ];
 
@@ -317,6 +349,14 @@ export function getStudentById(id: string) {
 
 export function getTestById(id: string) {
   return tests.find(t => t.id === id);
+}
+
+export function getCoTeachersByBatch(batchId: string) {
+  return coTeachers[batchId] ?? [];
+}
+
+export function getTopicCompletionsByBatch(batchId: string) {
+  return topicCompletions[batchId] ?? [];
 }
 
 // ─── Nav items for teacher sidebar (7 items only) ─────────────────────────────

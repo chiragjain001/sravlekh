@@ -78,7 +78,7 @@ module.exports = {
         'modal-sm':'480px',
       },
 
-      width: {
+      spacing: {
         sidebar: '248px',
       },
 

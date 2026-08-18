@@ -1,5 +1,6 @@
 'use client';
 
+import React from 'react';
 import { Bell, Calendar, Flame } from 'lucide-react';
 
 interface TopHeaderProps {
@@ -10,6 +11,9 @@ interface TopHeaderProps {
   streakCount?: number;
   showDate?: boolean;
   dateStr?: string;
+  showBackButton?: boolean;
+  previousNavLabel?: string | null;
+  onBack?: () => void;
 }
 
 export function TopHeader({
@@ -22,12 +26,14 @@ export function TopHeader({
   dateStr,
 }: TopHeaderProps) {
   return (
-    <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-white sticky top-0 z-10">
-      <div>
-        <h1 className="text-[17px] font-bold text-slate-800 leading-tight">
-          {greeting}
-        </h1>
-        <p className="text-[12.5px] text-slate-500 mt-0.5">{subtitle}</p>
+    <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-white sticky top-0 z-10 transition-all duration-200">
+      <div className="flex items-center gap-4">
+        <div>
+          <h1 className="text-[17px] font-bold text-slate-800 leading-tight">
+            {greeting}
+          </h1>
+          <p className="text-[12.5px] text-slate-500 mt-0.5">{subtitle}</p>
+        </div>
       </div>
 
       <div className="flex items-center gap-4">
@@ -48,7 +54,10 @@ export function TopHeader({
           </div>
         )}
 
-        <button className="relative p-2 rounded-lg hover:bg-slate-50 transition-colors">
+        <button
+          className="relative p-2 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer"
+          aria-label="Notifications"
+        >
           <Bell className="w-5 h-5 text-slate-500" />
           <span className="absolute -top-1 -right-1 w-[18px] h-[18px] bg-rose-500 rounded-full text-white text-[9px] font-bold flex items-center justify-center">
             4

@@ -25,6 +25,11 @@ export function TeacherReports() {
   const [done,       setDone]       = useState<string[]>([]);
   const [downloading,setDownloading]= useState<string | null>(null);
 
+  // Dynamic filter state for report generation
+  const [selectedBatch, setSelectedBatch] = useState<string>('11A');
+  const [selectedStudent, setSelectedStudent] = useState<string>('all');
+  const [selectedTest, setSelectedTest] = useState<string>('wt-07');
+
   const handleGenerate = (id: string) => {
     if (done.includes(id)) return;
     setGenerating(id);
@@ -43,10 +48,54 @@ export function TeacherReports() {
         <p className="text-[13px] text-slate-500 mt-0.5">Generate and download performance reports for your batches and students.</p>
       </div>
 
+      {/* Global Filter Bar for Reports */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs flex flex-wrap items-center gap-4">
+        <div className="flex-1 min-w-[140px]">
+          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Target Batch</label>
+          <select
+            value={selectedBatch}
+            onChange={e => setSelectedBatch(e.target.value)}
+            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[13px] font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-400/30"
+          >
+            <option value="11A">Batch 11A</option>
+            <option value="11B">Batch 11B</option>
+            <option value="12A">Batch 12A</option>
+            <option value="12B">Batch 12B</option>
+          </select>
+        </div>
+
+        <div className="flex-1 min-w-[140px]">
+          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Target Student</label>
+          <select
+            value={selectedStudent}
+            onChange={e => setSelectedStudent(e.target.value)}
+            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[13px] font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-400/30"
+          >
+            <option value="all">All Batch Students</option>
+            <option value="stu-1">Aarav Sharma (Roll 101)</option>
+            <option value="stu-2">Diya Patel (Roll 102)</option>
+            <option value="stu-3">Rohan Verma (Roll 103)</option>
+          </select>
+        </div>
+
+        <div className="flex-1 min-w-[140px]">
+          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Target Test</label>
+          <select
+            value={selectedTest}
+            onChange={e => setSelectedTest(e.target.value)}
+            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[13px] font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-400/30"
+          >
+            <option value="wt-07">Physics Weekly Test 07</option>
+            <option value="wt-06">Physics Weekly Test 06</option>
+            <option value="mock-01">JEE Main Full Mock 01</option>
+          </select>
+        </div>
+      </div>
+
       {/* Generate */}
       <div>
         <h2 className="text-[15px] font-bold text-slate-800 mb-1">Generate Report</h2>
-        <p className="text-[12.5px] text-slate-500 mb-4">Choose a report type and generate it as a PDF.</p>
+        <p className="text-[12.5px] text-slate-500 mb-4">Choose a report type and generate it as a PDF for Batch {selectedBatch}.</p>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {REPORT_TYPES.map(rt => {
             const isGenerating = generating === rt.id;
