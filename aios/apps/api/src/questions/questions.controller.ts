@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Body,
   Param,
   Query,
@@ -82,5 +83,17 @@ export class QuestionsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.questionsService.approve(instituteId, questionId, user);
+  }
+
+  @Delete(':questionId')
+  @Roles(UserRole.ADMIN, UserRole.FOUNDER)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Archive a question (soft-delete, preserves version/approval history)' })
+  archive(
+    @Param('instituteId') instituteId: string,
+    @Param('questionId') questionId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.questionsService.archive(instituteId, questionId, user);
   }
 }

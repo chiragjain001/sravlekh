@@ -256,9 +256,11 @@ existed on the frontend at all (not a "rewire" — a new screen, since nothing e
 partially verified rather than fully confirmed end-to-end (see §5) due to this environment having no running
 backend to test the live success/error paths against.
 
-**Phase 3 — Question Bank & Paper Generation reconciliation.** Fix `blueprint_agent.py`'s missing
-`langchain-openai` dependency (or replace, see §7). Reconcile the two divergent paper-generation code paths into
-one coherent AI-Blueprint-Agent flow per `03-FEATURE-SPECIFICATIONS.md`. Wire Question approval/versioning UI.
+**Phase 3 — Question Bank & Paper Generation reconciliation — COMPLETE.** The `langchain-openai` dependency fix
+and the paper-generation "reconciliation" both turned out to already be resolved before this phase started (see
+§5). What remained — wiring Question approval/versioning UI — executed this session; see §5 "Phase 3: Question
+Bank" for detail. Same partial-verification caveat as Phase 2 applies (no backend running in this environment
+to confirm the live success/error paths end-to-end).
 
 **Phase 4 — Exam State Machine & Marks Capture (the load-bearing gap).** Build the missing status-transition
 and unlock endpoints. Wire `TeacherEvaluationQueue` and the assessment-builder wizard to real endpoints instead
@@ -532,7 +534,46 @@ sandbox-networking artifact, it's a latent, pre-existing characteristic of `useA
 config that would affect every hook in that file equally, not something introduced by this session's new code —
 worth a focused look once a real backend is available to test against, but not chased further here given the
 time already spent isolating it (confirmed: not a CORS issue, not a proxy-latency issue, not a crash, not
-unique to this component's code — a raw `fetch()` to the same URL resolved normally in 51ms).
+unique to this component's code — a raw `fetch()` to the same URL resolved normally in 51ms). Reconfirmed the
+same pattern on Question Bank (§5 "Phase 3") — consistent with this being a shared, pre-existing characteristic
+of `useApi.ts` rather than something specific to one screen.
+
+### Phase 3: Question Bank (this session)
+
+Investigated before building, matching the Phase 2 pattern of verifying the plan's assumptions first rather
+than trusting the original gap analysis. Two of the three original Phase 3 items turned out to already be
+resolved: `blueprint_agent.py`'s missing dependency was fixed in the Prisma-fix commit, and the "two divergent
+paper-generation paths" were already determined not to be a duplication (§7 item 3). What remained —
+"wire Question approval/versioning UI" — mirrored Phase 2 almost exactly: the backend was already excellent
+(`QuestionsController`/`QuestionsService` — create, list, get-with-version-history, update-with-auto-versioning,
+approve, all tenant-scoped and RBAC-correct) but had no archive endpoint and, again, **no reachable frontend at
+all**. Confirmed: no `AdminQuestions` screen, no "Question Bank" entry in either the admin or teacher nav list
+(despite `Sidebar.tsx`'s icon map already anticipating one — `TeacherPaperBuilder.tsx`'s 8-step wizard is a
+different thing: it defines paper-assembly *rules*, not individual questions).
+
+- `packages/db/prisma/schema.prisma` — added `deletedAt DateTime?` to `Question`, same rationale as Phase 2's
+  curriculum models (18-EDGE-CASES.md: hard-delete of a historically-used Question is rejected, soft-archive
+  only).
+- `apps/api/src/questions/{questions.controller.ts,questions.service.ts}` — added `DELETE :questionId`
+  (archive, ADMIN/FOUNDER-gated); `findAll`/`findById`/`update`/`approve` now all respect `deletedAt`. Unit-tested
+  (`questions.service.spec.ts`, 5 new tests): non-admin rejected, tenant isolation, double-archive rejected,
+  soft-delete-not-hard-delete with audit log, `findAll` excludes archived.
+- `apps/web/src/components/dashboard/questions/{QuestionBankManager.tsx,QuestionFormDialog.tsx}` (new) — one
+  screen shared by both Teacher and Admin dashboards (role read from `useAuth()`, not duplicated per-role
+  screens) since the backend RBAC already treats question authoring as TEACHER+ADMIN+FOUNDER and approval as
+  ADMIN+FOUNDER-only — the UI just conditionally shows the Approve/Archive actions rather than needing two
+  separate screens. Filterable/paginated list, create/edit dialog with cascading Subject→Chapter→Topic selects
+  (reusing `useSubjects()` from Phase 2) and a dynamic options editor for MCQ/multi-correct types (radio vs.
+  checkbox selection, add/remove rows) that correctly disappears for the other 5 question types. Wired into both
+  dashboards' nav (`TeacherTopNav`/`AdminNav` types, nav item lists, and `renderScreen()` switches).
+- `apps/web/src/hooks/useApi.ts` — `useQuestions`/`useCreateQuestion` already existed; added `useQuestion`
+  (single, with version history), `useUpdateQuestion`, `useApproveQuestion`, `useArchiveQuestion`, matching the
+  file's existing pattern exactly.
+- Verified in-browser (fresh tab, both Teacher and Admin logins): screen renders with role-correct copy ("an
+  admin approves them before use" vs. "Author, review, and approve..."), the create dialog's cascading selects
+  and MCQ options editor work correctly, switching question type away from MCQ correctly hides the options
+  section, no console errors beyond the expected network 500s (no backend running here). Full
+  typecheck/lint/test/build clean on both apps (24 backend tests, up from 19).
 
 ## 6. Definition of Done reminder
 

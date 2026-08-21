@@ -23,6 +23,7 @@ import { useNetworkStatus }  from '@/hooks/useContextUrlSync';
 // Teacher screens — each is a self-contained full page
 import { TeacherToday }           from '@/components/dashboard/teacher/screens/TeacherToday';
 import { TeacherClasses }         from '@/components/dashboard/teacher/screens/TeacherClasses';
+import { QuestionBankManager }    from '@/components/dashboard/questions/QuestionBankManager';
 import { TeacherPaperBuilder }    from '@/components/dashboard/teacher/screens/TeacherPaperBuilder';
 import { TeacherDoubtCenter }     from '@/components/dashboard/teacher/screens/TeacherDoubtCenter';
 import { TeacherReports }         from '@/components/dashboard/teacher/screens/TeacherReports';
@@ -38,6 +39,7 @@ import { TeacherTimeTable }          from '@/components/dashboard/teacher/screen
 const NAV_ITEMS: { key: TeacherTopNav; label: string }[] = [
   { key: 'today',          label: 'Overview'               },
   { key: 'classes',        label: 'My Classes'             },
+  { key: 'question-bank',  label: 'Question Bank'          },
   { key: 'paper-builder',  label: 'Paper Builder'          },
   { key: 'tests-exams',    label: 'Tests & Exams'          },
   { key: 'analytics',      label: 'Analytics'              },
@@ -67,6 +69,7 @@ function TeacherDashboardInner() {
     switch (teacherNav) {
       case 'today':            return <TeacherToday />;
       case 'classes':          return <TeacherClasses />;
+      case 'question-bank':    return <QuestionBankManager />;
       case 'paper-builder':    return <TeacherPaperBuilder />;
       case 'tests-exams':      return <TeacherTestsExams />;
       case 'evaluation-queue': return <TeacherEvaluationQueue />;

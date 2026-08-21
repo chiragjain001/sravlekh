@@ -140,6 +140,78 @@ export function useCreateQuestion() {
   });
 }
 
+export function useQuestion(questionId: string | null) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['questions', user?.instituteId, questionId],
+    queryFn: async () => {
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/questions/${questionId}`);
+      return res.data;
+    },
+    enabled: !!user?.instituteId && !!questionId,
+  });
+}
+
+export function useUpdateQuestion() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ id, ...data }: { id: string } & Record<string, unknown>) => {
+      const res = await apiClient.patch(`/institutes/${user?.instituteId}/questions/${id}`, data);
+      return res.data;
+    },
+    onSuccess: () => {
+      toast.success('Question updated');
+      queryClient.invalidateQueries({ queryKey: ['questions', user?.instituteId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.message : 'Failed to update question';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useApproveQuestion() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/questions/${id}/approve`);
+      return res.data;
+    },
+    onSuccess: () => {
+      toast.success('Question approved');
+      queryClient.invalidateQueries({ queryKey: ['questions', user?.instituteId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.message : 'Failed to approve question';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useArchiveQuestion() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiClient.delete(`/institutes/${user?.instituteId}/questions/${id}`);
+      return res.data;
+    },
+    onSuccess: () => {
+      toast.success('Question archived');
+      queryClient.invalidateQueries({ queryKey: ['questions', user?.instituteId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.message : 'Failed to archive question';
+      toast.error(msg);
+    },
+  });
+}
+
 // ── Papers & Blueprints ──────────────────────────────────────────────────
 
 export function useBlueprints() {

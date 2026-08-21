@@ -7,6 +7,7 @@ import { create } from 'zustand';
 export type TeacherTopNav =
   | 'today'
   | 'classes'
+  | 'question-bank'
   | 'paper-builder'
   | 'tests-exams'
   | 'evaluation-queue'

@@ -92,7 +92,7 @@ export class QuestionsService {
     const limit = query.limit ?? 20;
     const skip = (page - 1) * limit;
 
-    const where: Record<string, unknown> = { instituteId };
+    const where: Record<string, unknown> = { instituteId, deletedAt: null };
 
     if (query.subjectId) where['subjectId'] = query.subjectId;
     if (query.chapterId) where['chapterId'] = query.chapterId;
@@ -136,11 +136,36 @@ export class QuestionsService {
       },
     });
 
-    if (!question || question.instituteId !== instituteId) {
+    if (!question || question.instituteId !== instituteId || question.deletedAt) {
       throw new NotFoundException('Question not found.');
     }
 
     return question;
+  }
+
+  // ── C-01: Archive Question ───────────────────────────────────────────────
+
+  /** Soft-delete only — a Question may already be used in Papers/Responses/
+   * MasteryScores (18-EDGE-CASES.md: hard-delete of a historically-used Question
+   * is rejected, soft-archive only). Approval history and versions are preserved. */
+  async archive(instituteId: string, questionId: string, actor: AuthenticatedUser) {
+    if (actor.role !== UserRole.ADMIN && actor.role !== UserRole.FOUNDER) {
+      throw new ForbiddenException('Only admins can archive questions.');
+    }
+    this.assertInstituteAccess(actor, instituteId);
+
+    const question = await this.prisma.question.findUnique({ where: { id: questionId } });
+    if (!question || question.instituteId !== instituteId || question.deletedAt) {
+      throw new NotFoundException('Question not found.');
+    }
+
+    const archived = await this.prisma.question.update({
+      where: { id: questionId },
+      data: { deletedAt: new Date() },
+    });
+
+    await this.writeAudit(instituteId, actor.id, AuditAction.DELETE, 'questions', questionId, question, null);
+    return archived;
   }
 
   // ── C-01: Update Question (Versioning) ───────────────────────────────────
@@ -158,7 +183,7 @@ export class QuestionsService {
       include: { versions: { orderBy: { versionNo: 'desc' }, take: 1 } },
     });
 
-    if (!existing || existing.instituteId !== instituteId) {
+    if (!existing || existing.instituteId !== instituteId || existing.deletedAt) {
       throw new NotFoundException('Question not found.');
     }
 
@@ -223,7 +248,9 @@ export class QuestionsService {
     this.assertInstituteAccess(actor, instituteId);
 
     const question = await this.prisma.question.findUnique({ where: { id: questionId } });
-    if (!question || question.instituteId !== instituteId) throw new NotFoundException('Question not found.');
+    if (!question || question.instituteId !== instituteId || question.deletedAt) {
+      throw new NotFoundException('Question not found.');
+    }
 
     if (question.isApproved) {
       return question; // already approved

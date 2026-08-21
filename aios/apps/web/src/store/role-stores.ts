@@ -41,6 +41,7 @@ export type AdminNav =
   | 'Reports'
   | 'Settings'
   | 'Academics'
+  | 'Question Bank'
   | 'Exams'
   | 'Attendance'
   | 'Communication'

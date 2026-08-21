@@ -459,6 +459,7 @@ model Question {
   createdByUserId String
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
 
   institute    Institute         @relation(fields: [instituteId], references: [id], onDelete: Cascade)
   subject      Subject           @relation(fields: [subjectId], references: [id])

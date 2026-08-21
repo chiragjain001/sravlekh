@@ -58,7 +58,7 @@ export const adminData = {
   },
 
   navItems: [
-    'Dashboard', 'Students', 'Teachers', 'Batches', 'Academics',
+    'Dashboard', 'Students', 'Teachers', 'Batches', 'Academics', 'Question Bank',
     'Exams', 'Timetable', 'Attendance', 'Communication',
     'Reports', 'System Settings', 'Audit Logs',
   ],

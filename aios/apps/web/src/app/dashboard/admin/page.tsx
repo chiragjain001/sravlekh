@@ -18,6 +18,7 @@ import { AdminTeachers }      from '@/components/dashboard/admin/screens/AdminTe
 import { AdminStudents }      from '@/components/dashboard/admin/screens/AdminStudents';
 import { AdminBatches }       from '@/components/dashboard/admin/screens/AdminBatches';
 import { AdminAcademics }     from '@/components/dashboard/admin/screens/AdminAcademics';
+import { QuestionBankManager } from '@/components/dashboard/questions/QuestionBankManager';
 import { AdminExams }         from '@/components/dashboard/admin/screens/AdminExams';
 import { AdminTimetable }     from '@/components/dashboard/admin/screens/AdminTimetable';
 import { AdminAttendance }    from '@/components/dashboard/admin/screens/AdminAttendance';
@@ -43,6 +44,7 @@ function AdminDashboardInner() {
       case 'Students':        return <AdminStudents />;
       case 'Batches':         return <AdminBatches />;
       case 'Academics':       return <AdminAcademics />;
+      case 'Question Bank':   return <QuestionBankManager />;
       case 'Exams':           return <AdminExams />;
       case 'Timetable':       return <AdminTimetable />;
       case 'Attendance':      return <AdminAttendance />;
