@@ -1,14 +1,20 @@
 import {
   Controller,
+  Get,
   Post,
+  Patch,
   Body,
   Param,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { ExamsService } from './exams.service';
 import {
   CreateExamDto,
   GradeAnswerSheetDto,
+  UpdateExamStatusDto,
+  UnlockExamDto,
 } from './dto/exam.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -30,6 +36,52 @@ export class ExamsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.examsService.createExam(instituteId, dto, user);
+  }
+
+  @Get()
+  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'List exams for this institute' })
+  findAll(
+    @Param('instituteId') instituteId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.examsService.findAll(instituteId, user);
+  }
+
+  @Get(':examId')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Get an exam with its batch, blueprint, and linked papers' })
+  findById(
+    @Param('instituteId') instituteId: string,
+    @Param('examId') examId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.examsService.findById(instituteId, examId, user);
+  }
+
+  @Patch(':examId/status')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Move an exam to the next stage (DRAFT -> REVIEW -> APPROVED -> PUBLISHED -> ONGOING -> EVALUATING -> LOCKED)' })
+  updateStatus(
+    @Param('instituteId') instituteId: string,
+    @Param('examId') examId: string,
+    @Body() dto: UpdateExamStatusDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.examsService.updateStatus(instituteId, examId, dto, user);
+  }
+
+  @Post(':examId/unlock')
+  @Roles(UserRole.ADMIN, UserRole.FOUNDER)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Admin: reopen a locked exam for evaluation (reason required, audited)' })
+  unlock(
+    @Param('instituteId') instituteId: string,
+    @Param('examId') examId: string,
+    @Body() dto: UnlockExamDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.examsService.unlock(instituteId, examId, dto, user);
   }
 
   @Post(':examId/link-paper/:paperId')

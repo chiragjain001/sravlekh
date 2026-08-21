@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  ConflictException,
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
@@ -12,7 +13,24 @@ import { AuthenticatedUser } from '../auth/auth.types';
 import {
   CreateExamDto,
   GradeAnswerSheetDto,
+  UpdateExamStatusDto,
+  UnlockExamDto,
 } from './dto/exam.dto';
+
+/**
+ * 01-PRODUCT-REQUIREMENTS.md / 03-FEATURE-SPECIFICATIONS.md: strict forward-only
+ * state machine, one stage at a time, no skipping. The only backward transition is
+ * the separate unlock() method (LOCKED -> EVALUATING, admin-only, reason required).
+ */
+const NEXT_STATUS: Record<ExamStatus, ExamStatus | null> = {
+  [ExamStatus.DRAFT]: ExamStatus.REVIEW,
+  [ExamStatus.REVIEW]: ExamStatus.APPROVED,
+  [ExamStatus.APPROVED]: ExamStatus.PUBLISHED,
+  [ExamStatus.PUBLISHED]: ExamStatus.ONGOING,
+  [ExamStatus.ONGOING]: ExamStatus.EVALUATING,
+  [ExamStatus.EVALUATING]: ExamStatus.LOCKED,
+  [ExamStatus.LOCKED]: null,
+};
 
 @Injectable()
 export class ExamsService {
@@ -56,6 +74,133 @@ export class ExamsService {
     await this.writeAudit(instituteId, actor.id, AuditAction.CREATE, 'exams', exam.id, null, { title: exam.title });
 
     return exam;
+  }
+
+  // ── D-01: List / Get Exams ───────────────────────────────────────────────
+
+  async findAll(instituteId: string, actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
+    return this.prisma.exam.findMany({
+      where: { instituteId },
+      include: {
+        batch: { select: { id: true, name: true } },
+        blueprint: { select: { id: true, name: true, totalMarks: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async findById(instituteId: string, examId: string, actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
+    const exam = await this.prisma.exam.findUnique({
+      where: { id: examId },
+      include: {
+        batch: { select: { id: true, name: true } },
+        blueprint: { select: { id: true, name: true, totalMarks: true } },
+        papers: { select: { id: true, title: true, status: true } },
+      },
+    });
+    if (!exam || exam.instituteId !== instituteId) throw new NotFoundException('Exam not found.');
+    return exam;
+  }
+
+  // ── D-01: Exam State Machine ─────────────────────────────────────────────
+
+  async updateStatus(
+    instituteId: string,
+    examId: string,
+    dto: UpdateExamStatusDto,
+    actor: AuthenticatedUser,
+  ) {
+    this.assertInstituteAccess(actor, instituteId);
+
+    const exam = await this.prisma.exam.findUnique({ where: { id: examId } });
+    if (!exam || exam.instituteId !== instituteId) throw new NotFoundException('Exam not found.');
+
+    if (exam.version !== dto.version) {
+      throw new ConflictException({
+        code: 'STALE_VERSION',
+        message: 'This exam was changed by someone else — refresh and try again.',
+      });
+    }
+
+    const expectedNext = NEXT_STATUS[exam.status];
+    if (!expectedNext || dto.status !== expectedNext) {
+      throw new ConflictException({
+        code: 'INVALID_STATE_TRANSITION',
+        message: expectedNext
+          ? `Exams move one stage at a time — from ${exam.status}, the next stage is ${expectedNext}.`
+          : `A ${exam.status} exam cannot move forward — use unlock to reopen it for evaluation.`,
+      });
+    }
+
+    // REVIEW -> APPROVED is a sign-off distinct from the creating teacher's own
+    // workflow, mirroring the Question approval pattern (03-FEATURE-SPECIFICATIONS.md).
+    if (dto.status === ExamStatus.APPROVED && actor.role !== UserRole.ADMIN && actor.role !== UserRole.FOUNDER) {
+      throw new ForbiddenException('Only admins can approve an exam.');
+    }
+
+    const data: Record<string, unknown> = { status: dto.status, version: { increment: 1 } };
+    if (dto.status === ExamStatus.APPROVED) {
+      data['approvedByUserId'] = actor.id;
+      data['approvedAt'] = new Date();
+    }
+    if (dto.status === ExamStatus.PUBLISHED) {
+      data['publishedAt'] = new Date();
+    }
+    if (dto.status === ExamStatus.LOCKED) {
+      data['lockedAt'] = new Date();
+      data['lockedByUserId'] = actor.id;
+    }
+
+    const updated = await this.prisma.exam.update({ where: { id: examId }, data });
+
+    const auditAction: AuditAction =
+      dto.status === ExamStatus.APPROVED ? AuditAction.APPROVE
+      : dto.status === ExamStatus.PUBLISHED ? AuditAction.PUBLISH
+      : dto.status === ExamStatus.LOCKED ? AuditAction.LOCK
+      : AuditAction.UPDATE;
+
+    await this.writeAudit(instituteId, actor.id, auditAction, 'exams', examId, { status: exam.status }, { status: dto.status });
+
+    return updated;
+  }
+
+  /** LOCKED -> EVALUATING only. Admin-only, reason required (18-EDGE-CASES.md: "unlock
+   * without reason -> 400"; enforced by UnlockExamDto's @MinLength(10) at the DTO layer). */
+  async unlock(instituteId: string, examId: string, dto: UnlockExamDto, actor: AuthenticatedUser) {
+    if (actor.role !== UserRole.ADMIN && actor.role !== UserRole.FOUNDER) {
+      throw new ForbiddenException('Only admins can unlock a locked exam.');
+    }
+    this.assertInstituteAccess(actor, instituteId);
+
+    const exam = await this.prisma.exam.findUnique({ where: { id: examId } });
+    if (!exam || exam.instituteId !== instituteId) throw new NotFoundException('Exam not found.');
+
+    if (exam.version !== dto.version) {
+      throw new ConflictException({
+        code: 'STALE_VERSION',
+        message: 'This exam was changed by someone else — refresh and try again.',
+      });
+    }
+    if (exam.status !== ExamStatus.LOCKED) {
+      throw new ConflictException({
+        code: 'INVALID_STATE_TRANSITION',
+        message: 'Only a locked exam can be unlocked.',
+      });
+    }
+
+    const updated = await this.prisma.exam.update({
+      where: { id: examId },
+      data: { status: ExamStatus.EVALUATING, unlockReason: dto.reason, version: { increment: 1 } },
+    });
+
+    await this.writeAudit(
+      instituteId, actor.id, AuditAction.UNLOCK, 'exams', examId,
+      { status: ExamStatus.LOCKED }, { status: ExamStatus.EVALUATING, reason: dto.reason },
+    );
+
+    return updated;
   }
 
   // ── D-01: Link Generated Paper to Exam ───────────────────────────────────
@@ -123,6 +268,15 @@ export class ExamsService {
 
     if (!answerSheet || answerSheet.exam.instituteId !== instituteId) {
       throw new NotFoundException('Answer Sheet not found');
+    }
+
+    // 04-DATABASE-SCHEMA.md: Response is immutable once the exam is LOCKED — an
+    // admin must unlock() it first (EVALUATING) before grades can change again.
+    if (answerSheet.exam.status === ExamStatus.LOCKED) {
+      throw new ConflictException({
+        code: 'EXAM_LOCKED',
+        message: 'This exam is locked — an admin must unlock it before grades can change.',
+      });
     }
 
     const { examId, studentProfileId } = answerSheet;

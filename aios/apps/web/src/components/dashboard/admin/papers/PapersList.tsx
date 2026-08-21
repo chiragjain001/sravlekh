@@ -11,7 +11,7 @@ export function PapersList() {
   const [isGenerateModalOpen, setIsGenerateModalOpen] = useState(false);
   const [selectedBlueprint, setSelectedBlueprint] = useState<any>(null);
 
-  const { data: blueprints, isLoading } = useBlueprints();
+  const { data: blueprints, isPending } = useBlueprints();
 
   const handleGenerateClick = (blueprint: any) => {
     setSelectedBlueprint(blueprint);
@@ -35,7 +35,7 @@ export function PapersList() {
       </div>
 
       <div className="card p-0 overflow-hidden">
-        {isLoading ? (
+        {isPending ? (
           <div className="p-8 text-center text-navy-500">Loading blueprints...</div>
         ) : blueprints?.length === 0 ? (
           <div className="p-12 text-center">

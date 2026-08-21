@@ -304,6 +304,58 @@ export function useCreateExam() {
   });
 }
 
+export function useExam(examId: string | null) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['exams', user?.instituteId, examId],
+    queryFn: async () => {
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/exams/${examId}`);
+      return res.data;
+    },
+    enabled: !!user?.instituteId && !!examId,
+  });
+}
+
+export function useUpdateExamStatus() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ examId, status, version }: { examId: string; status: string; version: number }) => {
+      const res = await apiClient.patch(`/institutes/${user?.instituteId}/exams/${examId}/status`, { status, version });
+      return res.data;
+    },
+    onSuccess: () => {
+      toast.success('Exam moved to the next stage');
+      queryClient.invalidateQueries({ queryKey: ['exams', user?.instituteId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to update exam status';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useUnlockExam() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ examId, reason, version }: { examId: string; reason: string; version: number }) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/exams/${examId}/unlock`, { reason, version });
+      return res.data;
+    },
+    onSuccess: () => {
+      toast.success('Exam unlocked for evaluation');
+      queryClient.invalidateQueries({ queryKey: ['exams', user?.instituteId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to unlock exam';
+      toast.error(msg);
+    },
+  });
+}
+
 // ── Analytics ────────────────────────────────────────────────────────────
 
 export function useAnalyticsOverview() {

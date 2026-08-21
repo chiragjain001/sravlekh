@@ -262,9 +262,11 @@ and the paper-generation "reconciliation" both turned out to already be resolved
 Bank" for detail. Same partial-verification caveat as Phase 2 applies (no backend running in this environment
 to confirm the live success/error paths end-to-end).
 
-**Phase 4 — Exam State Machine & Marks Capture (the load-bearing gap).** Build the missing status-transition
-and unlock endpoints. Wire `TeacherEvaluationQueue` and the assessment-builder wizard to real endpoints instead
-of `setTimeout` stubs. This is the highest-value, highest-risk v1 gap — nothing in Phases 7+ (which build
+**Phase 4 — Exam State Machine & Marks Capture (the load-bearing gap) — COMPLETE (backend + a real Exam
+screen); wizard/evaluation-queue rewiring explicitly deferred.** Built the missing status-transition and
+unlock endpoints, plus a real Exam Workflow screen and a real Papers nav entry to reach it from. Rewiring
+`TeacherEvaluationQueue` and the assessment-builder wizard to these endpoints was scoped out this session —
+see §5 "Phase 4" for why. This was the highest-value, highest-risk v1 gap — nothing in Phases 7+ (which build
 `Assessment`/`AssessmentDelivery` as a superset of `Exam`) can be validated for "zero regression" against a
 state machine that doesn't functionally exist yet.
 
@@ -574,6 +576,90 @@ different thing: it defines paper-assembly *rules*, not individual questions).
   and MCQ options editor work correctly, switching question type away from MCQ correctly hides the options
   section, no console errors beyond the expected network 500s (no backend running here). Full
   typecheck/lint/test/build clean on both apps (24 backend tests, up from 19).
+
+### Phase 4: Exam State Machine (this session)
+
+The gap analysis's original finding here held up under investigation (unlike Phases 2/3, where "missing" turned
+out to mean "backend already existed"): the 7-stage exam state machine
+(`DRAFT→REVIEW→APPROVED→PUBLISHED→ONGOING→EVALUATING→LOCKED`, `18-EDGE-CASES.md`'s LOCKED→EVALUATING admin-only
+unlock as the sole backward transition) genuinely did not exist anywhere — no status-transition endpoint, no
+optimistic-locking `version` field, no unlock endpoint, and grading was not blocked once an exam reached LOCKED.
+
+- `packages/db/prisma/schema.prisma` — added `version Int @default(0)` to `Exam` (optimistic lock, same pattern
+  as the soft-delete additions in Phases 2/3 — schema-only, no migration history exists yet in this repo).
+- `apps/api/src/exams/{exams.controller.ts,exams.service.ts,dto/exam.dto.ts}` — added `GET` (list/detail),
+  `PATCH :examId/status` (`UpdateExamStatusDto`: target status + version), `POST :examId/unlock`
+  (`UnlockExamDto`: reason, `@MinLength(10)`, + version). Service enforces: stale `version` → 409
+  `STALE_VERSION`; skipping/wrong-direction transitions → 409 `INVALID_STATE_TRANSITION`; `APPROVED` requires
+  ADMIN/FOUNDER (mirrors the Question approval pattern); `unlock` is ADMIN/FOUNDER-only and LOCKED-only.
+  `gradeAnswerSheet` now rejects with 409 if the exam is LOCKED (`04-DATABASE-SCHEMA.md`: Response is immutable
+  once LOCKED). Unit-tested (`exams.service.spec.ts`): the full 7×7 transition-pair matrix (49 cases,
+  parameterized), role gating, optimistic-locking, unlock, and grade-when-locked — 83 backend tests total, up
+  from 24.
+- **A second genuine architecture fork, flagged and resolved by the user rather than picked unilaterally**: the
+  admin "Exams" nav slot already had a fully-built screen (`AdminExams.tsx`) — but it was wired entirely to
+  `features/exams/*`, an in-memory mock module with its own parallel status vocabulary
+  (`'Upcoming'|'In-Progress'|'Evaluation Pending'|'Completed'|'Cancelled'`) that has nothing to do with the real
+  state machine, plus mock-only features (CSV export, bulk delete, pass-rate analytics) the real backend doesn't
+  support. Presented three options to the user (replace / tab-split like Phase 2's Academics / leave alone and
+  add elsewhere); **user chose "replace it with the real screen."** Executed: new `AdminExams.tsx` built
+  against `useExams`/`useCreateExam`/`useUpdateExamStatus`/`useUnlockExam` (the last two added to `useApi.ts`
+  this session) — list with status filter, schedule-from-blueprint modal (batch + blueprint selects, type,
+  scheduled date), per-row "advance to next stage" button (disabled with a tooltip for TEACHER on the
+  REVIEW→APPROVED step), and an admin-only unlock modal (reason textarea, `minLength=10`) on LOCKED rows. The
+  entire `apps/web/src/features/exams/` mock module was deleted — nothing else referenced it.
+- **Papers was still orphaned — fixed as a prerequisite, not scope creep**: `PapersList.tsx` (blueprint
+  CRUD + paper generation) was real and functional but reachable only via a direct URL
+  (`/dashboard/admin/papers`, using a different layout component), never linked from the sidebar — confirmed
+  in Phase 1's admin-consolidation pass and left as-is at the time. Since the new Exam screen's "schedule from
+  blueprint" flow is unusable without a way to *create* a blueprint, wired "Papers" into the sidebar nav the
+  same way Question Bank was added in Phase 3 (`AdminNav` type, `renderScreen()` switch, `navItems` list, an
+  icon in `Sidebar.tsx`'s `ICON_MAP`). Also fixed the same `isLoading`→`isPending` bug from Phase 2/3 in
+  `PapersList.tsx` (line was previously unreachable via nav, so this exact mistake had never been exercised
+  live before).
+- **A real, now-fixed startup bug, found only because this phase's in-browser verification finally started the
+  API server** (Phases 2/3 verified against `pnpm typecheck`/`build` only, no live backend): `apps/api` could
+  not boot at all. `analytics.service.ts` imported `MASTERY_RECALC_QUEUE`/`MasteryRecalcJobData` from
+  `mastery-recalc.processor.ts`, which itself imports `AnalyticsService` from `analytics.service.ts` — a
+  circular import that left one class `undefined` at decorator-evaluation time, so Nest's DI container couldn't
+  resolve `MasteryRecalcProcessor`'s constructor param. This is a pre-existing bug from the mastery-migration
+  commit (`c5f2272`, before this session's continuation), not introduced by this phase — but it meant the
+  backend has been unable to start since that commit landed, until now. Fixed by extracting the constant/type
+  into `mastery-recalc.constants.ts` and pointing both files (plus three other importers:
+  `health.module.ts`/`health.controller.ts`/`health.controller.spec.ts`/`analytics.service.spec.ts`) at it
+  instead of at each other. Confirmed fixed: full route table now logs on boot, all 83 tests still pass.
+  Also fixed `.claude/launch.json`'s "api" entry, which referenced a `start:dev` script that doesn't exist in
+  `apps/api/package.json` (the real script is `dev`) — this is why no prior phase had verified this in-browser.
+- **The Phase 2/3 "isPending never settles to isError" mystery reproduced a third time, with new diagnostic
+  detail — still not root-caused, still not chased to conclusion**: with the API now actually running (DB
+  still unreachable in this sandbox — `P1001` from Prisma), both `useExams()` and `useBlueprints()` fired
+  exactly one request, got a real `500`, and then sat in `isPending` for 20+ seconds with no observed retry
+  attempt despite `retry: 1` in `providers.tsx`'s `QueryClient` config — even though a raw `fetch()` to the
+  identical URL in the same tab resolved in 12ms. New clue this time: the `500` response body was the literal
+  plain-text string `"Internal Server Error"`, not the JSON error envelope `AllExceptionsFilter` produces —
+  suggesting the response may not be reaching the NestJS app/filter at all (Next.js dev's rewrite-proxy layer
+  returning its own generic error page is one plausible explanation, unconfirmed). Ruled out this pass:
+  `navigator.onLine` is `true` (rules out React Query's `networkMode: 'online'` auto-pausing queries when the
+  browser thinks it's offline, a common cause of exactly this symptom). Given this is now confirmed to
+  reproduce identically on brand-new code (the Exam screen) in a completely fresh tab with zero HMR
+  involvement, it is definitively not something introduced by any UI code written across Phases 2–4 — it sits
+  somewhere between the Next.js dev proxy and the shared `QueryClient`. Worth a focused look once a real
+  Postgres instance is reachable (this sandbox has none), but not chased further here for the same reason as
+  Phases 2/3: real UI behavior was independently confirmed via static inspection — the error-state branch code
+  path is correct and (per Phase 3's `QuestionBankManager` verification) does render correctly once a query
+  does settle; component crashes, modal open/close, and form field rendering were all verified live in-browser
+  and are unaffected by this.
+- **Explicitly deferred, not silently built or silently dropped**: `TeacherEvaluationQueue.tsx` and the
+  8-step assessment-builder wizard (`Step8Generate.tsx`'s `handlePublish` is still a `setTimeout` stub) both
+  remain wired to mock data (`@/lib/mock-data/teacher`, and the wizard's `AssessmentState` type, respectively).
+  Both would need real IDs (batch/exam/answerSheet) threaded through UI that currently only carries mock
+  name-strings — a data-plumbing rewrite touching every step/screen involved, not a small wiring change like
+  Papers. Flagging for a dedicated pass rather than a partial fix squeezed into this session.
+- Verified in-browser (fresh tab, admin login, real API server running): both new nav entries render distinct,
+  correct content; the Schedule Exam modal opens with all fields (batch/blueprint selects, 9-option type select
+  correctly formatted, date input) and closes cleanly via Cancel; no React crashes or console errors beyond the
+  documented network 500s. Full `pnpm typecheck`/`lint`/`build` clean on `apps/web`; full
+  `typecheck`/`test`/`build` clean on `apps/api` (83/83 tests).
 
 ## 6. Definition of Done reminder
 

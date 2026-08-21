@@ -582,6 +582,7 @@ model Exam {
   title           String
   type            ExamType
   status          ExamStatus @default(DRAFT)
+  version         Int        @default(0) // optimistic lock — 18-EDGE-CASES.md: concurrent transitions get 409, not a silent overwrite
   scheduledDate   DateTime?
   durationMinutes Int?
   venue           String?

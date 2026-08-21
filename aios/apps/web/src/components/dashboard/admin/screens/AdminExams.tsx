@@ -1,505 +1,392 @@
 'use client';
-// ─── AdminExams — Enterprise Exams & Assessments Console ──────────────────────
-// Full CRUD + Search + Filter + Sort + Pagination + Drawer + Modals + Analytics
+// ─── AdminExams — Exam Workflow ────────────────────────────────────────────
+// Real backend from day one: the 7-stage exam state machine
+// (DRAFT -> REVIEW -> APPROVED -> PUBLISHED -> ONGOING -> EVALUATING -> LOCKED,
+// with admin-only unlock as the sole backward transition) per
+// 02-SYSTEM-ARCHITECTURE.md / 03-FEATURE-SPECIFICATIONS.md / 18-EDGE-CASES.md.
 
-import React, { useState, useCallback, useDeferredValue } from 'react';
+import { useState } from 'react';
+import { Plus, Search, ArrowRight, Unlock, ClipboardList, X, Loader2 } from 'lucide-react';
+import { useAuth } from '@/contexts/auth.context';
 import {
-  Plus, Search, Download, Upload, ChevronDown, Calendar, Bell,
-  AlertTriangle, CheckCircle2, Clock, FileText, Users, Award, SlidersHorizontal,
-  ArrowUpRight, Copy, Layers, TrendingUp, RefreshCw, X, ChevronLeft, ChevronRight, Loader2,
-} from 'lucide-react';
-import { AdminOverlapModal } from '../shared/AdminOverlapModal';
+  useExams, useBatches, useBlueprints,
+  useCreateExam, useUpdateExamStatus, useUnlockExam,
+} from '@/hooks/useApi';
+import { SkeletonTable, EmptyState } from '@/components/ui/foundation';
 
-import {
-  useExamsList,
-  useCreateExam,
-  useUpdateExam,
-  useDeleteExam,
-  useBulkDeleteExams,
-  useExportExams,
-  useExamsAnalytics,
-} from '@/features/exams/hooks/useExams';
-import { ExamsTable }          from '@/features/exams/components/ExamsTable';
-import { ExamProfileDrawer }    from '@/features/exams/components/ExamProfileDrawer';
-import { CreateExamDialog }     from '@/features/exams/components/CreateExamDialog';
-import { DeleteExamDialog }     from '@/features/exams/components/DeleteExamDialog';
-import { ExamsAnalyticsPanel }  from '@/features/exams/components/ExamsAnalyticsPanel';
+type ExamStatus = 'DRAFT' | 'REVIEW' | 'APPROVED' | 'PUBLISHED' | 'ONGOING' | 'EVALUATING' | 'LOCKED';
 
-import type {
-  ExamListItem,
-  GetExamsParams,
-  SortDirection,
-  CreateExamInput,
-  UpdateExamInput,
-  ExamType,
-  ExamStatus,
-} from '@/features/exams/types/exam.types';
+const EXAM_TYPES = [
+  'UNIT_TEST', 'CHAPTER_TEST', 'WEEKLY_TEST', 'MONTHLY_TEST',
+  'MOCK_TEST', 'REVISION_TEST', 'PRE_BOARD', 'SUBJECT_TEST', 'PRACTICE_TEST',
+];
 
-const PAGE_SIZES = [10, 20, 50] as const;
-const EXAM_TYPES: ExamType[] = ['Mock Test', 'Part Test', 'Subjective', 'Weekly Test', 'DPP Test'];
-const STATUSES: ExamStatus[] = ['Upcoming', 'In-Progress', 'Evaluation Pending', 'Completed', 'Cancelled'];
+const NEXT_STATUS: Record<ExamStatus, ExamStatus | null> = {
+  DRAFT: 'REVIEW',
+  REVIEW: 'APPROVED',
+  APPROVED: 'PUBLISHED',
+  PUBLISHED: 'ONGOING',
+  ONGOING: 'EVALUATING',
+  EVALUATING: 'LOCKED',
+  LOCKED: null,
+};
 
-function useToast() {
-  const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
-  const show = useCallback((msg: string, type: 'success' | 'error' = 'success') => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3000);
-  }, []);
-  return { toast, show };
+const STATUS_STYLE: Record<ExamStatus, string> = {
+  DRAFT: 'bg-slate-100 text-slate-600',
+  REVIEW: 'bg-amber-50 text-amber-700',
+  APPROVED: 'bg-sky-50 text-sky-700',
+  PUBLISHED: 'bg-indigo-50 text-indigo-700',
+  ONGOING: 'bg-violet-50 text-violet-700',
+  EVALUATING: 'bg-orange-50 text-orange-700',
+  LOCKED: 'bg-emerald-50 text-emerald-700',
+};
+
+interface ExamRow {
+  id: string;
+  title: string;
+  type: string;
+  status: ExamStatus;
+  version: number;
+  scheduledDate?: string | null;
+  durationMinutes?: number | null;
+  batch?: { id: string; name: string };
+  blueprint?: { id: string; name: string; totalMarks: number };
 }
 
-function Toast({ msg, type }: { msg: string; type: string }) {
+export function AdminExams() {
+  const { user } = useAuth();
+  const canApprove = user?.role === 'ADMIN' || user?.role === 'FOUNDER';
+
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [createOpen, setCreateOpen] = useState(false);
+  const [unlockTarget, setUnlockTarget] = useState<ExamRow | null>(null);
+
+  const { data, isPending, isError } = useExams(statusFilter ? { status: statusFilter } : undefined);
+  const updateStatus = useUpdateExamStatus();
+
+  const exams: ExamRow[] = data ?? [];
+  const visibleExams = search.trim()
+    ? exams.filter((e) => e.title.toLowerCase().includes(search.trim().toLowerCase()))
+    : exams;
+
+  function handleAdvance(exam: ExamRow) {
+    const next = NEXT_STATUS[exam.status];
+    if (!next) return;
+    updateStatus.mutate({ examId: exam.id, status: next, version: exam.version });
+  }
+
   return (
-    <div className={`fixed bottom-6 right-6 z-[200] flex items-center gap-3 px-5 py-3.5 rounded-xl shadow-2xl text-white text-sm font-bold transition-all
-      ${type === 'success' ? 'bg-emerald-600' : 'bg-rose-600'}`}>
-      {type === 'success' ? '✓' : '✗'} {msg}
+    <div className="p-6 space-y-4 max-w-[1300px] mx-auto w-full">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-[15px] font-bold text-slate-900">Exams</h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Schedule exams from a blueprint and move them through review, approval, and evaluation.
+          </p>
+        </div>
+        <button
+          onClick={() => setCreateOpen(true)}
+          className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white text-[12.5px] font-bold rounded-xl hover:bg-indigo-700 transition-colors"
+        >
+          <Plus className="w-3.5 h-3.5" /> Schedule Exam
+        </button>
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="relative flex-1 min-w-[220px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search exams by title..."
+            className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          />
+        </div>
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="px-3 py-2 text-xs border border-slate-200 rounded-lg bg-white text-slate-700"
+        >
+          <option value="">All statuses</option>
+          {Object.keys(STATUS_STYLE).map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+      </div>
+
+      {isPending && <SkeletonTable rows={6} cols={5} />}
+
+      {isError && (
+        <EmptyState
+          icon={<ClipboardList className="w-6 h-6" />}
+          title="Couldn't load exams"
+          description="Something went wrong fetching exams. Try refreshing the page."
+        />
+      )}
+
+      {!isPending && !isError && visibleExams.length === 0 && (
+        <EmptyState
+          icon={<ClipboardList className="w-6 h-6" />}
+          title="No exams yet"
+          description="Schedule an exam from an existing blueprint to get started."
+          action={{ label: 'Schedule Exam', onClick: () => setCreateOpen(true) }}
+        />
+      )}
+
+      {!isPending && !isError && visibleExams.length > 0 && (
+        <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="border-b border-slate-100 bg-slate-50/50">
+                <th className="px-4 py-2.5 text-[11px] font-bold text-slate-500 uppercase tracking-wide">Title</th>
+                <th className="px-4 py-2.5 text-[11px] font-bold text-slate-500 uppercase tracking-wide">Batch</th>
+                <th className="px-4 py-2.5 text-[11px] font-bold text-slate-500 uppercase tracking-wide">Type</th>
+                <th className="px-4 py-2.5 text-[11px] font-bold text-slate-500 uppercase tracking-wide">Scheduled</th>
+                <th className="px-4 py-2.5 text-[11px] font-bold text-slate-500 uppercase tracking-wide">Status</th>
+                <th className="px-4 py-2.5 text-[11px] font-bold text-slate-500 uppercase tracking-wide text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleExams.map((exam) => {
+                const next = NEXT_STATUS[exam.status];
+                const approvalBlocked = next === 'APPROVED' && !canApprove;
+                return (
+                  <tr key={exam.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50">
+                    <td className="px-4 py-3 text-[12.5px] font-medium text-slate-800">{exam.title}</td>
+                    <td className="px-4 py-3 text-[12px] text-slate-500">{exam.batch?.name ?? '—'}</td>
+                    <td className="px-4 py-3 text-[11.5px] text-slate-600">{exam.type.replace(/_/g, ' ')}</td>
+                    <td className="px-4 py-3 text-[12px] text-slate-500">
+                      {exam.scheduledDate ? new Date(exam.scheduledDate).toLocaleDateString() : '—'}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`text-[10.5px] font-bold px-2 py-0.5 rounded-md ${STATUS_STYLE[exam.status]}`}>
+                        {exam.status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-1.5">
+                        {next && (
+                          <button
+                            onClick={() => handleAdvance(exam)}
+                            disabled={approvalBlocked || updateStatus.isPending}
+                            title={approvalBlocked ? 'Only admins can approve an exam' : `Move to ${next}`}
+                            className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold text-indigo-700 bg-indigo-50 rounded-md hover:bg-indigo-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            {updateStatus.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowRight className="w-3.5 h-3.5" />}
+                            {next}
+                          </button>
+                        )}
+                        {exam.status === 'LOCKED' && canApprove && (
+                          <button
+                            onClick={() => setUnlockTarget(exam)}
+                            className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold text-rose-700 bg-rose-50 rounded-md hover:bg-rose-100 transition-colors"
+                          >
+                            <Unlock className="w-3.5 h-3.5" /> Unlock
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <CreateExamDialog isOpen={createOpen} onClose={() => setCreateOpen(false)} />
+      <UnlockExamDialog exam={unlockTarget} onClose={() => setUnlockTarget(null)} />
     </div>
   );
 }
 
-export function AdminExams() {
-  const [searchInput, setSearchInput] = useState('');
-  const deferredSearch                = useDeferredValue(searchInput);
+// ─── Create Exam (from a Blueprint) ────────────────────────────────────────
 
-  // Filters
-  const [typeFilter,   setTypeFilter]   = useState<ExamType | ''>('');
-  const [statusFilter, setStatusFilter] = useState<ExamStatus | ''>('');
-  const [batchFilter,  setBatchFilter]  = useState('');
+function CreateExamDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+  const { data: batches } = useBatches();
+  const { data: blueprints } = useBlueprints();
+  const createExam = useCreateExam();
 
-  // Table state
-  const [page,     setPage]     = useState(1);
-  const [pageSize, setPageSize] = useState<10 | 20 | 50>(10);
-  const [sortBy,   setSortBy]   = useState<keyof ExamListItem>('date');
-  const [sortDir,  setSortDir]  = useState<SortDirection>('asc');
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [title, setTitle] = useState('');
+  const [batchId, setBatchId] = useState('');
+  const [blueprintId, setBlueprintId] = useState('');
+  const [type, setType] = useState(EXAM_TYPES[0]);
+  const [scheduledDate, setScheduledDate] = useState('');
 
-  // Drawer & Dialog state
-  const [viewId,       setViewId]       = useState<string | null>(null);
-  const [editTarget,   setEditTarget]   = useState<ExamListItem | null>(null);
-  const [createOpen,   setCreateOpen]   = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<ExamListItem[] | null>(null);
+  if (!isOpen) return null;
 
-  // Overlap Modals
-  const [activeModal, setActiveModal]   = useState<'examDetail' | 'passRateReport' | 'meritList' | 'alerts' | null>(null);
-  const [selectedExam, setSelectedExam] = useState<ExamListItem | null>(null);
-
-  const { toast, show: showToast } = useToast();
-
-  const params: GetExamsParams = {
-    page, pageSize,
-    search: deferredSearch,
-    type:   typeFilter   || undefined,
-    status: statusFilter || undefined,
-    batch:  batchFilter  || undefined,
-    sortBy, sortDir,
-  };
-
-  const { data, isLoading, isFetching, refetch } = useExamsList(params);
-  const { data: analytics }                       = useExamsAnalytics();
-
-  const createMutation     = useCreateExam();
-  const updateMutation     = useUpdateExam();
-  const deleteMutation     = useDeleteExam();
-  const bulkDeleteMutation = useBulkDeleteExams();
-  const exportMutation     = useExportExams();
-
-  const exams      = data?.data ?? [];
-  const totalItems = data?.total ?? 0;
-  const totalPages = data?.totalPages ?? 1;
-
-  function handleSort(col: keyof ExamListItem) {
-    if (col === sortBy) {
-      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
-    } else {
-      setSortBy(col);
-      setSortDir('asc');
-    }
-    setPage(1);
+  function reset() {
+    setTitle(''); setBatchId(''); setBlueprintId(''); setType(EXAM_TYPES[0]); setScheduledDate('');
   }
 
-  function handleSelectAll() {
-    if (exams.every((e) => selected.has(e.id))) {
-      setSelected(new Set());
-    } else {
-      setSelected(new Set(exams.map((e) => e.id)));
-    }
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!title.trim() || !batchId || !blueprintId) return;
+    createExam.mutate(
+      {
+        title: title.trim(),
+        batchId,
+        blueprintId,
+        type,
+        ...(scheduledDate ? { scheduledDate: new Date(scheduledDate).toISOString() } : {}),
+      },
+      { onSuccess: () => { reset(); onClose(); } },
+    );
   }
-
-  function handleSelectOne(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-  }
-
-  async function handleCreate(input: CreateExamInput | UpdateExamInput) {
-    await createMutation.mutateAsync(input as CreateExamInput);
-    showToast('New exam scheduled successfully');
-  }
-
-  async function handleEdit(input: CreateExamInput | UpdateExamInput) {
-    await updateMutation.mutateAsync(input as UpdateExamInput);
-    showToast('Exam schedule updated');
-    setEditTarget(null);
-  }
-
-  async function handleDeleteConfirm() {
-    if (!deleteTarget) return;
-    const ids = deleteTarget.map((e) => e.id);
-    if (ids.length === 1 && ids[0]) {
-      await deleteMutation.mutateAsync(ids[0]);
-    } else if (ids.length > 1) {
-      await bulkDeleteMutation.mutateAsync(ids);
-    }
-    setSelected(new Set());
-    setDeleteTarget(null);
-    showToast(`${ids.length} exam(s) cancelled`);
-  }
-
-  async function handleExport() {
-    const ids = selected.size > 0 ? Array.from(selected) : undefined;
-    const csv = await exportMutation.mutateAsync(ids);
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href     = url;
-    a.download = 'exams.csv';
-    a.click();
-    URL.revokeObjectURL(url);
-    showToast(`Exported ${ids?.length ?? totalItems} exam records`);
-  }
-
-  const deleteLoading = deleteMutation.isPending || bulkDeleteMutation.isPending;
 
   return (
-    <div className="p-6 text-[#1e293b] animate-fadein space-y-6 max-w-[1700px] mx-auto w-full">
-      {/* Header */}
-      <div className="flex items-center justify-between pb-4 border-b border-gray-200">
-        <div>
-          <h1 className="text-xl font-bold text-gray-900">Exams &amp; Assessments Console</h1>
-          <p className="text-xs text-gray-500 mt-0.5">Manage schedules, test distribution, and grading status across cohorts</p>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm" role="dialog" aria-modal="true">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+          <h3 className="text-[14px] font-bold text-slate-900">Schedule Exam</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+            <X className="w-4 h-4" />
+          </button>
         </div>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-1.5 text-xs text-gray-500 font-medium">
-            <Calendar className="w-3.5 h-3.5 text-gray-400" />
-            <span>Today, 23 May 2025</span>
+
+        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+          <div>
+            <label className="block text-[12px] font-semibold text-slate-700 mb-1">Title</label>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g. Weekly Test 12"
+              required
+              className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            />
           </div>
-          <div className="relative p-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 cursor-pointer">
-            <Bell className="w-4 h-4 text-gray-500" />
-            <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 rounded-full text-white text-[9px] font-bold flex items-center justify-center">
-              4
-            </span>
+
+          <div>
+            <label className="block text-[12px] font-semibold text-slate-700 mb-1">Batch</label>
+            <select
+              value={batchId}
+              onChange={(e) => setBatchId(e.target.value)}
+              required
+              className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg bg-white"
+            >
+              <option value="">Select a batch</option>
+              {(batches ?? []).map((b: { id: string; name: string }) => (
+                <option key={b.id} value={b.id}>{b.name}</option>
+              ))}
+            </select>
           </div>
-        </div>
-      </div>
 
-      <div className="space-y-6">
-        {/* Metric Cards (5 Cards) */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-          {[
-            { label: 'Total Exams',        value: analytics?.totalExams        ?? '45',  trend: '+8%',  trendUp: true,  color: 'text-green-500' },
-            { label: 'Upcoming Exams',     value: analytics?.upcomingExams     ?? '12',  trend: '-20%', trendUp: false, color: 'text-rose-500' },
-            { label: 'Completed Exams',    value: analytics?.completedExams    ?? '28',  trend: '+5%',  trendUp: true,  color: 'text-green-500' },
-            { label: 'Evaluation Pending', value: analytics?.evaluationPending ?? '18',  trend: '+12%', trendUp: true,  color: 'text-amber-500' },
-            { label: 'Avg Pass Percentage',value: `${analytics?.avgPassPercentage ?? 78}%`, trend: '+6%', trendUp: true, color: 'text-blue-500' },
-          ].map((stat, i) => (
-            <div key={i} className="bg-white rounded-xl p-4 border border-gray-100 shadow-[0_2px_10px_rgba(0,0,0,0.02)] hover:shadow-md transition-shadow">
-              <h3 className="text-xs font-medium text-gray-500">{stat.label}</h3>
-              <div className="mt-1 flex items-baseline gap-2">
-                <span className="text-2xl font-bold text-gray-900">{stat.value}</span>
-                <span className={`text-[10px] font-bold ${stat.color} flex items-center`}>
-                  {stat.trendUp ? '↑' : '↓'} {stat.trend}
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Full-Width Controls Bar */}
-        <div className="flex items-center justify-between gap-3 flex-wrap bg-white p-2.5 rounded-xl border border-gray-100 shadow-[0_2px_10px_rgba(0,0,0,0.02)]">
-          <div className="flex items-center gap-2 flex-wrap flex-1 min-w-[280px]">
-            <div className="relative flex-1 max-w-sm">
-              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Search exams by name or code..."
-                className="pl-8 pr-3 py-1.5 w-full text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-blue-500 text-gray-700 bg-white"
-                value={searchInput}
-                onChange={(e) => { setSearchInput(e.target.value); setPage(1); }}
-              />
-            </div>
-
-            <div className="relative">
-              <select
-                value={typeFilter} onChange={(e) => { setTypeFilter(e.target.value as any); setPage(1); }}
-                className="appearance-none py-1.5 pl-3 pr-8 text-xs font-medium border border-gray-200 rounded-lg bg-white text-gray-600 hover:bg-gray-50 focus:outline-none focus:border-blue-500 cursor-pointer outline-none"
-              >
-                <option value="">Exam Type: All</option>
-                {EXAM_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
-              <ChevronDown className="w-3.5 h-3.5 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
-
-            <div className="relative">
-              <select
-                value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value as any); setPage(1); }}
-                className="appearance-none py-1.5 pl-3 pr-8 text-xs font-medium border border-gray-200 rounded-lg bg-white text-gray-600 hover:bg-gray-50 focus:outline-none focus:border-blue-500 cursor-pointer outline-none"
-              >
-                <option value="">Status: All</option>
-                {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
-              <ChevronDown className="w-3.5 h-3.5 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
-
-            {selected.size > 0 && (
-              <button
-                onClick={() => setDeleteTarget(exams.filter((e) => selected.has(e.id)))}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-rose-600 bg-rose-50 border border-rose-200 rounded-lg hover:bg-rose-100"
-              >
-                Cancel ({selected.size})
-              </button>
+          <div>
+            <label className="block text-[12px] font-semibold text-slate-700 mb-1">Blueprint</label>
+            <select
+              value={blueprintId}
+              onChange={(e) => setBlueprintId(e.target.value)}
+              required
+              className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg bg-white"
+            >
+              <option value="">Select a blueprint</option>
+              {(blueprints ?? []).map((bp: { id: string; name: string }) => (
+                <option key={bp.id} value={bp.id}>{bp.name}</option>
+              ))}
+            </select>
+            {blueprints?.length === 0 && (
+              <p className="text-[11px] text-slate-400 mt-1">No blueprints yet — create one under Papers first.</p>
             )}
           </div>
-          
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => refetch()}
-              className="p-1.5 rounded-lg border border-gray-200 bg-white text-gray-500 hover:bg-gray-50"
-              title="Refresh"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? 'animate-spin text-blue-600' : ''}`} />
-            </button>
-            <button
-              onClick={handleExport}
-              disabled={exportMutation.isPending}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 whitespace-nowrap"
-            >
-              {exportMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5 text-gray-500" />}
-              Export {selected.size > 0 ? `(${selected.size})` : ''}
-            </button>
-            <button
-              onClick={() => { setEditTarget(null); setCreateOpen(true); }}
-              className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-sm transition-colors whitespace-nowrap"
-            >
-              <Plus className="w-3.5 h-3.5" /> Schedule Exam
-            </button>
-          </div>
-        </div>
 
-        {/* ── UPCOMING EXAMS TABLE CARD ── */}
-        <div className="w-full bg-white rounded-xl border border-gray-100 shadow-[0_2px_10px_rgba(0,0,0,0.02)] overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
-                <FileText className="w-4 h-4" />
-              </div>
-              <div>
-                <h2 className="text-sm font-bold text-gray-900">Upcoming &amp; Active Exams</h2>
-                <p className="text-[11px] text-gray-500">Scheduled assessment timeline and candidate registrations</p>
-              </div>
-            </div>
-            <span className="text-xs font-bold text-blue-700 bg-blue-50 px-3 py-1 rounded-full border border-blue-100">
-              {totalItems} Scheduled Exams
-            </span>
-          </div>
-
-          <ExamsTable
-            exams={exams}
-            loading={isLoading}
-            selectedIds={selected}
-            sortBy={sortBy}
-            sortDir={sortDir}
-            onSort={handleSort}
-            onSelectAll={handleSelectAll}
-            onSelectOne={handleSelectOne}
-            onView={(e) => { setSelectedExam(e); setActiveModal('examDetail'); setViewId(e.id); }}
-            onEdit={(e) => { setEditTarget(e); setCreateOpen(true); }}
-            onDelete={(e) => setDeleteTarget([e])}
-          />
-
-          {!isLoading && totalItems > 0 && (
-            <div className="flex items-center justify-between px-5 py-3.5 border-t border-gray-100 bg-slate-50/60 text-xs text-gray-500">
-              <div className="flex items-center gap-3">
-                <span>
-                  {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, totalItems)} of{' '}
-                  <span className="font-bold text-gray-700">{totalItems}</span> exams
-                </span>
-                <select
-                  value={pageSize}
-                  onChange={(e) => { setPageSize(Number(e.target.value) as any); setPage(1); }}
-                  className="text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white"
-                >
-                  {PAGE_SIZES.map((n) => <option key={n} value={n}>{n} / page</option>)}
-                </select>
-              </div>
-              <div className="flex items-center gap-1">
-                <button
-                  disabled={page <= 1} onClick={() => setPage((p) => p - 1)}
-                  className="p-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-40"
-                >
-                  <ChevronLeft className="w-3.5 h-3.5" />
-                </button>
-                {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => i + 1).map((p) => (
-                  <button
-                    key={p} onClick={() => setPage(p)}
-                    className={`w-7 h-7 rounded-lg text-xs font-bold ${
-                      page === p ? 'bg-blue-600 text-white' : 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
-                    }`}
-                  >
-                    {p}
-                  </button>
-                ))}
-                <button
-                  disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}
-                  className="p-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-40"
-                >
-                  <ChevronRight className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* ── ANALYTICS CARDS (BELOW TABLE) ── */}
-        <ExamsAnalyticsPanel
-          onOpenPassRateReport={() => setActiveModal('passRateReport')}
-          onOpenMeritList={() => setActiveModal('meritList')}
-          onOpenAlerts={() => setActiveModal('alerts')}
-        />
-      </div>
-
-      {/* Profile Drawer */}
-      <ExamProfileDrawer
-        examId={viewId}
-        onClose={() => setViewId(null)}
-        onEdit={(id) => {
-          const e = exams.find((x) => x.id === id);
-          if (e) { setEditTarget(e); setCreateOpen(true); setViewId(null); }
-        }}
-      />
-
-      {/* Schedule / Edit Modal */}
-      <CreateExamDialog
-        isOpen={createOpen}
-        onClose={() => { setCreateOpen(false); setEditTarget(null); }}
-        editTarget={editTarget}
-        onSubmit={editTarget ? handleEdit : handleCreate}
-      />
-
-      {/* Delete / Cancel Dialog */}
-      <DeleteExamDialog
-        isOpen={!!deleteTarget}
-        onClose={() => setDeleteTarget(null)}
-        onConfirm={handleDeleteConfirm}
-        examNames={deleteTarget?.map((e) => e.name) ?? []}
-        loading={deleteLoading}
-      />
-
-      {/* ── OVERLAP MODALS ── */}
-
-      {/* 1. Exam Detail Modal */}
-      <AdminOverlapModal
-        isOpen={activeModal === 'examDetail' && !!selectedExam}
-        onClose={() => { setActiveModal(null); setSelectedExam(null); }}
-        title={`Exam Details: ${selectedExam?.name}`}
-        subtitle={`Code: ${selectedExam?.code} • Batch: ${selectedExam?.batch}`}
-        icon={FileText}
-        badgeText={selectedExam?.type}
-      >
-        {selectedExam && (
-          <div className="space-y-4">
-            <div className="grid grid-cols-3 gap-4 p-4 bg-slate-50 rounded-xl border border-slate-100 text-xs">
-              <div>
-                <span className="text-slate-400 font-medium block">Scheduled Date</span>
-                <span className="text-base font-bold text-slate-900">{selectedExam.date}</span>
-              </div>
-              <div>
-                <span className="text-slate-400 font-medium block">Duration</span>
-                <span className="text-base font-bold text-slate-900">{selectedExam.duration}</span>
-              </div>
-              <div>
-                <span className="text-slate-400 font-medium block">Registered Candidates</span>
-                <span className="text-base font-bold text-blue-600">{selectedExam.students} Students</span>
-              </div>
-            </div>
-          </div>
-        )}
-      </AdminOverlapModal>
-
-      {/* 2. Pass Rate Report Modal */}
-      <AdminOverlapModal
-        isOpen={activeModal === 'passRateReport'}
-        onClose={() => setActiveModal(null)}
-        title="Pass Rate & Performance Diagnostics Report"
-        subtitle="Month-over-month pass percentage analysis"
-        icon={TrendingUp}
-        badgeText={`${analytics?.avgPassPercentage ?? 78}% Overall Pass Rate`}
-      >
-        <div className="space-y-3">
-          {(analytics?.passPercentageTrend ?? [
-            { month: 'Jan', passRate: 62 },
-            { month: 'Feb', passRate: 65 },
-            { month: 'Mar', passRate: 70 },
-            { month: 'Apr', passRate: 74 },
-            { month: 'May', passRate: 78 },
-          ]).map((p, idx) => (
-            <div key={idx} className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex justify-between items-center">
-              <span className="text-xs font-bold text-slate-900">{p.month} 2025</span>
-              <span className="text-xs font-bold text-blue-600">{p.passRate}% Pass Rate</span>
-            </div>
-          ))}
-        </div>
-      </AdminOverlapModal>
-
-      {/* 3. Merit List Modal */}
-      <AdminOverlapModal
-        isOpen={activeModal === 'meritList'}
-        onClose={() => setActiveModal(null)}
-        title="Full Institute Student Merit List"
-        subtitle="Ranked list of top performers across all recent exams"
-        icon={Award}
-        badgeText="Top Performers"
-      >
-        <div className="space-y-3">
-          {(analytics?.topPerformers ?? [
-            { rank: 1, name: 'Arjun Mehta', score: '92.6%' },
-            { rank: 2, name: 'Riya Sharma', score: '91.2%' },
-            { rank: 3, name: 'Karan Singh', score: '89.8%' },
-          ]).map((s) => (
-            <div key={s.rank} className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex justify-between items-center">
-              <div className="flex items-center gap-3">
-                <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-bold text-xs flex items-center justify-center">#{s.rank}</span>
-                <span className="text-xs font-bold text-slate-900">{s.name}</span>
-              </div>
-              <span className="text-xs font-bold text-emerald-600">{s.score}</span>
-            </div>
-          ))}
-        </div>
-      </AdminOverlapModal>
-
-      {/* 4. Operational Alerts Modal */}
-      <AdminOverlapModal
-        isOpen={activeModal === 'alerts'}
-        onClose={() => setActiveModal(null)}
-        title="Exam Operational Alerts Console"
-        subtitle="Action items for invigilation, grading, and answer key uploads"
-        icon={AlertTriangle}
-        badgeText="Action Items"
-        badgeColor="bg-amber-50 text-amber-600 border-amber-100"
-      >
-        <div className="space-y-3">
-          <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 flex justify-between items-center">
+          <div className="grid grid-cols-2 gap-3">
             <div>
-              <h4 className="text-xs font-bold text-slate-900">18 Evaluations Pending Grade Publish</h4>
-              <p className="text-[11px] text-slate-500">Requires lead invigilator signature before publishing</p>
+              <label className="block text-[12px] font-semibold text-slate-700 mb-1">Type</label>
+              <select
+                value={type}
+                onChange={(e) => setType(e.target.value)}
+                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg bg-white"
+              >
+                {EXAM_TYPES.map((t) => (
+                  <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>
+                ))}
+              </select>
             </div>
-            <button className="px-3 py-1 bg-blue-600 text-white font-bold text-xs rounded-lg">Publish Results</button>
+            <div>
+              <label className="block text-[12px] font-semibold text-slate-700 mb-1">Scheduled Date</label>
+              <input
+                type="date"
+                value={scheduledDate}
+                onChange={(e) => setScheduledDate(e.target.value)}
+                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg"
+              />
+            </div>
           </div>
-        </div>
-      </AdminOverlapModal>
 
-      {toast && <Toast msg={toast.msg} type={toast.type} />}
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={onClose} className="px-4 py-2 text-[12px] font-semibold text-slate-700 border border-slate-200 rounded-lg hover:bg-slate-50">
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={createExam.isPending}
+              className="flex items-center gap-1.5 px-4 py-2 text-[12px] font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {createExam.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              Schedule
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ─── Unlock (LOCKED -> EVALUATING, admin-only, reason required) ───────────
+
+function UnlockExamDialog({ exam, onClose }: { exam: ExamRow | null; onClose: () => void }) {
+  const [reason, setReason] = useState('');
+  const unlockExam = useUnlockExam();
+
+  if (!exam) return null;
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!exam || reason.trim().length < 10) return;
+    unlockExam.mutate(
+      { examId: exam.id, reason: reason.trim(), version: exam.version },
+      { onSuccess: () => { setReason(''); onClose(); } },
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm" role="dialog" aria-modal="true">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+          <h3 className="text-[14px] font-bold text-slate-900">Unlock "{exam.title}"</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-5 space-y-3">
+          <p className="text-[12.5px] text-slate-600 leading-relaxed">
+            This reopens the exam for evaluation so grades can change again. It's audited — give a reason (at least 10 characters).
+          </p>
+          <textarea
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="e.g. Score dispute raised by a parent — re-evaluating Q4"
+            rows={3}
+            required
+            minLength={10}
+            className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-400"
+          />
+          <div className="flex justify-end gap-2 pt-1">
+            <button type="button" onClick={onClose} className="px-4 py-2 text-[12px] font-semibold text-slate-700 border border-slate-200 rounded-lg hover:bg-slate-50">
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={unlockExam.isPending || reason.trim().length < 10}
+              className="flex items-center gap-1.5 px-4 py-2 text-[12px] font-bold text-white bg-rose-600 rounded-lg hover:bg-rose-700 disabled:opacity-50"
+            >
+              {unlockExam.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              Unlock
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

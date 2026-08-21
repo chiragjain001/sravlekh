@@ -109,6 +109,18 @@
            disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
+  .input-error {
+    @apply border-error focus:border-error;
+  }
+
+  .label {
+    @apply block text-sm font-medium text-navy-700 mb-1.5;
+  }
+
+  .error-text {
+    @apply text-xs text-error mt-1;
+  }
+
   /* ── Status Chips ────────────────────────────────────────────────────────── */
   .chip {
     @apply inline-flex items-center px-2.5 py-0.5 rounded-chip text-[11px] font-semibold;

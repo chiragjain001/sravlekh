@@ -8,6 +8,7 @@ import {
   IsArray,
   Min,
   Max,
+  MinLength,
   IsBoolean,
   ValidateNested,
 } from 'class-validator';
@@ -55,6 +56,29 @@ export class CreateExamDto {
   @IsOptional()
   @IsString()
   venue?: string;
+}
+
+export class UpdateExamStatusDto {
+  @ApiProperty({ enum: ExamStatus, description: 'Target status — must be exactly the next state in the sequence' })
+  @IsEnum(ExamStatus)
+  status!: ExamStatus;
+
+  @ApiProperty({ description: 'The Exam.version this transition is based on — stale values are rejected with 409' })
+  @IsNumber()
+  @Min(0)
+  version!: number;
+}
+
+export class UnlockExamDto {
+  @ApiProperty({ description: 'Why this locked exam is being reopened — required, min 10 characters' })
+  @IsString()
+  @MinLength(10)
+  reason!: string;
+
+  @ApiProperty({ description: 'The Exam.version this transition is based on — stale values are rejected with 409' })
+  @IsNumber()
+  @Min(0)
+  version!: number;
 }
 
 export class EvaluateResponseDto {
