@@ -4,7 +4,7 @@ import { getQueueToken } from '@nestjs/bullmq';
 import type { Response } from 'express';
 import { HealthController } from './health.controller';
 import { PrismaService } from '../prisma/prisma.service';
-import { MASTERY_RECALC_QUEUE } from '../analytics/mastery-recalc.processor';
+import { MASTERY_RECALC_QUEUE } from '../analytics/mastery-recalc.constants';
 
 describe('HealthController', () => {
   let controller: HealthController;

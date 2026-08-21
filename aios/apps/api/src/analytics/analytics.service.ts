@@ -4,7 +4,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import axios from 'axios';
 import { PrismaService } from '../prisma/prisma.service';
-import { MASTERY_RECALC_QUEUE, MasteryRecalcJobData } from './mastery-recalc.processor';
+import { MASTERY_RECALC_QUEUE, MasteryRecalcJobData } from './mastery-recalc.constants';
 
 @Injectable()
 export class AnalyticsService {

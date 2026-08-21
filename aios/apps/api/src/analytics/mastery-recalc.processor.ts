@@ -2,13 +2,7 @@ import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { AnalyticsService } from './analytics.service';
-
-export interface MasteryRecalcJobData {
-  studentProfileId: string;
-  topicIds: string[];
-}
-
-export const MASTERY_RECALC_QUEUE = 'mastery-recalc';
+import { MASTERY_RECALC_QUEUE, MasteryRecalcJobData } from './mastery-recalc.constants';
 
 /**
  * Consumes mastery-recalc jobs enqueued on marks-capture commit (11-PERFORMANCE-

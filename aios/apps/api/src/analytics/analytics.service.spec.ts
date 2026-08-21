@@ -4,7 +4,7 @@ import { getQueueToken } from '@nestjs/bullmq';
 import axios from 'axios';
 import { AnalyticsService } from './analytics.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { MASTERY_RECALC_QUEUE } from './mastery-recalc.processor';
+import { MASTERY_RECALC_QUEUE } from './mastery-recalc.constants';
 
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;

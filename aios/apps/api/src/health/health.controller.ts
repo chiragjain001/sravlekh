@@ -6,7 +6,7 @@ import type { Redis } from 'ioredis';
 import { Response } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { Public } from '../auth/decorators/public.decorator';
-import { MASTERY_RECALC_QUEUE } from '../analytics/mastery-recalc.processor';
+import { MASTERY_RECALC_QUEUE } from '../analytics/mastery-recalc.constants';
 
 /**
  * GET /health — 14-DEPLOYMENT-ARCHITECTURE.md: orchestrator withholds traffic until

@@ -10,7 +10,7 @@
     {
       "name": "api",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "@aios/api", "start:dev"],
+      "runtimeArgs": ["--filter", "@aios/api", "dev"],
       "port": 4000
     }
   ]
