@@ -209,10 +209,11 @@ export class ExamsService {
       });
     });
 
-    // Fire & Forget: Trigger Analytics Engine (D-02)
-    // We run this asynchronously so it doesn't block the HTTP response
-    this.analyticsService.recalculateMastery(studentProfileId, Array.from(topicsToRecalculate))
-      .catch(err => this.logger.error('Failed async mastery calculation', err));
+    // Async trigger: Analytics Engine (D-02) — queued (mastery-recalc), not a raw
+    // in-process fire-and-forget, so it retries on failure instead of silently
+    // dropping the recalculation. Grading write itself stays fast (11-PERFORMANCE-
+    // REQUIREMENTS.md); enqueueing is a fast Redis write, not the recalculation itself.
+    await this.analyticsService.enqueueMasteryRecalc(studentProfileId, Array.from(topicsToRecalculate));
 
     return { message: 'Answer sheet graded and finalized. Analytics updated.' };
   }

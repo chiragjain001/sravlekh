@@ -1,11 +1,31 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
+import { MASTERY_RECALC_QUEUE, MasteryRecalcJobData } from './mastery-recalc.processor';
 
 @Injectable()
 export class AnalyticsService {
   private readonly logger = new Logger(AnalyticsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @InjectQueue(MASTERY_RECALC_QUEUE) private readonly masteryRecalcQueue: Queue<MasteryRecalcJobData>,
+  ) {}
+
+  /**
+   * Enqueues an async mastery recalculation (D-02) — replaces the previous raw
+   * fire-and-forget in-process call, which had no retry/backoff/dead-letter and
+   * would silently lose the recalc entirely if it threw. See 08-ERROR-HANDLING.md.
+   */
+  async enqueueMasteryRecalc(studentProfileId: string, topicIds: string[]): Promise<void> {
+    if (topicIds.length === 0) return;
+    await this.masteryRecalcQueue.add(
+      'recalculate',
+      { studentProfileId, topicIds },
+      { attempts: 3, backoff: { type: 'exponential', delay: 1000 } },
+    );
+  }
 
   // ── D-02: Analytics Engine (Mastery Recalculation) ──────────────────────
 

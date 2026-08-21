@@ -18,6 +18,8 @@ import { DoubtsModule } from './doubts/doubts.module';
 import { AssignmentsModule } from './assignments/assignments.module';
 import { TimetableModule } from './timetable/timetable.module';
 import { HealthModule } from './health/health.module';
+import { QueueModule } from './infrastructure/queue/queue.module';
+import { StorageModule } from './infrastructure/storage/storage.module';
 import { AllExceptionsFilter } from './shared/filters/all-exceptions.filter';
 import { RequestIdMiddleware } from './shared/middleware/request-id.middleware';
 
@@ -45,6 +47,8 @@ import { RequestIdMiddleware } from './shared/middleware/request-id.middleware';
 
     // ── Core modules ──────────────────────────────────────────────────────
     PrismaModule,
+    QueueModule,
+    StorageModule,
     AuthModule,
     InstitutesModule,
     UsersModule,
