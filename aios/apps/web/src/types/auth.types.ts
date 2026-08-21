@@ -38,3 +38,21 @@ export interface LoginResponse {
   user:        AuthenticatedUser;
 }
 
+/**
+ * The actual shape POST /auth/google returns today (apps/api/src/auth/auth.types.ts).
+ * Deliberately narrower than the full local AuthenticatedUser — everything else
+ * (permissions, feature flags, branch/session scoping) isn't modeled server-side yet.
+ * See docs/33-GAP-ANALYSIS-AND-BUILD-PLAN.md.
+ */
+export interface GoogleLoginApiResponse {
+  accessToken: string;
+  user: {
+    id: string;
+    email: string;
+    name: string;
+    role: UserRole;
+    instituteId: string;
+    avatarUrl?: string | null;
+  };
+}
+

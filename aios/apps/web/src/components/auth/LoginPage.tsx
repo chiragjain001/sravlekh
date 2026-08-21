@@ -35,7 +35,7 @@ declare global {
 }
 
 export function LoginPage() {
-  const { login, user, isLoading: authLoading } = useAuth();
+  const { login, loginAsMock, user, isLoading: authLoading } = useAuth();
   const searchParams = useSearchParams();
   const router = useRouter();
   const [isSigningIn, setIsSigningIn] = useState(false);
@@ -120,28 +120,13 @@ export function LoginPage() {
     }
   }
 
+  // Delegates to AuthContext.loginAsMock — the single mock-session mechanism
+  // (previously this wrote directly to localStorage with its own ad-hoc user
+  // shape and flipped a global "demo mode" flag that silently mocked every API
+  // response; consolidated so there's one dev-only login path, not two).
   function handleDemoLogin(role: 'STUDENT' | 'TEACHER' | 'ADMIN' | 'FOUNDER') {
     setIsSigningIn(true);
-    
-    const demoUsers = {
-      STUDENT: { id: 'demo-student', name: 'Aarav Sharma', email: 'aarav@aios.com', role: 'STUDENT', instituteId: 'demo-inst-1' },
-      TEACHER: { id: 'demo-teacher', name: 'Dr. Verma', email: 'verma@aios.com', role: 'TEACHER', instituteId: 'demo-inst-1' },
-      ADMIN: { id: 'demo-admin', name: 'Admin User', email: 'admin@aios.com', role: 'ADMIN', instituteId: 'demo-inst-1' },
-      FOUNDER: { id: 'demo-founder', name: 'Founder User', email: 'founder@aios.com', role: 'FOUNDER', instituteId: 'demo-inst-1' },
-    };
-
-    localStorage.setItem('aios_demo_mode', 'true');
-    localStorage.setItem('aios_access_token', 'demo-token');
-    localStorage.setItem('aios_user', JSON.stringify(demoUsers[role]));
-    
-    const dashboardRoutes: Record<string, string> = {
-      STUDENT: '/dashboard/student',
-      TEACHER: '/dashboard/teacher',
-      ADMIN: '/dashboard/admin',
-      FOUNDER: '/dashboard/founder',
-    };
-    
-    window.location.href = dashboardRoutes[role] ?? '/dashboard';
+    loginAsMock(role);
   }
 
   if (authLoading) {
@@ -277,36 +262,39 @@ export function LoginPage() {
             If you need access, contact your institute admin.
           </p>
 
-          {/* Client Demo Mode Buttons */}
-          <div className="mt-8 border-t border-border pt-6 text-center">
-            <p className="text-xs text-navy-500 mb-3">Client Presentation Mode</p>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={() => handleDemoLogin('STUDENT')}
-                className="btn-secondary text-xs text-indigo-600 border-indigo-200 hover:bg-indigo-50"
-              >
-                Demo as Student
-              </button>
-              <button
-                onClick={() => handleDemoLogin('TEACHER')}
-                className="btn-secondary text-xs text-teal-600 border-teal-200 hover:bg-teal-50"
-              >
-                Demo as Teacher
-              </button>
-              <button
-                onClick={() => handleDemoLogin('ADMIN')}
-                className="btn-secondary text-xs text-purple-600 border-purple-200 hover:bg-purple-50"
-              >
-                Demo as Admin
-              </button>
-              <button
-                onClick={() => handleDemoLogin('FOUNDER')}
-                className="btn-secondary text-xs text-warning border-warning hover:bg-yellow-50"
-              >
-                Demo as Founder
-              </button>
+          {/* Dev/test-only mock login — see 06-AUTH-AUTHORIZATION.md ("a mock role-token
+              login exists only in non-prod"). Excluded from production bundles. */}
+          {process.env.NODE_ENV !== 'production' && (
+            <div className="mt-8 border-t border-border pt-6 text-center">
+              <p className="text-xs text-navy-500 mb-3">Testing Mode — mock login</p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => handleDemoLogin('STUDENT')}
+                  className="btn-secondary text-xs text-indigo-600 border-indigo-200 hover:bg-indigo-50"
+                >
+                  Demo as Student
+                </button>
+                <button
+                  onClick={() => handleDemoLogin('TEACHER')}
+                  className="btn-secondary text-xs text-teal-600 border-teal-200 hover:bg-teal-50"
+                >
+                  Demo as Teacher
+                </button>
+                <button
+                  onClick={() => handleDemoLogin('ADMIN')}
+                  className="btn-secondary text-xs text-purple-600 border-purple-200 hover:bg-purple-50"
+                >
+                  Demo as Admin
+                </button>
+                <button
+                  onClick={() => handleDemoLogin('FOUNDER')}
+                  className="btn-secondary text-xs text-warning border-warning hover:bg-yellow-50"
+                >
+                  Demo as Founder
+                </button>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </main>

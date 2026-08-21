@@ -129,6 +129,7 @@ export class AuthService {
       name: user.name,
       role: user.role,
       instituteId: user.instituteId,
+      avatarUrl: user.avatarUrl,
     };
 
     return { accessToken, user: authenticatedUser };
@@ -138,7 +139,7 @@ export class AuthService {
   async validateJwtPayload(payload: JwtPayload): Promise<AuthenticatedUser> {
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
-      select: { id: true, email: true, name: true, role: true, instituteId: true, status: true },
+      select: { id: true, email: true, name: true, role: true, instituteId: true, status: true, avatarUrl: true },
     });
 
     if (!user || user.status === UserStatus.SUSPENDED) {
@@ -151,6 +152,7 @@ export class AuthService {
       name: user.name,
       role: user.role as UserRole,
       instituteId: user.instituteId,
+      avatarUrl: user.avatarUrl,
     };
   }
 

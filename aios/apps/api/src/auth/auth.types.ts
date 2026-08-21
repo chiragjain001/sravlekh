@@ -24,4 +24,5 @@ export interface AuthenticatedUser {
   name: string;
   role: UserRole;
   instituteId: string;
+  avatarUrl?: string | null;
 }

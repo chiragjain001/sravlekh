@@ -1,6 +1,7 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { APP_FILTER } from '@nestjs/core';
 import { envSchema } from './config/env.schema';
 import { AuthModule } from './auth/auth.module';
 import { InstitutesModule } from './institutes/institutes.module';
@@ -16,6 +17,9 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { DoubtsModule } from './doubts/doubts.module';
 import { AssignmentsModule } from './assignments/assignments.module';
 import { TimetableModule } from './timetable/timetable.module';
+import { HealthModule } from './health/health.module';
+import { AllExceptionsFilter } from './shared/filters/all-exceptions.filter';
+import { RequestIdMiddleware } from './shared/middleware/request-id.middleware';
 
 @Module({
   imports: [
@@ -54,6 +58,12 @@ import { TimetableModule } from './timetable/timetable.module';
     DoubtsModule,
     AssignmentsModule,
     TimetableModule,
+    HealthModule,
   ],
+  providers: [{ provide: APP_FILTER, useClass: AllExceptionsFilter }],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(RequestIdMiddleware).forRoutes('*');
+  }
+}

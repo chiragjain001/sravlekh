@@ -1,9 +1,9 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import helmet from 'helmet';
-// eslint-disable-next-line @typescript-eslint/no-require-imports
+// eslint-disable-next-line @typescript-eslint/no-var-requires
 const cookieParser = require('cookie-parser') as () => unknown;
 import { AppModule } from './app.module';
 
@@ -33,6 +33,16 @@ async function bootstrap() {
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
+      // Field-level details per 08-ERROR-HANDLING.md's validation-error contract.
+      exceptionFactory: (errors) =>
+        new BadRequestException({
+          code: 'VALIDATION_ERROR',
+          message: 'One or more fields are invalid.',
+          fields: errors.map((e) => ({
+            field: e.property,
+            reason: Object.values(e.constraints ?? {}).join(', '),
+          })),
+        }),
     }),
   );
 
