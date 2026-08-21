@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
-from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+
 from src.auth import get_current_user, require_role
 from src.database import db
 
@@ -10,7 +11,7 @@ class CreateStudentDto(BaseModel):
     name: str
     email: str
     batchId: str
-    enrollmentNo: Optional[str] = None
+    enrollmentNo: str | None = None
 
 class CreateTeacherDto(BaseModel):
     name: str
@@ -20,7 +21,7 @@ class CreateTeacherDto(BaseModel):
 @router.get("/students")
 async def get_students(
     institute_id: str, 
-    batchId: Optional[str] = None,
+    batchId: str | None = None,
     current_user = Depends(get_current_user)
 ):
     if current_user.instituteId != institute_id and current_user.role != "FOUNDER":

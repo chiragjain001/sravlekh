@@ -1,9 +1,9 @@
-import json
-from pydantic import BaseModel, Field
-from typing import List
+
+from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
-from langchain_core.output_parsers import PydanticOutputParser
+from pydantic import BaseModel, Field
+
 from src.config import get_settings
 
 settings = get_settings()
@@ -18,7 +18,7 @@ class DistributionRuleModel(BaseModel):
 class BlueprintGenerationResult(BaseModel):
     title: str = Field(description="A descriptive title for the exam")
     duration: int = Field(description="Duration of the exam in minutes (default to 60 if not specified)")
-    rules: List[DistributionRuleModel] = Field(description="List of rules dictating the distribution of questions")
+    rules: list[DistributionRuleModel] = Field(description="List of rules dictating the distribution of questions")
 
 def generate_blueprint_from_prompt(user_prompt: str) -> BlueprintGenerationResult:
     """

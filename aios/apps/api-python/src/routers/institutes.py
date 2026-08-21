@@ -1,7 +1,7 @@
+
 from fastapi import APIRouter, Depends, HTTPException
-from typing import List
-from pydantic import BaseModel
-from src.auth import get_current_user, require_role
+
+from src.auth import get_current_user
 from src.database import db
 
 router = APIRouter(prefix="/institutes", tags=["Institutes"])

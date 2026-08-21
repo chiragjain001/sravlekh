@@ -229,6 +229,10 @@ export class ExamsService {
       await this.prisma.auditLog.create({
         data: { instituteId, actorId, action, entity, entityId, oldValue: oldValue as any, newValue: newValue as any },
       });
-    } catch (err) {}
+    } catch (err) {
+      // Audit-log failures must never block the underlying mutation (08-ERROR-HANDLING.md);
+      // still log so a persistent failure is visible rather than silently disappearing.
+      this.logger.warn(`Failed to write audit log for ${entity}:${entityId}`, err as Error);
+    }
   }
 }

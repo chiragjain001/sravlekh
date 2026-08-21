@@ -11,3 +11,9 @@ build/
 .pnpm-store/
 coverage/
 *.log
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.venv/
+.venv-ci/

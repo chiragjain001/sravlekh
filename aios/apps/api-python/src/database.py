@@ -1,5 +1,6 @@
-from prisma import Prisma
 import logging
+
+from prisma import Prisma
 
 logger = logging.getLogger(__name__)
 

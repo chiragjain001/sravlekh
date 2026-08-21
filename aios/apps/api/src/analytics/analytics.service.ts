@@ -45,7 +45,7 @@ export class AnalyticsService {
 
         responses.forEach((resp, index) => {
           // Normalize score for this question (0.0 to 1.0)
-          let score = resp.marksAvailable > 0 ? (resp.marksAwarded / resp.marksAvailable) : 0;
+          const score = resp.marksAvailable > 0 ? (resp.marksAwarded / resp.marksAvailable) : 0;
           
           // Difficulty multiplier (optional, but good for an advanced engine)
           // Hard questions give more mastery, easy questions expect perfection
@@ -53,7 +53,7 @@ export class AnalyticsService {
           if (resp.question.difficulty === 'HARD') difficultyWeight = 1.2;
           if (resp.question.difficulty === 'EASY') difficultyWeight = 0.8;
           
-          let adjustedScore = Math.min(1.0, score * difficultyWeight);
+          const adjustedScore = Math.min(1.0, score * difficultyWeight);
 
           if (index === 0) {
             currentMastery = adjustedScore; // First attempt sets baseline

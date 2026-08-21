@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from src.auth import get_current_user
+
 from src.ai.blueprint_agent import generate_blueprint_from_prompt
+from src.auth import get_current_user
 
 router = APIRouter(prefix="/ai", tags=["AI Generation"])
 

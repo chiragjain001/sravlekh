@@ -1,5 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
 import pandas as pd
+from fastapi import APIRouter, Depends, HTTPException
+
 from src.auth import get_current_user
 from src.database import db
 
