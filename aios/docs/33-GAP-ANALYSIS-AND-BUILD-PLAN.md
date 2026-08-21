@@ -388,6 +388,44 @@ above resolves.
 - Verified: `pnpm typecheck`/`lint`/`test`/`build` all pass clean in `apps/api` after these changes (6 tests
   across 3 spec files, up from 3).
 
+### Admin-screens consolidation (this session)
+
+Executed the recommendation from §7 item 2: deleted the orphaned duplicate implementation
+(`admin/{students,teachers,batches,academics,exams,timetable}/*List.tsx` + their nested
+`/dashboard/admin/{area}` routes) for the 6 areas that had a live counterpart, keeping
+`admin/screens/Admin*.tsx` + `features/*` as canonical. Verified nothing else in the codebase referenced the
+deleted files, and confirmed in-browser post-deletion that `/dashboard/admin`'s sidebar navigation and the
+Students screen both still render correctly with no console errors.
+
+**Two things discovered while doing this, not addressed here:**
+
+1. **Questions/Papers/Doubts/Assignments have no live admin-facing implementation at all** — not "duplicated,"
+   *absent*. `features/` has no `questions`/`papers`/`doubts`/`assignments` folder, `admin/screens/` has no
+   `AdminQuestions`/`AdminPapers`/`AdminDoubts`/`AdminAssignments`, and the admin sidebar's nav list
+   (`lib/mock-data/admin.ts`) doesn't even list those sections. The orphaned `admin/{questions,papers,doubts,
+   assignments}/*List.tsx` directories and their nested routes are the *only* admin-facing UI for these four
+   areas — unreachable via any navigation path, but not redundant with anything live. **Deliberately not
+   deleted** — doing so would remove the only (if hard-to-find) admin UI for these areas, not just clean up a
+   duplicate. This needs a product decision: wire them into the admin sidebar + `AdminDashboardInner`'s
+   `renderScreen()` switch (making them reachable — the more likely "correct fix," since `03-FEATURE-
+   SPECIFICATIONS.md` describes ADMIN as approving questions and having assignment-creation rights), confirm
+   they're intentionally teacher-only and safe to delete, or leave as-is for now.
+2. **The mock service layer being replaced is far richer than the real backend can support.**
+   `features/students/services/students.service.ts` (and, inspection suggests, its siblings for the other 5
+   areas) implements pagination, multi-field search/filter/sort, a full analytics dashboard (enrollment trends,
+   fee breakdown, subject-gap maps, risk distribution, batch performance), CSV import/export, and per-student
+   fields (`feeStatus`, `riskLevel`, `avgScore`, `attendancePct`, `rank`, `program`) that **do not exist in the
+   Prisma schema at all** (`StudentProfile` has `rollNumber`/`guardianName`/`guardianPhone`/`guardianEmail`/
+   `address`/`photoUrl`/`documents`/`tags`/`batchId` — no fee tracking, no risk scoring, no computed
+   performance fields). Rewiring the service layer to real API calls, as recommended in §7 item 2, is
+   consequently a much bigger effort than "swap mock functions for `apiClient` calls" — it requires either
+   dropping/hiding the backend-unsupported UI surface (fee/risk columns, the Analytics tab, CSV import/export)
+   or building genuinely new backend features (fee tracking, a risk-scoring model, computed analytics
+   endpoints) across all 6 areas. **Not attempted in this pass** — the file-level consolidation above is
+   complete and safe on its own; the service-layer rewire is flagged as its own, larger decision rather than
+   done partially/silently. Recommend treating it as Phase 2 work (curriculum & roster completion), scoped
+   per-area, starting with whichever of the 6 areas the user most wants real data in first.
+
 ---
 
 ## 6. Definition of Done reminder
@@ -417,11 +455,15 @@ green, no secrets exposed, no unjustified deps, performance considered (`11`), e
    **Implementation #1** (`admin/{feature}/*List.tsx`, the one partially wired to the real backend via
    `useApi.ts`) lives at nested routes (`/dashboard/admin/students`, etc.) that **nothing in the app links
    to** — confirmed by grepping for those paths outside their own route tree. It's real but orphaned; #2+#3 is
-   reachable and polished but fake. Recommendation: keep #2+#3 as the canonical implementation (best
-   architecture, matches `16-FOLDER-STRUCTURE.md`, already what users see) and rewire its `services/*.service.ts`
-   files to call `apiClient` — using implementation #1's `useApi.ts` hooks as the reference for endpoints that
-   are already proven to work — then delete #1 and its orphaned routes. Flagged rather than executed since it
-   touches many files; awaiting confirmation.
+   reachable and polished but fake.
+   **Resolved this session (§5)**: consolidated onto #2+#3 for the 6 areas where a duplicate genuinely existed
+   (students, teachers, batches, academics, exams, timetable) — deleted #1's copies and their orphaned routes,
+   verified nothing else referenced them, verified in-browser post-deletion. Four areas (questions, papers,
+   doubts, assignments) turned out to have **no** live counterpart at all — see §5's "two things discovered"
+   note — and were deliberately left untouched pending a product decision, not consolidated. The
+   `services/*.service.ts` → real-`apiClient` rewire originally recommended here turned out to be substantially
+   bigger than expected (see §5) and was **not** done in this pass — also flagged there rather than attempted
+   partially.
 3. **Paper-generation "fork," investigated — not actually a duplication.** `POST /ai/generate-blueprint`
    (FastAPI, `blueprint_agent.py`) takes a free-text prompt and returns a *proposed distribution* (topics/
    difficulty/counts) — it never selects real `Question` rows. `POST /papers/generate` (NestJS,
