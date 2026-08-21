@@ -203,8 +203,8 @@ feature-by-feature as part of the normal Phase 2+ vertical-slice work — data m
 
 `20-IMPLEMENTATION-PLAN.md`'s phases 1–15 are the target shape. Adapting for a partial existing codebase:
 
-**Phase 1 — Foundation Hardening (in progress, this session).** Not "build auth from zero" — fix what's broken
-in what already exists:
+**Phase 1 — Foundation Hardening — COMPLETE.** Not "build auth from zero" — fixed what was broken in what
+already existed:
 - [x] Wire `JwtAuthGuard`/`RolesGuard` as global guards (`APP_GUARD`) — done this session.
 - [x] Global exception filter matching the `08-ERROR-HANDLING.md` envelope, incl. Prisma error translation and
       field-level validation details — done this session.
@@ -231,8 +231,11 @@ in what already exists:
       multipart-upload handling exists anywhere in `apps/api` today (confirmed: no `multer`/`FileInterceptor`
       usage repo-wide), so this is the shared client Phase 4's photo-capture/OMR endpoints will build on, not
       a wired feature yet.
-- **Exit gate**: real login → correct dashboard; non-allowlisted rejected; unauthenticated/wrong-role requests
-  get 401/403 through the real guards; `/health` green in CI.
+- **Exit gate — met**: real login → correct dashboard (verified in-browser); non-allowlisted rejected;
+  unauthenticated/wrong-role requests get 401/403 through the real guards (regression-tested); `/health` reports
+  DB+Redis and is green. Two items were pulled forward from their originally-planned later phases and finished
+  now while still small (the Prisma engine-version fix, mastery-calc-to-Python) rather than left to accrete
+  more callers first — both closed out alongside Phase 1 rather than deferred.
 
 **Phase 2 — Curriculum & roster completion.** Add missing `SubjectsModule`/`ChaptersModule`/`TopicsModule`
 controllers. Begin consolidating the 3 duplicate frontend implementations per feature area, starting with
