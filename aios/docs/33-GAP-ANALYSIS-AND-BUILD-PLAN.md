@@ -105,15 +105,14 @@ root docs as historical/aspirational context only.
   `apps/api-python/src/routers/analytics.py` (pandas-based aggregation over `MasteryScore` rows) — it was
   mischaracterized as missing before its contents were actually read. It's a real, working read-side endpoint.
   `apps/web`'s `BatchHeatmap.tsx` calling it is fine.
-- **Real finding, found while wiring the mastery-recalc queue (§5)**: the actual mastery-calculation logic (the
-  EMA formula) lives entirely in NestJS (`AnalyticsService.recalculateMastery`) — there is no
+- **Found and fixed this session (§5 "Mastery calculation moved to Python")**: the actual mastery-calculation
+  logic (the EMA formula) lived entirely in NestJS (`AnalyticsService.recalculateMastery`) — there was no
   `mastery_engine.py` in `apps/api-python` at all, only the read-side heatmap aggregation above. This
-  contradicts `02-SYSTEM-ARCHITECTURE.md`'s component-ownership table, which assigns "Mastery calc, trend/
+  contradicted `02-SYSTEM-ARCHITECTURE.md`'s component-ownership table, which assigns "Mastery calc, trend/
   diagnostic computation" to `api-python` and explicitly says NestJS should own transactional writes, **not**
-  analytics math. Not fixed this session — moving the calculation to Python is a bigger, structural move
-  (changes the sync/async contract between the two services) and belongs in Phase 5's "Mastery/Remediation
-  verification" work, not bundled into the queue-infrastructure fix. Flagged here so it isn't rediscovered
-  cold later.
+  analytics math. Migrated: the formula now lives in `apps/api-python/src/analytics/mastery_engine.py`, called
+  over a new internal HTTP contract; NestJS keeps the durable queued trigger (retry/backoff) but no longer does
+  any analytics math itself.
 
 ### Doubts, Assignments, Timetable
 - `DoubtsModule`/`AssignmentsModule`/`TimetableModule` exist with real controllers.
@@ -249,11 +248,10 @@ of `setTimeout` stubs. This is the highest-value, highest-risk v1 gap — nothin
 `Assessment`/`AssessmentDelivery` as a superset of `Exam`) can be validated for "zero regression" against a
 state machine that doesn't functionally exist yet.
 
-**Phase 5 — Mastery/Remediation verification + Doubts/Timetable fixes.** Decide and execute on the
-mastery-calculation ownership gap (§2 "Academic Intelligence" — the EMA formula lives in NestJS today, contrary
-to `02-SYSTEM-ARCHITECTURE.md`'s component ownership; moving it to `apps/api-python` is a real, structural
-move, not a quick fix). Fix `DoubtsService.resolveDoubt()` to persist resolution text. Add Timetable conflict
-checking.
+**Phase 5 — Mastery/Remediation verification + Doubts/Timetable fixes.** The mastery-calculation ownership gap
+(§2 "Academic Intelligence") was fixed ahead of schedule, this session, while it was still small — see §5
+"Mastery calculation moved to Python." Remaining Phase 5 work: fix `DoubtsService.resolveDoubt()` to persist
+resolution text; add Timetable conflict checking.
 
 **Phase 6 — Communication, Reports, Audit, Founder console.** Build the entirely-missing `NoticesModule`,
 `ReportsModule`, audit-log read endpoints, and the Founder-facing backend. Wire the corresponding frontend
@@ -436,7 +434,35 @@ Students screen both still render correctly with no console errors.
    done partially/silently. Recommend treating it as Phase 2 work (curriculum & roster completion), scoped
    per-area, starting with whichever of the 6 areas the user most wants real data in first.
 
----
+### Mastery calculation moved to Python (this session)
+
+Resolved the ownership gap flagged above, ahead of its originally-planned Phase 5 slot, while it was still a
+small, isolated move.
+
+- `apps/api-python/src/analytics/mastery_engine.py` (new) — the EMA formula, ported line-for-line from the
+  removed `AnalyticsService.recalculateMastery`. Same per-topic try/except isolation (one topic's failure
+  logs and continues, doesn't abort the rest). Unit-tested against the exact numbers the original TypeScript
+  implementation would have produced for a two-response case, plus the failure-isolation and empty-input paths
+  — `apps/api-python/tests/test_mastery_engine.py`.
+- `apps/api-python/src/routers/analytics.py` — new internal endpoint `POST /analytics/recalculate-mastery`,
+  gated by a new `verify_internal_token` dependency (`apps/api-python/src/auth.py`) rather than the user-facing
+  `get_current_user` JWT check, per `02-SYSTEM-ARCHITECTURE.md`'s "internal contract... never a user JWT, never
+  browser-exposed." Unit-tested (`tests/test_internal_auth.py`): unconfigured token is unenforced (dev-only
+  fallback, matching the "optional, warn, degrade" pattern already used for Redis/S3), configured token rejects
+  a mismatch and accepts an exact match.
+- `apps/api/src/analytics/analytics.service.ts` — `recalculateMastery` (the math) is gone; replaced by
+  `requestMasteryRecalc`, which POSTs to the new Python endpoint with a 15s timeout and an optional
+  `X-Internal-Token` header, logging outcome/duration either way and rethrowing on failure so the calling
+  BullMQ job (added in the earlier Redis/BullMQ commit) still retries correctly. Unit-tested
+  (`analytics.service.spec.ts`): correct URL/body, token-header present/absent per config, rethrow-on-failure.
+- `apps/api/src/analytics/mastery-recalc.processor.ts` — now calls `requestMasteryRecalc` instead of the
+  removed local calculation.
+- New env vars: `PYTHON_SERVICE_URL` (Node, defaults to `http://localhost:8000`) and `INTERNAL_SERVICE_TOKEN`
+  (both apps, optional — must match exactly between the two if set). Added to both `.env.example` files (Python
+  didn't have one before this).
+- Verified: full Python test suite (7 tests, including the new ones) passes against a freshly-generated
+  Prisma client at the 5.17.0 pin from the previous commit; `pnpm typecheck`/`lint`/`test`/`build` all pass
+  clean in `apps/api` (10 tests, up from 6).
 
 ## 6. Definition of Done reminder
 

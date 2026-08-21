@@ -30,7 +30,7 @@ export class MasteryRecalcProcessor extends WorkerHost {
   }
 
   async process(job: Job<MasteryRecalcJobData>): Promise<void> {
-    await this.analyticsService.recalculateMastery(job.data.studentProfileId, job.data.topicIds);
+    await this.analyticsService.requestMasteryRecalc(job.data.studentProfileId, job.data.topicIds);
   }
 
   @OnWorkerEvent('failed')

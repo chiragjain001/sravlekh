@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     # AI (OpenAI)
     OPENAI_API_KEY: str = ""
 
+    # Internal NestJS -> FastAPI service contract (02-SYSTEM-ARCHITECTURE.md: never a
+    # user JWT, never browser-exposed). Empty means unenforced — dev-only fallback,
+    # same "optional, warn, degrade" pattern used for Redis/S3 on the Node side.
+    INTERNAL_SERVICE_TOKEN: str = ""
+
     class Config:
         env_file = ".env"
 

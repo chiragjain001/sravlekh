@@ -1,10 +1,26 @@
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
-from src.auth import get_current_user
+from src.analytics.mastery_engine import recalculate_mastery
+from src.auth import get_current_user, verify_internal_token
 from src.database import db
 
 router = APIRouter(prefix="/analytics", tags=["Analytics & Insights"])
+
+
+class RecalculateMasteryRequest(BaseModel):
+    studentProfileId: str
+    topicIds: list[str]
+
+
+@router.post("/recalculate-mastery", dependencies=[Depends(verify_internal_token)])
+async def recalculate_mastery_endpoint(request: RecalculateMasteryRequest):
+    """Internal-only (D-02): called by apps/api's mastery-recalc BullMQ processor
+    after a grading commit. Durability/retry lives in that queue, not here — this
+    endpoint just does the calculation and returns once it's done."""
+    await recalculate_mastery(request.studentProfileId, request.topicIds)
+    return {"success": True}
 
 @router.get("/batch/{batch_id}/heatmap")
 async def get_batch_heatmap(batch_id: str, current_user = Depends(get_current_user)):

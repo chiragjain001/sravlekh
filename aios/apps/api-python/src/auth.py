@@ -1,4 +1,4 @@
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 
@@ -42,3 +42,15 @@ def require_role(allowed_roles: list[str]):
             )
         return user
     return role_checker
+
+async def verify_internal_token(x_internal_token: str = Header(default="")):
+    """Gate for endpoints only NestJS should call (02-SYSTEM-ARCHITECTURE.md: internal
+    NestJS -> FastAPI contract, never a user JWT). If INTERNAL_SERVICE_TOKEN isn't
+    configured, this is unenforced — same dev-only "warn, don't crash" fallback used
+    for Redis/S3 on the Node side, not a production posture."""
+    settings = get_settings()
+    if settings.INTERNAL_SERVICE_TOKEN and x_internal_token != settings.INTERNAL_SERVICE_TOKEN:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing internal service token",
+        )

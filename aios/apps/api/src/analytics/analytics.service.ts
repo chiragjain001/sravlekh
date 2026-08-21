@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import axios from 'axios';
 import { PrismaService } from '../prisma/prisma.service';
 import { MASTERY_RECALC_QUEUE, MasteryRecalcJobData } from './mastery-recalc.processor';
 
@@ -10,6 +12,7 @@ export class AnalyticsService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
     @InjectQueue(MASTERY_RECALC_QUEUE) private readonly masteryRecalcQueue: Queue<MasteryRecalcJobData>,
   ) {}
 
@@ -28,90 +31,35 @@ export class AnalyticsService {
   }
 
   // ── D-02: Analytics Engine (Mastery Recalculation) ──────────────────────
+  //
+  // The actual calculation (EMA formula) lives in apps/api-python's
+  // src/analytics/mastery_engine.py, matching 02-SYSTEM-ARCHITECTURE.md's
+  // component ownership ("Mastery calc... api-python — not NestJS"). This class
+  // only owns the durable trigger (queue above) and the internal HTTP call below;
+  // it does no analytics math itself.
 
-  /**
-   * Recalculates the MasteryScore for a student on specific topics
-   * based on newly graded responses.
-   * This uses an Exponential Moving Average (EMA) approach to weight recent performance heavier.
-   */
-  async recalculateMastery(studentProfileId: string, topicIds: string[]) {
-    // Deduplicate topic IDs
-    const uniqueTopics = [...new Set(topicIds)];
+  /** Called by MasteryRecalcProcessor — the queue's retry/backoff wraps this call. */
+  async requestMasteryRecalc(studentProfileId: string, topicIds: string[]): Promise<void> {
+    const baseUrl = this.config.get<string>('PYTHON_SERVICE_URL');
+    const internalToken = this.config.get<string>('INTERNAL_SERVICE_TOKEN');
+    const startedAt = Date.now();
 
-    for (const topicId of uniqueTopics) {
-      try {
-        // Fetch all responses for this student and topic, ordered by exam date ascending
-        const responses = await this.prisma.response.findMany({
-          where: {
-            answerSheet: { studentProfileId },
-            question: { topicId },
-          },
-          include: {
-            question: { select: { subjectId: true, difficulty: true } },
-          },
-          orderBy: { createdAt: 'asc' },
-        });
-
-        const firstResponse = responses[0];
-        if (!firstResponse) continue;
-
-        const subjectId = firstResponse.question.subjectId;
-        
-        // Calculate new mastery score using EMA (Exponential Moving Average)
-        // Alpha = 2 / (N + 1). For a fast-adapting system, let's use a fixed alpha of 0.3
-        const ALPHA = 0.3;
-        let currentMastery = 0.5; // Initial baseline is 50%
-        let previousMastery = 0.5;
-
-        responses.forEach((resp, index) => {
-          // Normalize score for this question (0.0 to 1.0)
-          const score = resp.marksAvailable > 0 ? (resp.marksAwarded / resp.marksAvailable) : 0;
-          
-          // Difficulty multiplier (optional, but good for an advanced engine)
-          // Hard questions give more mastery, easy questions expect perfection
-          let difficultyWeight = 1.0;
-          if (resp.question.difficulty === 'HARD') difficultyWeight = 1.2;
-          if (resp.question.difficulty === 'EASY') difficultyWeight = 0.8;
-          
-          const adjustedScore = Math.min(1.0, score * difficultyWeight);
-
-          if (index === 0) {
-            currentMastery = adjustedScore; // First attempt sets baseline
-          } else {
-            previousMastery = currentMastery;
-            currentMastery = (adjustedScore * ALPHA) + (currentMastery * (1 - ALPHA));
-          }
-        });
-
-        const trend = currentMastery - previousMastery;
-
-        // Upsert the MasteryScore record
-        await this.prisma.masteryScore.upsert({
-          where: {
-            studentProfileId_topicId: {
-              studentProfileId,
-              topicId,
-            }
-          },
-          create: {
-            studentProfileId,
-            subjectId,
-            topicId,
-            masteryValue: currentMastery,
-            trend,
-            sampleCount: responses.length,
-          },
-          update: {
-            masteryValue: currentMastery,
-            trend,
-            sampleCount: responses.length,
-            lastUpdatedAt: new Date(),
-          }
-        });
-
-      } catch (err) {
-        this.logger.error(`Failed to recalculate mastery for student ${studentProfileId}, topic ${topicId}`, err);
-      }
+    try {
+      await axios.post(
+        `${baseUrl}/analytics/recalculate-mastery`,
+        { studentProfileId, topicIds },
+        {
+          headers: internalToken ? { 'X-Internal-Token': internalToken } : undefined,
+          timeout: 15_000,
+        },
+      );
+      this.logger.debug(`Mastery recalc for ${studentProfileId} completed in ${Date.now() - startedAt}ms`);
+    } catch (err) {
+      // Rethrow so the calling BullMQ job is marked failed and retried — logging
+      // here is purely for diagnostics (12-LOGGING-MONITORING.md: log every
+      // external service call's outcome), not error handling in itself.
+      this.logger.warn(`Mastery recalc HTTP call failed for ${studentProfileId} after ${Date.now() - startedAt}ms`, err as Error);
+      throw err;
     }
   }
 

@@ -37,6 +37,12 @@ export const envSchema = z.object({
   // AI
   OPENAI_API_KEY: z.string().optional(),
 
+  // Internal NestJS -> FastAPI service contract (02-SYSTEM-ARCHITECTURE.md).
+  // INTERNAL_SERVICE_TOKEN unset means unenforced on the Python side too — dev-only
+  // fallback, same "optional, warn, degrade" pattern as REDIS_URL/S3_* above.
+  PYTHON_SERVICE_URL: z.string().url().default('http://localhost:8000'),
+  INTERNAL_SERVICE_TOKEN: z.string().optional(),
+
   // Monitoring
   SENTRY_DSN: z.string().url().optional(),
 
