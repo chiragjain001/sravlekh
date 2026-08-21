@@ -82,8 +82,8 @@ root docs as historical/aspirational context only.
   distribution) and NestJS `PapersService.generatePaper()` (blueprint id → real assembled Paper) are sequential
   stages of one pipeline, not two implementations of the same feature — confirmed via the frontend hooks and
   `17-THIRD-PARTY-INTEGRATIONS.md`'s manual-assembly-fallback framing. Resolved, no decision needed.
-- `blueprint_agent.py` imports `langchain_openai.ChatOpenAI`, which is not in `requirements.txt` — will fail
-  at runtime as written today.
+- **Fixed** (§5 "Prisma engine-version fix"): `blueprint_agent.py` imports `langchain_openai.ChatOpenAI`, which
+  wasn't in `requirements.txt` — would have failed at runtime. `langchain-openai` added.
 - Question `isApproved` approval workflow, `QuestionVersion` snapshotting exist in the schema; approval-endpoint
   wiring not fully traced but questions controller exists — verify in Phase-1 hardening pass.
 
@@ -346,25 +346,35 @@ instances across 15 files; `E501` line-length in `apps/api-python`) stay as warn
 dozens of files in this pass. Ruff's `--fix` auto-resolved 20 real style issues in `apps/api-python`
 (unsorted/unused imports, `Optional[X]` → `X | None`) with zero manual edits needed.
 
-**Blocking issue found, not resolved — needs a decision**: the dual Prisma-client setup
-(`packages/db/prisma/schema.prisma` generates both `prisma-client-js` for the Node apps and `prisma-client-py`
-for `apps/api-python`) **does not actually work as currently pinned**. `prisma generate` (Node CLI, pinned
-`^5.22.0` — matching `apps/api`, after fixing `packages/db`'s own stale `^5.14.0` pin, see below) fails the
-Python generator step with an engine-version mismatch: the latest available `prisma-client-py` (`0.15.0`, per
-PyPI as of this session) expects the Prisma engine that ships with Node CLI **5.17.0**, not 5.22.0. This means
-`apps/api-python` has almost certainly never had a working generated DB client — `from prisma import Prisma`
-fails at import time in a fresh install. `.github/workflows/ci.yml`'s `api-python` job will surface this
-visibly (fails at the `pnpm db:generate` step) rather than hide it. Two ways to resolve, both consequential
-enough that this is flagged rather than picked: **(a)** downgrade the Node `prisma`/`@prisma/client` pin
-repo-wide to `5.17.0` (loses whatever 5.18–5.22 features/fixes apps/api may or may not actually be using —
-unclear whether `^5.22.0` was a deliberate choice or just "latest at the time"), or **(b)** wait for / find a
-`prisma-client-py` release compatible with a newer engine and re-pin `apps/api-python/requirements.txt`. Until
-one of these lands, `apps/api-python` cannot talk to the database at all in this repo, current state or CI.
+**Blocking issue found this session, fixed in a later session (§5 "Prisma engine-version fix")**: the dual
+Prisma-client setup (`packages/db/prisma/schema.prisma` generates both `prisma-client-js` for the Node apps and
+`prisma-client-py` for `apps/api-python`) didn't actually work as pinned at the time — see below for the fix.
 
 **Incidental fix**: `packages/db/package.json` pinned `prisma`/`@prisma/client` to `^5.14.0` while `apps/api`
 pinned `^5.22.0` — pnpm hoists a single version, so this mismatch was silently masked until Python codegen
-surfaced it. Bumped `packages/db` to `^5.22.0` to match; this fix stands regardless of how the (a)/(b) decision
-above resolves.
+surfaced it. Aligned the two (both later pinned to the same exact version — see below).
+
+### Prisma engine-version fix (this session)
+
+Resolved the blocking issue flagged above. Checked PyPI directly: `prisma-client-py` **0.15.0 (Aug 2024) is
+still the latest release** — no newer version exists to bump to, so option (b) from the original flag ("wait
+for/find a compatible release") wasn't available. Went with option (a): pinned `prisma`/`@prisma/client` to an
+**exact** `5.17.0` (not `^5.17.0`) in both `apps/api` and `packages/db` — exact, not a caret range, because the
+failure mode is an engine-binary-hash mismatch that a routine `^`-range bump would silently reintroduce. Verified
+`prisma generate` now produces a working Python client (previously failed with a version-hash mismatch error)
+and that `apps/api-python`'s full pytest suite collects and passes (previously failed at import time).
+
+Two more, smaller bugs surfaced while getting the Python suite green, both fixed as part of the same
+straightforward-infra-fix pass:
+- `apps/api-python/src/ai/blueprint_agent.py` imports `langchain_openai.ChatOpenAI`, but `langchain-openai` was
+  never in `requirements.txt` (flagged in an earlier pass) — added `langchain-openai>=0.1.22` (matching the
+  `langchain>=0.2.5` era already pinned).
+- `apps/api-python/src/config.py`'s `Settings` eagerly validates `DATABASE_URL`/`JWT_SECRET` at **import time**
+  (module-level `settings = get_settings()` in `blueprint_agent.py`), so even a test that never touches auth or
+  the AI router transitively needs both env vars just to import `src.main`. `.github/workflows/ci.yml` set
+  `DATABASE_URL` globally but not `JWT_SECRET` — added it (a placeholder value, CI-only). The eager-validation
+  pattern itself (any import of `blueprint_agent` requires full env config) is a design smell worth revisiting
+  when that module gets real attention, but wasn't in scope for an infra fix.
 
 ### Redis/BullMQ + S3 (this session)
 

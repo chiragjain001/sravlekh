@@ -15,6 +15,9 @@ env:
   # prisma generate only needs a syntactically valid URL — no live DB is required
   # to generate clients, only to run migrations (not done in this workflow).
   DATABASE_URL: postgresql://ci:ci@localhost:5432/aios_ci
+  # apps/api-python's Settings (src/config.py) requires this to construct at all —
+  # even importing the module for a test that never touches auth needs a value here.
+  JWT_SECRET: ci-only-placeholder-not-a-real-secret-32-chars
 
 jobs:
   api:
