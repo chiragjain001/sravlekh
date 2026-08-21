@@ -1,11 +1,12 @@
 import {
-  Controller, Get, Post, Patch, Body, Param,
+  Controller, Get, Post, Patch, Delete, Body, Param, HttpCode, HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { BatchesService } from './batches.service';
 import {
   CreateBatchDto, UpdateBatchDto,
   CreateSubjectDto, CreateChapterDto, CreateTopicDto,
+  UpdateSubjectDto, UpdateChapterDto, UpdateTopicDto,
 } from './dto/batch.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -72,6 +73,26 @@ export class BatchesController {
     @CurrentUser() user: AuthenticatedUser,
   ) { return this.batchesService.findAllSubjects(id, user); }
 
+  @Patch('subjects/:subjectId')
+  @Roles(UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Update a subject' })
+  updateSubject(
+    @Param('instituteId') id: string,
+    @Param('subjectId') subjectId: string,
+    @Body() dto: UpdateSubjectDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) { return this.batchesService.updateSubject(id, subjectId, dto, user); }
+
+  @Delete('subjects/:subjectId')
+  @Roles(UserRole.ADMIN, UserRole.FOUNDER)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Archive a subject (soft-delete, preserves linked questions/mastery data)' })
+  archiveSubject(
+    @Param('instituteId') id: string,
+    @Param('subjectId') subjectId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) { return this.batchesService.archiveSubject(id, subjectId, user); }
+
   @Post('subjects/:subjectId/chapters')
   @Roles(UserRole.ADMIN, UserRole.FOUNDER)
   @ApiOperation({ summary: 'Add a chapter to a subject' })
@@ -82,6 +103,26 @@ export class BatchesController {
     @CurrentUser() user: AuthenticatedUser,
   ) { return this.batchesService.createChapter(id, subjectId, dto, user); }
 
+  @Patch('chapters/:chapterId')
+  @Roles(UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Update a chapter' })
+  updateChapter(
+    @Param('instituteId') id: string,
+    @Param('chapterId') chapterId: string,
+    @Body() dto: UpdateChapterDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) { return this.batchesService.updateChapter(id, chapterId, dto, user); }
+
+  @Delete('chapters/:chapterId')
+  @Roles(UserRole.ADMIN, UserRole.FOUNDER)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Archive a chapter (soft-delete, preserves linked questions)' })
+  archiveChapter(
+    @Param('instituteId') id: string,
+    @Param('chapterId') chapterId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) { return this.batchesService.archiveChapter(id, chapterId, user); }
+
   @Post('chapters/:chapterId/topics')
   @Roles(UserRole.ADMIN, UserRole.FOUNDER)
   @ApiOperation({ summary: 'Add a topic to a chapter' })
@@ -91,4 +132,24 @@ export class BatchesController {
     @Body() dto: CreateTopicDto,
     @CurrentUser() user: AuthenticatedUser,
   ) { return this.batchesService.createTopic(id, chapterId, dto, user); }
+
+  @Patch('topics/:topicId')
+  @Roles(UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Update a topic' })
+  updateTopic(
+    @Param('instituteId') id: string,
+    @Param('topicId') topicId: string,
+    @Body() dto: UpdateTopicDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) { return this.batchesService.updateTopic(id, topicId, dto, user); }
+
+  @Delete('topics/:topicId')
+  @Roles(UserRole.ADMIN, UserRole.FOUNDER)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Archive a topic (soft-delete, preserves linked questions/mastery data)' })
+  archiveTopic(
+    @Param('instituteId') id: string,
+    @Param('topicId') topicId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) { return this.batchesService.archiveTopic(id, topicId, user); }
 }

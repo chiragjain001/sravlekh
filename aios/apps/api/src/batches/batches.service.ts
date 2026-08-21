@@ -14,6 +14,9 @@ import {
   CreateSubjectDto,
   CreateChapterDto,
   CreateTopicDto,
+  UpdateSubjectDto,
+  UpdateChapterDto,
+  UpdateTopicDto,
 } from './dto/batch.dto';
 
 @Injectable()
@@ -131,15 +134,61 @@ export class BatchesService {
     this.assertInstituteAccess(actor, instituteId);
 
     return this.prisma.subject.findMany({
-      where: { instituteId },
+      where: { instituteId, deletedAt: null },
       include: {
         chapters: {
-          include: { topics: { orderBy: { order: 'asc' } } },
+          where: { deletedAt: null },
+          include: { topics: { where: { deletedAt: null }, orderBy: { order: 'asc' } } },
           orderBy: { order: 'asc' },
         },
       },
       orderBy: { name: 'asc' },
     });
+  }
+
+  async updateSubject(
+    instituteId: string,
+    subjectId: string,
+    dto: UpdateSubjectDto,
+    actor: AuthenticatedUser,
+  ) {
+    this.assertAdminAccess(actor, instituteId);
+    const subject = await this.assertSubjectBelongsToInstitute(subjectId, instituteId);
+
+    if (dto.name && dto.name !== subject.name) {
+      const existing = await this.prisma.subject.findUnique({
+        where: { instituteId_name: { instituteId, name: dto.name } },
+      });
+      if (existing && existing.id !== subjectId) {
+        throw new ConflictException(`Subject "${dto.name}" already exists.`);
+      }
+    }
+
+    const updated = await this.prisma.subject.update({
+      where: { id: subjectId },
+      data: {
+        ...(dto.name && { name: dto.name }),
+        ...(dto.code !== undefined && { code: dto.code }),
+      },
+    });
+
+    await this.writeAudit(instituteId, actor.id, AuditAction.UPDATE, 'subjects', subjectId, subject, dto);
+    return updated;
+  }
+
+  /** Soft-delete only — a Subject may have Questions/MasteryScores/Blueprints attached
+   * that must never be hard-cascade-deleted (18-EDGE-CASES.md: archive, not hard-delete). */
+  async archiveSubject(instituteId: string, subjectId: string, actor: AuthenticatedUser) {
+    this.assertAdminAccess(actor, instituteId);
+    const subject = await this.assertSubjectBelongsToInstitute(subjectId, instituteId);
+
+    const archived = await this.prisma.subject.update({
+      where: { id: subjectId },
+      data: { deletedAt: new Date() },
+    });
+
+    await this.writeAudit(instituteId, actor.id, AuditAction.DELETE, 'subjects', subjectId, subject, null);
+    return archived;
   }
 
   // ── Curriculum: Chapters ──────────────────────────────────────────────────
@@ -158,6 +207,40 @@ export class BatchesService {
     });
   }
 
+  async updateChapter(
+    instituteId: string,
+    chapterId: string,
+    dto: UpdateChapterDto,
+    actor: AuthenticatedUser,
+  ) {
+    this.assertAdminAccess(actor, instituteId);
+    const chapter = await this.assertChapterBelongsToInstitute(chapterId, instituteId);
+
+    const updated = await this.prisma.chapter.update({
+      where: { id: chapterId },
+      data: {
+        ...(dto.name && { name: dto.name }),
+        ...(dto.order !== undefined && { order: dto.order }),
+      },
+    });
+
+    await this.writeAudit(instituteId, actor.id, AuditAction.UPDATE, 'chapters', chapterId, chapter, dto);
+    return updated;
+  }
+
+  async archiveChapter(instituteId: string, chapterId: string, actor: AuthenticatedUser) {
+    this.assertAdminAccess(actor, instituteId);
+    const chapter = await this.assertChapterBelongsToInstitute(chapterId, instituteId);
+
+    const archived = await this.prisma.chapter.update({
+      where: { id: chapterId },
+      data: { deletedAt: new Date() },
+    });
+
+    await this.writeAudit(instituteId, actor.id, AuditAction.DELETE, 'chapters', chapterId, chapter, null);
+    return archived;
+  }
+
   // ── Curriculum: Topics ────────────────────────────────────────────────────
 
   async createTopic(
@@ -167,18 +250,45 @@ export class BatchesService {
     actor: AuthenticatedUser,
   ) {
     this.assertAdminAccess(actor, instituteId);
-
-    const chapter = await this.prisma.chapter.findUnique({
-      where: { id: chapterId },
-      include: { subject: true },
-    });
-    if (!chapter || chapter.subject.instituteId !== instituteId) {
-      throw new NotFoundException('Chapter not found in this institute.');
-    }
+    await this.assertChapterBelongsToInstitute(chapterId, instituteId);
 
     return this.prisma.topic.create({
       data: { chapterId, name: dto.name, order: dto.order ?? 0 },
     });
+  }
+
+  async updateTopic(
+    instituteId: string,
+    topicId: string,
+    dto: UpdateTopicDto,
+    actor: AuthenticatedUser,
+  ) {
+    this.assertAdminAccess(actor, instituteId);
+    const topic = await this.assertTopicBelongsToInstitute(topicId, instituteId);
+
+    const updated = await this.prisma.topic.update({
+      where: { id: topicId },
+      data: {
+        ...(dto.name && { name: dto.name }),
+        ...(dto.order !== undefined && { order: dto.order }),
+      },
+    });
+
+    await this.writeAudit(instituteId, actor.id, AuditAction.UPDATE, 'topics', topicId, topic, dto);
+    return updated;
+  }
+
+  async archiveTopic(instituteId: string, topicId: string, actor: AuthenticatedUser) {
+    this.assertAdminAccess(actor, instituteId);
+    const topic = await this.assertTopicBelongsToInstitute(topicId, instituteId);
+
+    const archived = await this.prisma.topic.update({
+      where: { id: topicId },
+      data: { deletedAt: new Date() },
+    });
+
+    await this.writeAudit(instituteId, actor.id, AuditAction.DELETE, 'topics', topicId, topic, null);
+    return archived;
   }
 
   // ── Private helpers ───────────────────────────────────────────────────────
@@ -197,9 +307,32 @@ export class BatchesService {
 
   private async assertSubjectBelongsToInstitute(subjectId: string, instituteId: string) {
     const subject = await this.prisma.subject.findUnique({ where: { id: subjectId } });
-    if (!subject || subject.instituteId !== instituteId) {
+    if (!subject || subject.instituteId !== instituteId || subject.deletedAt) {
       throw new NotFoundException('Subject not found in this institute.');
     }
+    return subject;
+  }
+
+  private async assertChapterBelongsToInstitute(chapterId: string, instituteId: string) {
+    const chapter = await this.prisma.chapter.findUnique({
+      where: { id: chapterId },
+      include: { subject: true },
+    });
+    if (!chapter || chapter.subject.instituteId !== instituteId || chapter.deletedAt) {
+      throw new NotFoundException('Chapter not found in this institute.');
+    }
+    return chapter;
+  }
+
+  private async assertTopicBelongsToInstitute(topicId: string, instituteId: string) {
+    const topic = await this.prisma.topic.findUnique({
+      where: { id: topicId },
+      include: { chapter: { include: { subject: true } } },
+    });
+    if (!topic || topic.chapter.subject.instituteId !== instituteId || topic.deletedAt) {
+      throw new NotFoundException('Topic not found in this institute.');
+    }
+    return topic;
   }
 
   private async writeAudit(

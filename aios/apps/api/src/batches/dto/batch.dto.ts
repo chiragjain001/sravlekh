@@ -96,3 +96,44 @@ export class CreateTopicDto {
   @IsOptional()
   order?: number;
 }
+
+export class UpdateSubjectDto {
+  @ApiPropertyOptional({ example: 'Physics' })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  name?: string;
+
+  @ApiPropertyOptional({ example: 'PHY' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(10)
+  code?: string;
+}
+
+export class UpdateChapterDto {
+  @ApiPropertyOptional({ example: 'Kinematics' })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(150)
+  name?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  order?: number;
+}
+
+export class UpdateTopicDto {
+  @ApiPropertyOptional({ example: 'Projectile Motion' })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  name?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  order?: number;
+}

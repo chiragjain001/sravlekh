@@ -10,8 +10,12 @@ import {
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { AdminOverlapModal } from '../shared/AdminOverlapModal';
 import { useAcademicsAnalytics } from '@/features/academics/hooks/useAcademics';
+import { CurriculumManager } from './curriculum/CurriculumManager';
+
+type AcademicsTab = 'operations' | 'curriculum';
 
 export function AdminAcademics() {
+  const [mainTab, setMainTab] = useState<AcademicsTab>('operations');
   const [search, setSearch] = useState('');
   const [subjectFilter, setSubjectFilter] = useState('');
   const [activeModal, setActiveModal] = useState<'syllabus' | 'pipeline' | 'doubts' | 'aiInsights' | null>(null);
@@ -76,6 +80,24 @@ export function AdminAcademics() {
           <p className="text-xs text-gray-500 mt-0.5">Curriculum tracking, syllabus progression, and assessment pipeline</p>
         </div>
         <div className="flex items-center gap-4">
+          <div className="flex items-center gap-1 p-1 bg-gray-100 rounded-xl">
+            <button
+              onClick={() => setMainTab('operations')}
+              className={`px-3 py-1.5 text-[12px] font-bold rounded-lg transition-colors ${
+                mainTab === 'operations' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Operations
+            </button>
+            <button
+              onClick={() => setMainTab('curriculum')}
+              className={`px-3 py-1.5 text-[12px] font-bold rounded-lg transition-colors ${
+                mainTab === 'curriculum' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Curriculum
+            </button>
+          </div>
           <div className="flex items-center gap-1.5 text-xs text-gray-500 font-medium">
             <Calendar className="w-3.5 h-3.5 text-gray-400" />
             <span>Today, 23 May 2025</span>
@@ -89,7 +111,9 @@ export function AdminAcademics() {
         </div>
       </div>
 
-      <div className="space-y-6">
+      {mainTab === 'curriculum' && <CurriculumManager />}
+
+      <div className={mainTab === 'operations' ? 'space-y-6' : 'hidden'}>
         {/* Stats Row */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {[

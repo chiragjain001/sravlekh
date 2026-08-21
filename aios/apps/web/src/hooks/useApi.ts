@@ -353,4 +353,115 @@ export function useExams(params?: Record<string, unknown>) {
   });
 }
 
+// ── Curriculum (Subjects → Chapters → Topics) ──────────────────────────────
+
+export function useSubjects() {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['subjects', user?.instituteId],
+    queryFn: async () => {
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/subjects`);
+      return res.data;
+    },
+    enabled: !!user?.instituteId,
+  });
+}
+
+function useCurriculumMutation<TVars>(
+  mutationFn: (instituteId: string, vars: TVars) => Promise<unknown>,
+  successMessage: string,
+  failureMessage: string,
+) {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (vars: TVars) => mutationFn(user!.instituteId, vars),
+    onSuccess: () => {
+      toast.success(successMessage);
+      queryClient.invalidateQueries({ queryKey: ['subjects', user?.instituteId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error)
+        ? (error.response?.data as { error?: { message?: string } })?.error?.message
+        : undefined;
+      toast.error(msg ?? failureMessage);
+    },
+  });
+}
+
+export function useCreateSubject() {
+  return useCurriculumMutation<{ name: string; code?: string }>(
+    (instituteId, dto) => apiClient.post(`/institutes/${instituteId}/subjects`, dto),
+    'Subject created',
+    'Failed to create subject',
+  );
+}
+
+export function useUpdateSubject() {
+  return useCurriculumMutation<{ id: string; name?: string; code?: string }>(
+    (instituteId, { id, ...dto }) => apiClient.patch(`/institutes/${instituteId}/subjects/${id}`, dto),
+    'Subject updated',
+    'Failed to update subject',
+  );
+}
+
+export function useArchiveSubject() {
+  return useCurriculumMutation<{ id: string }>(
+    (instituteId, { id }) => apiClient.delete(`/institutes/${instituteId}/subjects/${id}`),
+    'Subject archived',
+    'Failed to archive subject',
+  );
+}
+
+export function useCreateChapter() {
+  return useCurriculumMutation<{ subjectId: string; name: string; order?: number }>(
+    (instituteId, { subjectId, ...dto }) =>
+      apiClient.post(`/institutes/${instituteId}/subjects/${subjectId}/chapters`, dto),
+    'Chapter added',
+    'Failed to add chapter',
+  );
+}
+
+export function useUpdateChapter() {
+  return useCurriculumMutation<{ id: string; name?: string; order?: number }>(
+    (instituteId, { id, ...dto }) => apiClient.patch(`/institutes/${instituteId}/chapters/${id}`, dto),
+    'Chapter updated',
+    'Failed to update chapter',
+  );
+}
+
+export function useArchiveChapter() {
+  return useCurriculumMutation<{ id: string }>(
+    (instituteId, { id }) => apiClient.delete(`/institutes/${instituteId}/chapters/${id}`),
+    'Chapter archived',
+    'Failed to archive chapter',
+  );
+}
+
+export function useCreateTopic() {
+  return useCurriculumMutation<{ chapterId: string; name: string; order?: number }>(
+    (instituteId, { chapterId, ...dto }) =>
+      apiClient.post(`/institutes/${instituteId}/chapters/${chapterId}/topics`, dto),
+    'Topic added',
+    'Failed to add topic',
+  );
+}
+
+export function useUpdateTopic() {
+  return useCurriculumMutation<{ id: string; name?: string; order?: number }>(
+    (instituteId, { id, ...dto }) => apiClient.patch(`/institutes/${instituteId}/topics/${id}`, dto),
+    'Topic updated',
+    'Failed to update topic',
+  );
+}
+
+export function useArchiveTopic() {
+  return useCurriculumMutation<{ id: string }>(
+    (instituteId, { id }) => apiClient.delete(`/institutes/${instituteId}/topics/${id}`),
+    'Topic archived',
+    'Failed to archive topic',
+  );
+}
+
 

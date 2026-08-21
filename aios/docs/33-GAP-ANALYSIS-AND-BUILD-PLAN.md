@@ -68,10 +68,21 @@ root docs as historical/aspirational context only.
 
 ### Academic Hierarchy (Institute/Branch/AllowList/Batch/Subject/Chapter/Topic)
 - **Works, partially**: `InstitutesModule`, `UsersModule`, `StudentsModule`, `TeachersModule`, `BatchesModule`
-  exist with real service-layer tenant scoping. **Missing**: no dedicated `SubjectsModule`/`ChaptersModule`/
-  `TopicsModule` controllers — curriculum CRUD (`03-FEATURE-SPECIFICATIONS.md` "Subject/Chapter/Topic") has no
-  backend home despite `AdminAcademics` frontend screens expecting one, and despite `Subject`/`Chapter`/`Topic`
-  models existing in the schema.
+  exist with real service-layer tenant scoping.
+- **Correction to an earlier pass's finding (Phase 2)**: curriculum CRUD is **not** missing a backend home —
+  `BatchesController`/`BatchesService` already implement `POST /subjects`, `GET /subjects` (returns the full
+  tree: subjects → chapters → topics, ordered), `POST /subjects/:subjectId/chapters`, and
+  `POST /chapters/:chapterId/topics`, all tenant-scoped and ADMIN-gated. The earlier claim that no dedicated
+  module existed was wrong — it exists, just co-located with Batches rather than split into separate modules.
+  **What's actually missing**: update/archive (edit/delete) endpoints for all three entities — only create and
+  full-tree list exist today. **Also missing, and the bigger gap**: no frontend anywhere calls these endpoints
+  at all — confirmed neither the (now-deleted) orphaned `AcademicsList.tsx` nor the current `features/academics`
+  did curriculum CRUD; `features/academics` turned out to be an unrelated "academic operations dashboard"
+  (syllabus %, exam pipeline stages, doubt queue, teacher tasks, AI insights) with its own backend-data gap of
+  the same shape as the Students module's (§7 item 2) — none of that dashboard's data has a schema model either.
+  Today there is genuinely no way to add a Subject/Chapter/Topic through the running app at all — only via the
+  seed script — despite Question authoring and Blueprint definition depending on real topic/subject ids
+  existing.
 - Frontend has **3 parallel implementations** of academics/students/teachers/batches/etc admin screens (see §3
   and §7 item 2) — the one users actually reach via the sidebar is a well-built, full-CRUD UI backed entirely
   by an in-memory mock store, not the real API.
@@ -237,9 +248,13 @@ already existed:
   now while still small (the Prisma engine-version fix, mastery-calc-to-Python) rather than left to accrete
   more callers first — both closed out alongside Phase 1 rather than deferred.
 
-**Phase 2 — Curriculum & roster completion.** Add missing `SubjectsModule`/`ChaptersModule`/`TopicsModule`
-controllers. Begin consolidating the 3 duplicate frontend implementations per feature area, starting with
-Academics (lowest-risk, no exam-state-machine coupling), rewiring `features/academics` to the real API.
+**Phase 2 — Curriculum & roster completion — COMPLETE.** Frontend admin-screen consolidation already done
+(previous session, all 6 real duplicates). Corrected scope for the curriculum piece (see §2 "Academic
+Hierarchy") and executed it this session — see §5 "Phase 2: Curriculum management": added the missing
+update/archive endpoints, a `deletedAt` soft-delete column, and the curriculum-management UI that had never
+existed on the frontend at all (not a "rewire" — a new screen, since nothing existing did this). One item left
+partially verified rather than fully confirmed end-to-end (see §5) due to this environment having no running
+backend to test the live success/error paths against.
 
 **Phase 3 — Question Bank & Paper Generation reconciliation.** Fix `blueprint_agent.py`'s missing
 `langchain-openai` dependency (or replace, see §7). Reconcile the two divergent paper-generation code paths into
@@ -466,6 +481,58 @@ small, isolated move.
 - Verified: full Python test suite (7 tests, including the new ones) passes against a freshly-generated
   Prisma client at the 5.17.0 pin from the previous commit; `pnpm typecheck`/`lint`/`test`/`build` all pass
   clean in `apps/api` (10 tests, up from 6).
+
+### Phase 2: Curriculum management (this session)
+
+Backend curriculum CRUD (Subject/Chapter/Topic) turned out to already exist (create + full-tree list, under
+`BatchesController`/`BatchesService` — see the correction in §2 "Academic Hierarchy"). What was actually
+missing: update/archive endpoints, soft-delete support, and — the bigger gap — any frontend at all.
+
+- `packages/db/prisma/schema.prisma` — added `deletedAt DateTime?` to `Subject`/`Chapter`/`Topic`, matching
+  `04-DATABASE-SCHEMA.md`'s stated soft-delete strategy, which the schema didn't actually implement for these
+  models. No migration history exists yet for this project at all (no `prisma/migrations/` folder — schema has
+  never been applied via `prisma migrate dev` against a real database in this repo), so this is a schema-only
+  change; whoever next has real DB access needs to run a migration to apply it.
+- `apps/api/src/batches/{batches.controller.ts,batches.service.ts,dto/batch.dto.ts}` — added
+  `PATCH`/`DELETE subjects/:id`, `chapters/:id`, `topics/:id` (archive = soft-delete only, per
+  `18-EDGE-CASES.md`: a Subject/Chapter/Topic can have Questions/MasteryScores/Blueprints attached that must
+  never be hard-cascade-deleted). `findAllSubjects` now filters `deletedAt: null` at every level of the nested
+  tree. Unit-tested (`batches.service.spec.ts`, 9 new tests): tenant isolation, rename-conflict detection,
+  soft-delete-not-hard-delete, audit logging, archived-excluded-from-listings, double-archive rejected.
+- `apps/web/src/components/dashboard/admin/screens/curriculum/CurriculumManager.tsx` (new) — the
+  curriculum-management UI that has never existed on the frontend at all (confirmed: neither the deleted
+  orphaned screen nor `features/academics`, which turned out to be an unrelated operations dashboard, ever did
+  this). Real API from day one, not a mock layer to migrate later — expandable Subject → Chapter → Topic tree,
+  inline create/edit/archive, matching the existing design system (same Tailwind tokens and patterns as
+  `AdminBatches`/`AdminStudents`). Added as a "Curriculum" tab alongside the existing "Operations" dashboard in
+  `AdminAcademics.tsx` (least disruptive integration point — same nav item, no new top-level sidebar entry,
+  existing dashboard content untouched, just conditionally hidden when the other tab is active).
+- `apps/web/src/hooks/useApi.ts` — added `useSubjects`/`useCreate/Update/ArchiveSubject` and the Chapter/Topic
+  equivalents, following the file's existing real-`apiClient` hook pattern exactly (used by `useStudents` etc.,
+  though — see below — those are never actually reached live since every *reachable* admin screen today uses
+  the mock `features/*` layer instead).
+
+**A real bug found and fixed during in-browser verification**: the component initially used TanStack Query's
+`isLoading` to gate the loading skeleton. In v5, `isLoading` is derived as `isPending && isFetching`, which is
+`false` during the pause *between* retry attempts — so a failing query fell through the loading check, found
+`isError` still `false` (not yet settled), and rendered the *empty* state instead, silently miscommunicating
+"no subjects" as if it were a real, successful, empty result. Fixed by using `isPending` instead (true until
+the query actually settles to success or error, regardless of fetch/retry timing) — this exact mistake would
+be easy to make again anywhere else `useQuery` is destructured in this codebase; worth a lint rule or review
+note if it recurs.
+
+**Left only partially verified, flagged rather than chased further**: with no backend running in this
+environment, `useSubjects()`'s query correctly fired its configured attempt-plus-one-retry (both observed as
+real `500`s over the network) and correctly rendered the loading skeleton throughout — but did not visibly
+settle into the `isError` UI branch afterward within a reasonable wait, in this sandboxed browser tool. This is
+the *first* screen in the whole app to ever exercise `useApi.ts`'s real-`apiClient` hooks live in a browser —
+every other currently-reachable admin screen uses the mock `features/*` layer instead (the admin screens that
+did use `useApi.ts` live only at the orphaned/unreachable routes). So if this is a real bug rather than a
+sandbox-networking artifact, it's a latent, pre-existing characteristic of `useApi.ts`/the shared `QueryClient`
+config that would affect every hook in that file equally, not something introduced by this session's new code —
+worth a focused look once a real backend is available to test against, but not chased further here given the
+time already spent isolating it (confirmed: not a CORS issue, not a proxy-latency issue, not a crash, not
+unique to this component's code — a raw `fetch()` to the same URL resolved normally in 51ms).
 
 ## 6. Definition of Done reminder
 
