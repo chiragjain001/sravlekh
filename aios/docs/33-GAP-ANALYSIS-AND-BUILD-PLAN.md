@@ -314,12 +314,20 @@ genuinely thin/notes-only, and even that wasn't a blocker for schema-staging wor
 session's standing rule to correct earlier inaccuracies before building on top of them rather than silently
 carrying them forward.
 
-**Phases 8–15 — Assessment Engine (endpoints) → Rubric Engine → Document Processing → OCR → Evaluation Engine
-[manual-only] → AI Evaluation → Reviewer Layer → v2 Hardening.** Unchanged from `20-IMPLEMENTATION-PLAN.md` — no
-existing code conflicts with these phases since none of the endpoint/UI layer is built yet (Phase 7 was schema
-only, per this session's scope decision). The sequencing rationale in `20` (rubric before evaluation, document-
-processing before OCR, manual before AI evaluation, reviewer after AI) stands as written and should not be
-reordered.
+**Phase 8 — Assessment Engine (endpoints) — COMPLETE.** Native `POST /assessments`, `POST /assessments/:id/
+deliveries`, `PATCH /assessment-deliveries/:id/status`, `POST /assessment-deliveries/:id/unlock`, `POST /
+attempts`, `GET /attempts/:id/responses`, plus the `CaptureProvider`/`EvaluationPolicy` registries, all built and
+tested end-to-end without touching the v1 `/exams` path. One real doc-vs-reality gap found and handled
+honestly rather than papered over: `29-CAPTURE-PROVIDER-ARCHITECTURE.md` claims OMR/CSV_IMPORT "wrap the
+existing v1 engine unchanged" — investigation found no such engine exists in v1 to wrap. See §5 "Phase 8" for
+the full finding, the resulting design, and a small additional additive schema change (`Response.attemptId`)
+needed to let v2 `Attempt`s own `Response` rows without depending on the still-deferred `Response` redefinition.
+
+**Phases 9–15 — Rubric Engine → Document Processing → OCR → Evaluation Engine [manual-only] → AI Evaluation →
+Reviewer Layer → v2 Hardening.** Unchanged from `20-IMPLEMENTATION-PLAN.md` — no existing code conflicts with
+these phases since none of that layer is built yet. The sequencing rationale in `20` (rubric before evaluation,
+document-processing before OCR, manual before AI evaluation, reviewer after AI) stands as written and should
+not be reordered.
 
 ---
 
@@ -1128,6 +1136,75 @@ Verified: `npx prisma validate` and `prisma generate` clean for both JS and Pyth
 change is purely additive, as intended — no existing model's real columns changed, only new relation arrays and
 one new nullable scalar); `apps/api-python`'s full test suite (7 tests) passes against the regenerated client.
 `apps/web` untouched and unaffected — Phase 7 is schema-only, no new endpoints or UI (that starts at Phase 8).
+
+### Phase 8: Assessment Engine (endpoints) (this session)
+
+**Goal, per `20-IMPLEMENTATION-PLAN.md`:** stand up `Assessment`/`AssessmentDelivery`/`Attempt`/`Response` as
+first-class, directly-usable entities via native v2 endpoints, alongside (not replacing) the untouched v1
+`/exams` path — exit criteria was "a coaching-institute-style delivery can be created via the new native
+endpoints with identical results."
+
+**What was built** — four new NestJS modules, all tenant-scoped and audited the same way every prior module in
+this codebase is:
+- `evaluation-policies` — `POST`/`GET /institutes/:instituteId/evaluation-policies` (05 V2 §3a).
+- `capture-providers` — `POST`/`GET /institutes/:instituteId/capture-providers`, with real per-type config
+  validation enforcing `29-CAPTURE-PROVIDER-ARCHITECTURE.md` §6's field table at creation time (missing a
+  required field is a `400`, not a documentation-only expectation).
+- `assessments` — `POST`/`GET /institutes/:instituteId/assessments`, `GET .../assessments/:id`, `POST .../
+  assessments/:id/deliveries` (with the `422 EVALUATION_POLICY_STAKES_MISMATCH` check per doc 04 §1.2a/05 §2),
+  `GET`/`PATCH .../assessment-deliveries/:id`/`:id/status`, `POST .../assessment-deliveries/:id/unlock`. The
+  status state machine is **the literal same code** as `ExamsService`'s, not a re-implementation — extracted
+  into `apps/api/src/shared/exam-status-transitions.ts` and imported by both services, since doc 05 §2 requires
+  "identical contract... same state machine, same error codes" and a second hand-copied map would drift.
+- `attempts` — `POST /institutes/:instituteId/attempts`, `GET .../attempts/:id/responses`.
+
+**Real finding, investigated rather than assumed — `29-CAPTURE-PROVIDER-ARCHITECTURE.md` §3 overstates what v1
+has:** the doc describes OMR and CSV_IMPORT as providers that "wrap the existing v1 [OMR/CSV] engine
+unchanged." Reading `ExamsService` end to end (as this session's standing rule requires before trusting a doc's
+claim about existing code) found no such engine: `captureMode` on v1 `Exam`/`AnswerSheet` is stored metadata
+only, and every mode is graded through one single path — `ExamsService.gradeAnswerSheet`, which requires a
+human to submit `marksAwarded`/`isCorrect` per question directly, with zero per-mode branching or auto-grading
+logic anywhere in the codebase. Building "wrapper" classes that pretended to invoke differentiated OMR-parsing
+or CSV-column-mapping logic would have fabricated functionality that was never there to wrap. Instead,
+`AttemptsService.create()` honestly reflects the real state: all four Phase-8-scoped provider types (OMR,
+MANUAL_GRID, CSV_IMPORT, PHOTO_CAPTURE_OBJECTIVE) share one ingest code path — the same manual structured-entry
+shape as v1's `GradeAnswerSheetDto` — differentiated only by the `evidenceType` (`OMR_MARK` vs `DIGITAL_VALUE`)
+tag stamped onto the `Response` rows it creates. `PHOTO_CAPTURE_SUBJECTIVE` is explicitly out of scope for
+Phase 8 (doc 20 lists only the other four for this phase) and is rejected with a clear `400` pointing at Phase
+10's Document Processing Pipeline, which it genuinely depends on.
+
+**Additional additive schema change, beyond Phase 7's — flagged as its own decision:** `POST /attempts` needs
+somewhere to put the `Response` rows it creates, but `Response.answerSheetId` was required and v1 `AnswerSheet`
+rows only exist under v1 `Exam`s — creating a shadow `Exam`/`AnswerSheet` pair just to satisfy that FK for a
+native `AssessmentDelivery` (which has no `Exam` counterpart, by Phase 7's deliberate choice not to build the
+compatibility view yet — see `exam_compatibility_view_design.md`) would have polluted v1 tables with synthetic
+data, which is worse than not bridging at all. Instead: `Response.answerSheetId` was loosened from required to
+optional (backward-compatible — every existing v1 write path already always supplies it), and `Response`
+gained `attemptId String?` + `evidenceType EvidenceType?` (both nullable, both null on every pre-Phase-8 row) so
+a `Response` now belongs to *either* an `AnswerSheet` *or* an `Attempt`, never neither. A second compound-unique
+index (`@@unique([attemptId, questionId])`) was added alongside the existing `answerSheetId`-based one — safe,
+since Postgres treats `NULL` as distinct in composite unique indexes, so legacy rows and native rows never
+collide. **This is explicitly not** the doc 04 §3.1 `Response` redefinition (still fully deferred, still
+unexecuted — see `response_v2_migration.sql`, unchanged from Phase 7): that migration additionally *removes*
+`marksAwarded`/`mistakeTags`/`teacherComment` from `Response` entirely, which this change does not do — v1's
+grading columns and the new native-attempt columns coexist on the same table, exactly the same "additive, not
+destructive" discipline as everything else in Phases 7–8.
+
+**Verified:** `prisma validate`/`generate` clean for both clients; full `pnpm typecheck` clean; 219/219
+`apps/api` tests pass (184 pre-existing + 35 new, covering tenant isolation on every new create path, the
+`EVALUATION_POLICY_STAKES_MISMATCH` gate, the shared state-machine transitions and role gating, the fix #2
+duplicate-attempt insert-not-toggle behavior, `evidenceType` selection per provider type, and the student
+self-access check on `GET /attempts/:id/responses`); `apps/api-python`'s 7 tests pass against the regenerated
+client; lint clean (0 errors — the only warnings are pre-existing-style `any` casts on `Json` fields, matching
+`ExamsService`'s own established pattern exactly). **Live-verified**, not just unit-tested: booted the real API
+against this sandbox's always-unreachable Postgres/Redis, confirmed `Nest application successfully started`
+with all eleven new routes mapped in the boot log, and confirmed `GET /institutes/inst-001/assessments` and
+`GET /institutes/inst-001/attempts/att-1/responses` both return a prompt `401 UNAUTHORIZED` (proving the full
+guard/DI chain resolves correctly) rather than a 404 or a 500 crash — the same category of check that caught
+the Phase 6 `PrismaService` crash and the Phase 6.5 `ioredis` hang, both of which mocked unit tests could not
+have caught on their own.
+
+`apps/web` untouched — Phase 8 is backend-only, no UI was in scope per doc 20's own phase description.
 
 ## 6. Definition of Done reminder
 
