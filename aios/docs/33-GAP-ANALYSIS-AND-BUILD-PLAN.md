@@ -385,12 +385,24 @@ doc 28 §2 calls for, with a real, distinct Accept action per `25` §4.2. See §
 including a real (not fabricated) doc-vs-schema gap fixed (`EvaluationVersion.aiRecommendation` had no relation
 since Phase 7) and the deliberate deviation from doc 05 §10's literal internal-contract shape.
 
-**Phases 14–15 — Reviewer Layer → v2 Hardening.** Unchanged from `20-IMPLEMENTATION-PLAN.md` — no existing code
-conflicts with these phases since neither is built yet. Phase 14 (Reviewer Layer) now has a real
-`EvaluationVersion` chain with both `TEACHER`- and `AI`-sourced versions to review/override, and the
-`REVIEW_EVALUATION` permission model it introduces is the first place this session builds anything beyond the
-four hardcoded `UserRole` values — worth scoping deliberately when that phase starts, not assumed to be a small
-addition.
+**Phase 14 — Reviewer Layer & Evaluation Quality Analytics — COMPLETE, and the first place this session builds
+anything beyond the four hardcoded `UserRole` values.** `21` §4.10 sketches a full Role/Permission/Scope-as-data
+framework but defers its concrete schema to a `06B-AUTH-AUTHORIZATION-V2.md` that does not exist anywhere in
+this docs pack (confirmed by `Glob`). Rather than build that generic framework speculatively, added the minimal,
+additive `UserPermissionGrant` table doc 25 §4.3 actually asks for: a named permission (`REVIEW_EVALUATION`),
+optionally scoped to a batch/subject, grantable to any user without inventing a new `Role` entity. `POST
+/evaluations/:responseId/override` reuses `decide()`'s marks/criteria-resolution logic (extracted into a shared
+`resolveMarksAndCriteria()`), requires a mandatory `disputeReason` (`31` §4 — never a silent edit), writes a
+`REVIEWER`-sourced `EvaluationVersion`, and reissues affected `Report`s via `supersedesReportId` rather than
+mutating them, matching Phase 13's `EvaluationVersion` chain precedent. `GET /analytics/evaluation-quality`
+stayed on the FastAPI side per the established Python-owns-analytics split (Phase 6's `mastery_engine.py`
+precedent), computing AI-teacher agreement / reviewer-override / time-to-finalize purely from structured
+`EvaluationVersion` data, never `AuditLog` diffs, per `31` §3's own acceptance criterion. `ReviewerEvaluationConsole`
+(doc 28 §6) was deliberately not built — same document-viewer deferral as Phase 10/12/13, compounded by there
+being no dispute-queue/intake UI anywhere in this codebase to navigate to it from; the backend endpoint is real
+and fully tested regardless. See §5 "Phase 14" for the full detail.
+
+**Phase 15 — v2 Hardening.** Unchanged from `20-IMPLEMENTATION-PLAN.md` — the final phase, not yet started.
 
 ---
 
@@ -1702,6 +1714,106 @@ confirmed both new routes register with no import-time errors. On the frontend: 
 `next build` clean (13/13 pages — one real lint fix along the way, an unescaped apostrophe caught by the build
 itself), Vitest suite unaffected, live click-through into the Evaluation Queue tab confirmed it still renders
 its graceful degraded state against this sandbox's unreachable backend.
+
+### Phase 14: Reviewer Layer & Evaluation Quality Analytics (this session)
+
+**Goal, per `20-IMPLEMENTATION-PLAN.md`:** moderation, disputes, and institute-level oversight — exit criteria
+was "a disputed score can be reviewed, overridden with a documented reason, correctly recomputes `ScoreRecord`,
+and correctly reissues an updated `Report` while preserving the original."
+
+**The permission model — investigated before building, since the doc it's specified in doesn't exist.** `21`
+§4.10 sketches `User ──< UserRoleAssignment >── Role → Permission + Scope(batchId?, subjectId?, branchId?)` "so
+that FUTURE roles... can be added as data, not new enum values," but explicitly defers the concrete schema to a
+`06B-AUTH-AUTHORIZATION-V2.md` — a `Glob("docs/06B*")` confirms no such file exists in this docs pack, and `21`
+itself calls the whole sketch "purely a forward-compatibility refactor... no v1/v2-day-one behavior change."
+Building the full generic `Role`/`UserRoleAssignment`/`Permission`-as-entities framework speculatively, with no
+concrete spec to build it against, would be exactly the kind of unrequested extensibility infrastructure this
+session has avoided elsewhere (Phase 9's rubric dependency indices, Phase 10/12's deferred document-viewer UI).
+Instead, added `UserPermissionGrant`: `{ userId, permission: string, batchId?, subjectId?, grantedByUserId }` —
+a direct, optionally-scoped grant of one named permission to one user, no new `Role` entity. This matches doc 25
+§4.3's own framing of `REVIEW_EVALUATION` exactly: "not necessarily a new hardcoded role, could be an ADMIN or a
+delegated senior TEACHER granted this permission." The 4-role enum stays authoritative for baseline access; this
+is a strictly additive, parallel check layered on top. `PermissionsService.hasPermission(userId, permission,
+{ batchId?, subjectId? })` does a `findFirst` with `OR`-null-matches-any-scope per field — a grant with
+`batchId: null` is institute-wide for that permission. One accepted, documented limitation: Postgres NULL
+semantics mean the `@@unique([userId, permission, batchId, subjectId])` constraint doesn't stop two
+institute-wide (`batchId=NULL, subjectId=NULL`) grants for the same user+permission from coexisting — harmless,
+since `hasPermission()`'s `findFirst` still returns correctly either way, just a latent duplicate-row
+possibility, not a correctness bug.
+
+**`POST /evaluations/:responseId/override`.** Route-level `@Roles(TEACHER, ADMIN, FOUNDER)` — matching doc 25
+§4.3's own framing that a TEACHER *could* hold the grant — with the real gate at the service level:
+`FOUNDER` bypasses (consistent with every prior phase's tenant/permission bypass convention), everyone else must
+hold `REVIEW_EVALUATION` scoped to the response's actual batch (`attempt.assessmentDelivery.batchId`) and
+subject (`question.subjectId`), or a `403`. A `LOCKED` delivery rejects the override outright
+(`409 EVALUATION_LOCKED`) — overriding a locked delivery's evaluation would silently bypass Phase 13's
+`SCHOOL_EXAM_LOCK_BLOCKED_UNEVALUATED` gate's whole point; unlock first, then override. `disputeReason` is a
+mandatory, `@MinLength(10)` field on `OverrideEvaluationDto` — `31` §4: "a reviewer override is never a silent
+edit." The marks/criteria-resolution logic (holistic vs. `CRITERION_ADDITIVE`/`STEP_WISE`, including the
+`STEP_WISE` dependency-override validation) was already written once for `decide()` in Phase 12 — rather than
+duplicating it, extracted into a shared private `resolveMarksAndCriteria()`, used by both, so the two paths can't
+drift apart on a correctness-sensitive rubric-derived-total rule. A successful override creates a new
+`REVIEWER`-sourced `EvaluationVersion` (linked via `previousVersionId` to the prior version, extending Phase
+13's chain), sets `Evaluation.status = REVIEWER_FINALIZED`, enqueues the same `score-aggregation` recalculation
+job Phase 12/13 already use, and calls a new `ReportsService.reissueForStudent()`.
+
+**`reissueForStudent()` — a deliberately narrow interpretation of `Report.scope`, flagged rather than guessed
+generically.** `Report.scope` is a flexible JSON field that could hold `studentId`, `batchId`, date ranges, or
+combinations, with no doc-specified precedence rule for "which reports does one student's score correction
+affect." Rather than attempt a general re-derivation with no spec to validate it against, narrowed to exactly
+doc 31 §4's own example — "a Report Card correction request" — matching only `COMPLETE`, non-superseded Reports
+whose `scope.studentId` equals the disputed response's student. For each match, creates a new `QUEUED` Report
+with `supersedesReportId` pointing at the original (added as a self-relation, `Report.supersedes`/
+`.supersededBy`, `@unique` on `supersedesReportId` so a Report is superseded at most once), enqueues real
+regeneration, and writes an audit entry — the original Report is never mutated or deleted, both remain
+independently retrievable, per the exit criteria's own wording.
+
+**`GET /analytics/evaluation-quality` stayed on the Python side, consistent with the established split.**
+`02-SYSTEM-ARCHITECTURE.md`'s "Python owns analytics/AI-computation, NestJS owns transactional writes" split —
+already validated by `mastery_engine.py`/`get_batch_heatmap` — argued against putting analytics math in NestJS
+just because the override endpoint lives there. `apps/api-python/src/analytics/evaluation_quality.py` computes
+three metrics purely from structured `EvaluationVersion` chains (never `AuditLog`'s generic diff blobs — `31`
+§3's own acceptance criterion): AI-teacher agreement rate (adjacent `AI`→`TEACHER` version pairs, marks-equal
+within a `0.01` tolerance, optionally filtered to one `modelVersion`), reviewer-override rate (adjacent
+`TEACHER`→`REVIEWER` pairs where marks actually changed), and time-to-finalize (`Response.createdAt` to the
+first human — `TEACHER` or `REVIEWER` — version, mean/median/sample-count). Rates return `None`, not `0`, when
+there's no qualifying data — a genuinely different signal ("no data yet" vs. "0% agreement") that a naive
+zero-default would have silently destroyed. `segmentBy` (doc 32 §4's opt-in, privacy-sensitive per-subgroup
+breakdown) is accepted on the route but explicitly not implemented — returned as a `note` explaining why
+(requires per-institute consent infrastructure that doesn't exist), rather than faked.
+
+**`ReviewerEvaluationConsole` (doc 28 §6) — deliberately not built this phase, backend built and tested
+regardless.** Two compounding reasons, not one: (a) the full spec inherits `TeacherDigitalCopyEvaluator`'s
+split-pane image/OCR-transcript viewer, already deferred twice (Phase 10, Phase 12) for lack of real document
+data to design against — building it now wouldn't be any less speculative; (b) unlike every other screen this
+session has added, there is no existing "disputes queue" or intake concept anywhere in this codebase (not even
+v1) to reach an override action *from* — a console with no way to navigate to it would be UI theater, not a
+real feature. `AdminEvaluationQualityDashboard` was built instead, since it has a real, immediately-useful data
+source (`GET /analytics/evaluation-quality`) and a natural home in the existing Admin nav, following
+`FounderHealth.tsx`'s metrics-card-grid pattern: three cards (AI-teacher agreement, reviewer override rate,
+time-to-finalize with median), a `SkeletonCardGrid` loading state, and an `EmptyState` degraded-error state for
+when the analytics service is unreachable — plus a soft explanatory banner when both rates are legitimately
+`null` (no AI-assisted or reviewed evaluations exist yet), distinct from an error.
+
+**Verified:** `prisma validate`/`generate` clean for both clients (the `Report` self-relation needed explicit
+`@relation("ReportSupersession", ...)` naming — Prisma requires it for self-relations, caught immediately by
+`validate`, not a runtime surprise). `apps/api`: full `pnpm typecheck` clean; 320/320 tests pass (306 pre-existing
++ 14 new — 6 `PermissionsService` tests covering grant authorization/cross-tenant rejection/`hasPermission`'s
+exact where-shape, 5 `override()` tests covering the permission gate for TEACHER-without-grant/TEACHER-with-
+grant/FOUNDER-bypass/LOCKED-delivery-rejection/successful-override-with-correct-side-effects, and 3
+`reissueForStudent()` tests covering the no-match case, the create-plus-enqueue case, and the exact `where`
+shape including `supersededBy: null`); lint clean. `apps/api-python`: 34/34 tests pass (28 pre-existing + 6 new
+— no-data-returns-null-not-zero, agreement-rate counting, override-rate counting, time-to-finalize measurement,
+no-evaluation/no-versions skip paths, and the `modelVersion` filter); `ruff check` clean (one auto-fix applied,
+`UP017` — `datetime.timezone.utc` → `datetime.UTC`, a pure style change, re-verified green after). **Live-
+verified**: booted the real NestJS API, confirmed `PermissionsController`'s and `EvaluationsController`'s new
+`override` routes mapped and the full `PermissionsModule`→`EvaluationsModule`→`ReportsModule` DI graph resolved
+cleanly (`Nest application successfully started`), sent a real `fetch()` and confirmed a prompt `401`; separately
+imported `apps/api-python`'s FastAPI app and confirmed `GET /analytics/evaluation-quality` registers cleanly
+among 19 total routes. On the frontend: `pnpm typecheck` clean, `next build` clean (13/13 pages, zero new
+warnings), Vitest suite unaffected (5/5), and a live click-through as a mock-logged-in Admin confirmed the new
+"Evaluation Quality" sidebar tab navigates correctly and the screen renders its graceful degraded `EmptyState`
+against this sandbox's unreachable FastAPI backend (`ERR_CONNECTION_REFUSED` in console, handled, not thrown).
 
 ## 6. Definition of Done reminder
 
