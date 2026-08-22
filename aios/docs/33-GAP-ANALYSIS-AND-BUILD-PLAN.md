@@ -402,7 +402,21 @@ precedent), computing AI-teacher agreement / reviewer-override / time-to-finaliz
 being no dispute-queue/intake UI anywhere in this codebase to navigate to it from; the backend endpoint is real
 and fully tested regardless. See §5 "Phase 14" for the full detail.
 
-**Phase 15 — v2 Hardening.** Unchanged from `20-IMPLEMENTATION-PLAN.md` — the final phase, not yet started.
+**Phase 15 — v2 Hardening — COMPLETE, with one real correctness bug found and fixed and two exit criteria
+honestly left unmet (sandbox-blocked, not skipped).** The AI Governance Policy compliance audit's own ask
+("race conditions, concurrent lock attempts") led straight to a genuine, systemic TOCTOU gap in the
+optimistic-concurrency check shared by `ExamsService` (v1) and `AssessmentsService` (v2): the version-match
+was read-checked but never enforced at the write itself, so two concurrent requests starting from the same
+version could both pass the check and both write — a lost update, not a rejected one. Fixed for all four
+affected methods via a new `shared/version-guard.ts`, with adversarial concurrency tests proving the AI
+governance gate specifically cannot be raced past. Security test suite extended per `13`'s v2 addendum exactly
+(identity-resolution/rubric/permission-boundary/cross-tenant-signed-URL fuzzing, 15 new tests, all real and
+passing). Monitoring gap fixed: dead-lettered background jobs never reached Sentry (only HTTP exceptions did) —
+closed for all 6 queues via one shared helper. Two things this phase could **not** honestly close: a full v1+v2
+E2E automation suite (never built at all in this sandbox — no live browser-against-live-backend infra beyond
+this session's own manual spot-checks) and executed load tests (same no-live-infra limit as Phase 6.5 — two
+new k6 scripts written, unexecuted). See §5 "Phase 15" for the full detail, the deployment-checklist audit, and
+exactly which of doc 20's four exit-criteria bullets are genuinely met versus honestly flagged.
 
 ---
 
@@ -1814,6 +1828,159 @@ among 19 total routes. On the frontend: `pnpm typecheck` clean, `next build` cle
 warnings), Vitest suite unaffected (5/5), and a live click-through as a mock-logged-in Admin confirmed the new
 "Evaluation Quality" sidebar tab navigates correctly and the screen renders its graceful degraded `EmptyState`
 against this sandbox's unreachable FastAPI backend (`ERR_CONNECTION_REFUSED` in console, handled, not thrown).
+
+### Phase 15: v2 Hardening (this session)
+
+**Goal, per `20-IMPLEMENTATION-PLAN.md`:** a production-readiness pass mirroring v1 Phase 6.5, extended to the
+new v2 domains — load testing, security fuzzing, monitoring/alerting, and an AI-governance compliance audit
+including race conditions. Exit criteria: "Full v1 + v2 E2E suite green; v2-specific load/security tests pass;
+governance gate audit passes; production deployment checklist satisfied for the v2 feature set."
+
+**The governance-gate audit surfaced a real, systemic bug — not a hypothetical one.** Investigating "race
+conditions (concurrent lock attempts)" meant actually reading `ExamsService.updateStatus`/`unlock` and
+`AssessmentsService.updateDeliveryStatus`/`unlockDelivery` line by line rather than assuming the existing
+`version !== dto.version` check was sufficient. It wasn't: that check reads `.version`, compares it, and *then*
+writes with `where: { id }` alone — nothing re-verifies the version at the write itself. Two concurrent requests
+starting from the same version both pass the read-check and both write; Prisma's `version: { increment: 1 }`
+makes the arithmetic land correctly, but the optimistic lock's actual purpose — rejecting a write whose
+premise (the version it read) is already stale by the time it executes — silently does nothing. This is the
+same class of pattern as Phase 6.5's `ThrottlerGuard`-configured-but-never-wired finding: present-looking code
+that doesn't actually do its one job. **Not new to this session** — `ExamsService` predates v2 entirely — but
+found here because Phase 15 was the first time anything was asked to specifically adversarially test it.
+Fixed for all four affected methods (`ExamsService.updateStatus`/`unlock`, `AssessmentsService.
+updateDeliveryStatus`/`unlockDelivery`) by including `version` in the write's own `where` clause — Prisma 5's
+extended-whereUnique filtering (GA since 4.5, no preview flag) makes `where: { id, version }` a real
+compare-and-swap — wrapped in a new shared `shared/version-guard.ts` that turns the resulting Prisma P2025
+("record to update not found") into the same `STALE_VERSION` conflict the read-check throws, rather than a
+generic 500. One existing test's exact-`where` assertion (`exams.service.spec.ts`) needed updating to match;
+everything else was additive.
+
+**Adversarial concurrency tests, not just the fix.** Doc 13's v2 addendum names this precisely: "governance-gate
+bypass attempts (concurrent lock + evaluation-decide race)." Added to both `exams.service.spec.ts` and
+`assessments.service.spec.ts`: two concurrent LOCK/unlock calls from the identical starting version, asserting
+exactly one succeeds and the other gets `STALE_VERSION` (not a silent double-write); two concurrent LOCK
+attempts on a delivery/exam that still has an unevaluated response, asserting **both** are rejected via
+`SCHOOL_EXAM_LOCK_BLOCKED_UNEVALUATED` — the gate holds under concurrency, not just in isolation; and a test
+proving the unevaluated-count check is never stale across concurrent calls — one call's count-check sees the
+response still unevaluated (correctly blocks) while a second, later call sees it now evaluated (correctly
+proceeds), each call reading true state at its own call time rather than a cached/shared value. This is the
+concrete form "the §2 hard gate cannot be bypassed under any tested condition, including race conditions" takes
+in a sandbox with no live Postgres to run genuinely parallel transactions against — controlling `await`
+ordering via `Promise.allSettled` against a stateful mock is the honest substitute, not a hedge.
+
+**Security test suite extended exactly per `13-TESTING-STRATEGY.md`'s v2 addendum, after first checking what
+already existed** (the v1 Phase 6.5 precedent: audit coverage before assuming a gap). 15 new tests, all real,
+all passing, no duplication of existing coverage:
+- **Identity-resolution fuzzing** (`identity-resolution.service.spec.ts`, +2): a resolution belonging to a
+  different institute now has an explicit cross-tenant 404 test (the code already guarded this correctly —
+  `resolution.document.documentBundle?.assessmentDelivery.assessment.instituteId !== instituteId` — it just had
+  no regression test); a fuzzed/nonexistent `studentProfileId` is rejected. (The CONFLICT-detection path doc 13
+  §3's addendum also names was already covered — Phase 10 built it, no gap there.)
+- **Rubric marks-mismatch fuzzing** (`rubrics.service.spec.ts`, +1): a `dependsOnCriterionIndex` pointing past
+  the end of the criteria array is rejected before it can resolve to `criteria[undefined]` in the second-pass
+  ID-resolution loop. (Negative marks/indices are already blocked at the DTO layer via `@Min(0)` — verified,
+  not re-tested at the service level as that would just re-test class-validator.)
+- **`REVIEW_EVALUATION` permission-boundary fuzzing** (`evaluations.service.spec.ts`, +1): doc 13's exact
+  wording — "an ADMIN without explicit grant must never succeed at `POST /evaluations/:id/override`" — added as
+  its own explicit test alongside Phase 14's existing TEACHER-without-grant case, since ADMIN is route-level
+  allowed (`@Roles`) and deserves its own regression proof it gets no implicit service-level bypass the way
+  FOUNDER does.
+- **Cross-tenant document/page-image access via guessed signed-URL patterns** (`documents.service.spec.ts`,
+  +2): a real `documentId` belonging to a different institute, and a real `pageId` belonging to a different
+  document — both now assert `NotFoundException` **and** `storage.getSignedDownloadUrl` never called, so a
+  guessed ID can't even cause a signed URL to be minted, let alone leak one.
+
+**Monitoring extended — a real blind spot found and closed, not just the v2 addendum's rows transcribed.**
+Tracing "Async job dead-letter rate > 0... Page on-call" (`12` §7, extended for v2 queues) back to its actual
+mechanism found that BullMQ's `WorkerHost` failure path (`@OnWorkerEvent('failed')`) never passes through
+`AllExceptionsFilter` — that filter is wired into the HTTP request/response cycle only (confirmed: `Sentry.
+captureException` appears nowhere outside it and `main.ts`). Every processor's dead-letter handling was
+`logger.error()`/`logger.warn()` only; a job that permanently failed was invisible to Sentry, meaning the exact
+alert this doc row exists to trigger would never fire. Fixed once, centrally: `shared/logging/dead-letter.ts`'s
+`reportDeadLetter()` does the exhausted-vs-retrying check, logs at the right level, and — only once retries are
+exhausted — forwards to Sentry with `{queue, jobId, deadLettered: true}` tags, matching `AllExceptionsFilter`'s
+own ids-only-never-PII discipline. Wired into all 6 queues (`mastery-recalc`, `score-aggregation`,
+`ai-evaluation`, `ocr`, `report-generation`, `notice-dispatch`) — the last two (`report-generation`,
+`notice-dispatch`) previously had no exhausted/still-retrying distinction at all, now consistent with the other
+four. New `dead-letter.spec.ts` (4 tests) proves: no-op on an undefined job (BullMQ can pass this), warn-only
+while retries remain (never reaches Sentry), error+Sentry-forward once exhausted with the right tags, and
+`attemptsMade` exceeding the configured `attempts` still counts as exhausted. The v2 addendum's other three
+alert rows, audited rather than assumed: **"Document-processing dead-letter rate > 0 for any stage"** — genuinely
+N/A today, not silently skipped — no async document-processing queue exists (Phase 10's own documented scope
+decision: real human-in-the-loop checkpoints, no auto-pipeline stages); nothing to wire an alert to until that's
+built. **"AI Evaluation governance gate blocked a LOCK attempt (Info, logged for visibility)"** — already
+satisfied, found by inspection: `AllExceptionsFilter`'s `logStructured()` call runs unconditionally for every
+exception including `SCHOOL_EXAM_LOCK_BLOCKED_UNEVALUATED`'s 409, carrying `errorCode` — no new code needed.
+**"Sustained AI-teacher disagreement spike"** — computable today via Phase 14's `GET /analytics/
+evaluation-quality`; wiring an actual threshold-and-page rule is an ops-tool config exercise, not app code.
+**"Identity-resolution `UNRESOLVED` queue depth exceeds a threshold sustained > 1 hour"** — this is a
+scheduled/external monitoring-tool query against `IdentityResolution` row counts, not something app code emits
+per-event; flagged as needing that tool, not built as a NestJS `@Cron` job speculatively (no existing cron
+infrastructure in this codebase to extend, and building one here would be new infrastructure for a single
+alert rule, not a hardening fix).
+
+**Load testing — two new k6 scripts, unexecuted, same honest limitation as Phase 6.5's three.** Per doc 20's
+Phase 15 bullet and `10`'s V2 addendum targets (2,000 concurrent AI-evaluation jobs, 10,000 pages/day peak, 500
+concurrent identity-resolution actions): `ai-evaluation-burst.js` fires the real v2 trigger mechanism — many
+deliveries entering `EVALUATING` concurrently, each auto-enqueueing one batch job (`25` §4.1) — rather than
+2,000 individual per-response calls, matching the target's own "batched, not per-request" framing.
+`document-processing-burst.js` covers both remaining numbers in one file since they're the same pipeline's
+burst characteristics: a sustained page-upload rate scenario and a 500-concurrent identity-confirm scenario.
+Same status as every v1 script: written, `k6`-lint-reviewed, needs real seeded ids, cannot be honestly claimed
+"executed against targets" from a sandbox with no live deployment.
+
+**Deployment checklist audit (`14-DEPLOYMENT-ARCHITECTURE.md` §11) for the v2 feature set — walked item by
+item, not assumed satisfied:**
+- ☑ **CI gates green** — lint (0 errors), typecheck (clean), full test suite (335/335) all verified this
+  session. The `pnpm audit`/`pip-audit` gate is still `continue-on-error: true` (Phase 6.5's documented,
+  deliberate decision pending a dedicated dependency-bump pass) — unchanged, not re-litigated here.
+- ☐ **Migration reviewed with a rollback plan, applied to staging** — every schema change this entire session
+  has been additive-only (new tables/nullable columns), so there's genuinely no destructive migration needing a
+  rollback plan. "Applied to staging" is honestly false — no staging environment exists to apply anything to
+  from this sandbox.
+- ☐ **Feature flags for incomplete/risky features default off** — a real, plain gap, not a formality: **no
+  feature-flag system exists anywhere in this codebase.** Every v2 feature this session built (AI evaluation
+  auto-triggering on every `EVALUATING` transition institute-wide, the reviewer-override path, etc.) is live for
+  every tenant the moment the code deploys, with no kill switch short of reverting the deploy. Flagged plainly
+  rather than checked off — building a flag system is a real, separate effort this session didn't attempt
+  speculatively, but its absence should inform how v2 actually gets rolled out.
+- ☑ **Monitoring/alerting updated for new endpoints/job types** — this phase's dead-letter fix + the alert-row
+  audit above.
+- ☐/☑ **Post-deploy smoke test plan** — no automated smoke-test script exists, but this session's own
+  established practice (live-boot the API, confirm the DI graph resolves and new routes map, send a real
+  `fetch()` and confirm a prompt `401`, click through the UI in the Browser pane against the real backend) *is*
+  a manual smoke test, repeated every phase including this one. Real, but manual and session-bound, not a
+  reusable script — noted as a gap worth closing, not claimed as fully satisfied.
+- ☐ **Rollback plan documented for this specific release** — there is no real release process in this sandbox
+  to document a plan against; the general property (additive-only schema ⇒ rollback = revert app code, no down-
+  migration needed) holds, but that's a property of the changes, not a documented plan for an actual release.
+
+**The two exit criteria this phase could not honestly close, stated plainly rather than glossed over:**
+1. **"Full v1 + v2 E2E suite green"** — no E2E automation (Playwright/Cypress or equivalent, against a live
+   browser and live backend) exists anywhere in this codebase, for v1 or v2, and none was built this phase. This
+   sandbox's equivalent — the Browser-pane spot-check done every phase this session — is real UI verification
+   but is manual, single-scenario, and not a suite. Doc 13's v2 addendum's new workflow #11 (the full booklet →
+   identity → OCR → AI-evaluate → review → lock-blocked → evaluate → lock → student-view → reviewer-override →
+   reissue chain) was read and understood but not written as an unexecuted Playwright skeleton — unlike the k6
+   scripts, an E2E spec with no working v1 E2E suite either to extend would be a new, isolated artifact whose
+   correctness nothing here could verify even at the "does it compile and target real selectors" level a load
+   test's request shape at least gets from this session's own knowledge of the real endpoints.
+2. **"v2-specific load tests pass"** — the scripts exist (this phase) but "pass" requires execution against
+   real infrastructure this sandbox has never had, for v1 or v2, in fifteen phases.
+
+Both are the same class of limitation this session has been consistent about since Phase 6.5, not new evasions
+introduced here.
+
+**Verified:** `pnpm typecheck` clean on `apps/api`; 335/335 tests pass (320 pre-existing + 15 new — 2
+`ExamsService` concurrency tests, 3 `AssessmentsService` concurrency/governance-race tests, 2 identity-
+resolution fuzzing tests, 1 rubric fuzzing test, 2 documents cross-tenant tests, 1 evaluations ADMIN-permission
+test, 4 `dead-letter.spec.ts` tests); lint clean (0 errors, only pre-existing-style `any` warnings, none in any
+file touched this phase). **Live-verified**: booted the real NestJS API, confirmed `Nest application`
+bootstrap completed cleanly with the `version-guard`/`dead-letter` changes in the DI graph (no circular-import
+or provider-resolution errors), sent a real `fetch()` against the `override` endpoint and confirmed a prompt
+`401` — the same depth of verification used every phase this session, since this sandbox's ceiling for
+"deployed and working" has been consistent throughout: real code, real tests, one real live boot, honest about
+what a live boot alone can't prove.
 
 ## 6. Definition of Done reminder
 
