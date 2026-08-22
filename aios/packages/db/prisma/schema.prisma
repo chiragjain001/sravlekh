@@ -655,7 +655,7 @@ model AnswerSheet {
 
 model ScoreRecord {
   id               String   @id @default(cuid())
-  examId           String
+  examId           String?
   studentProfileId String
   totalMarks       Float    // max possible
   obtainedMarks    Float
@@ -666,9 +666,17 @@ model ScoreRecord {
   isFinalized      Boolean  @default(false)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+  // Phase 12 (docs/33-GAP-ANALYSIS-AND-BUILD-PLAN.md) addition — same bridge
+  // pattern as Response.attemptId (Phase 8): examId was loosened from
+  // required to optional so a ScoreRecord can belong to EITHER a v1 Exam or
+  // a v2 Attempt, never neither. Attempt already pins its studentProfileId
+  // uniquely per delivery, so a single-column unique on attemptId is enough
+  // (no composite needed, unlike the v1 examId+studentProfileId pair).
+  attemptId        String?  @unique
 
-  exam           Exam           @relation(fields: [examId], references: [id], onDelete: Cascade)
-  studentProfile StudentProfile @relation(fields: [studentProfileId], references: [id])
+  exam           Exam?           @relation(fields: [examId], references: [id], onDelete: Cascade)
+  studentProfile StudentProfile  @relation(fields: [studentProfileId], references: [id])
+  attempt        Attempt?        @relation(fields: [attemptId], references: [id], onDelete: Cascade)
 
   @@unique([examId, studentProfileId])
   @@index([studentProfileId])
@@ -1226,6 +1234,7 @@ model Attempt {
   studentProfile     StudentProfile     @relation(fields: [studentProfileId], references: [id])
   documents          Document[]
   responses          Response[]
+  scoreRecord        ScoreRecord?
 
   @@unique([assessmentDeliveryId, studentProfileId, isActiveAttempt])
   @@index([assessmentDeliveryId, studentProfileId])

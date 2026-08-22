@@ -77,8 +77,13 @@ export class ReportGenerationProcessor extends WorkerHost {
         return { type, scope, note: 'no data in range', reason: 'student_not_found' };
       }
 
+      // Phase 12 (docs/33-GAP-ANALYSIS-AND-BUILD-PLAN.md): ScoreRecord.examId was
+      // loosened to optional so a v2-native Attempt can also own a ScoreRecord —
+      // this report's "exam" column is still v1-Exam-shaped, so v2-native rows
+      // (examId=null) are excluded here rather than crashing on a null exam
+      // relation. Reporting on v2 attempts is a real, separate future increment.
       const scores = await this.prisma.scoreRecord.findMany({
-        where: { studentProfileId: scope.studentId, ...(dateFilter ? { createdAt: dateFilter } : {}) },
+        where: { studentProfileId: scope.studentId, examId: { not: null }, ...(dateFilter ? { createdAt: dateFilter } : {}) },
         include: { exam: { select: { title: true, type: true } } },
         orderBy: { createdAt: 'desc' },
       });
@@ -90,7 +95,9 @@ export class ReportGenerationProcessor extends WorkerHost {
       return {
         type, scope,
         student: { name: student.user.name, rollNumber: student.rollNumber },
-        scores: scores.map((s) => ({ exam: s.exam.title, examType: s.exam.type, percentage: s.percentage, obtainedMarks: s.obtainedMarks, totalMarks: s.totalMarks })),
+        scores: scores
+          .filter((s) => s.exam !== null)
+          .map((s) => ({ exam: s.exam!.title, examType: s.exam!.type, percentage: s.percentage, obtainedMarks: s.obtainedMarks, totalMarks: s.totalMarks })),
         mastery: mastery.map((m) => ({ subject: m.subject.name, topic: m.topic.name, masteryValue: m.masteryValue, trend: m.trend })),
         ...(scores.length === 0 ? { note: 'no data in range' } : {}),
       };

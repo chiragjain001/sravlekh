@@ -30,6 +30,7 @@ import { RubricsModule } from './rubrics/rubrics.module';
 import { DocumentsModule } from './documents/documents.module';
 import { IdentityResolutionModule } from './identity-resolution/identity-resolution.module';
 import { OcrModule } from './ocr/ocr.module';
+import { EvaluationsModule } from './evaluations/evaluations.module';
 import { QueueModule } from './infrastructure/queue/queue.module';
 import { StorageModule } from './infrastructure/storage/storage.module';
 import { CacheModule } from './infrastructure/cache/cache.module';
@@ -90,6 +91,7 @@ import { RequestLoggingInterceptor } from './shared/interceptors/request-logging
     DocumentsModule,
     IdentityResolutionModule,
     OcrModule,
+    EvaluationsModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
