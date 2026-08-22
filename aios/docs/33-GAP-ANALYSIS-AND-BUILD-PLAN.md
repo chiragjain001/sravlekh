@@ -358,12 +358,24 @@ and a NestJS `ocr` queue/processor mirroring `mastery-recalc`'s exact structure.
 honest limits (self-reported, not calibrated, LLM confidence; only `HANDWRITTEN_TEXT` auto-triggers today) and
 another schema gap the docs' own internal consistency was missing (`OCRResult.requiresVisualEvaluation`).
 
-**Phases 12–15 — Evaluation Engine [manual-only] → AI Evaluation → Reviewer Layer → v2 Hardening.** Unchanged
-from `20-IMPLEMENTATION-PLAN.md` — no existing code conflicts with these phases since none of that layer is
-built yet. The sequencing rationale in `20` (manual evaluation before AI, reviewer after AI) stands as written
-and should not be reordered. Phase 13 (AI Evaluation) inherits the real AI Model Registry usage pattern Phase 11
-established — `AIRecommendation` should resolve `AIModelVersion`/`PromptVersion` through the same registry, not
-hardcode a vendor call the way `blueprint_agent.py` still does.
+**Phase 12 — Evaluation Engine (Manual-Only First) — COMPLETE, backend and a real (if intentionally narrower
+than doc 28's full spec) Teacher UI.** Native `evaluations` module: `POST /evaluations/:responseId/decide`,
+`GET /evaluations/:responseId/history`, `GET /evaluation-work-items`, plus a `score-aggregation` queue
+recomputing `ScoreRecord` on every `EvaluationVersion` write. The rubric-derived-total rule (`26` §4.2 — total
+is never independently settable when criteria exist), the `STEP_WISE` dependency-override rule, and the
+`ACCEPT_AI` decision path are all real and tested — the last of which will always correctly reject today, since
+no `AIRecommendation` exists until Phase 13. The Teacher UI replaces v1's mock `TeacherEvaluationQueue` with a
+real one backed by `GET /evaluation-work-items`, deliberately scoped to the queue + scoring form and not doc
+28 §2's full split-pane source-image/OCR-transcript viewer — see §5 "Phase 12" for the reasoning, matching
+Phase 10's same deferral logic for the document-viewer UI.
+
+**Phases 13–15 — AI Evaluation → Reviewer Layer → v2 Hardening.** Unchanged from `20-IMPLEMENTATION-PLAN.md` —
+no existing code conflicts with these phases since none of that layer is built yet. The sequencing rationale in
+`20` (manual evaluation before AI, reviewer after AI) stands as written and should not be reordered. Phase 13
+inherits the real AI Model Registry usage pattern Phase 11 established — `AIRecommendation` should resolve
+`AIModelVersion`/`PromptVersion` through the same registry, not hardcode a vendor call the way
+`blueprint_agent.py` still does — and now also has a real, tested `EvaluationVersion` chain
+(`source=TEACHER` rows exist) to chain an `AI`-sourced version in front of.
 
 ---
 
@@ -1492,6 +1504,83 @@ its 16 routes with no import-time errors.
 `apps/web` untouched — Phase 11 is backend-only, no UI was in scope per doc 20's own phase description (doc 24
 §5's low-confidence-underlining UX belongs to `28-DIGITAL-COPY-UX-SPECIFICATION.md`, itself downstream of the
 document-viewer UI Phase 10 already deferred).
+
+### Phase 12: Evaluation Engine — Manual-Only First (this session)
+
+**Goal, per `20-IMPLEMENTATION-PLAN.md`:** get versioned human evaluation working before introducing AI scoring
+— exit criteria was "a full school-theory-exam delivery can go from scanned booklets to finalized, versioned,
+human-graded scores, with complete evaluation history, entirely without AI involvement."
+
+**What was built** — the `evaluations` module, scoped deliberately to v2-native Responses only (`attemptId`
+set) and subjective question types (`SHORT_ANSWER`/`LONG_ANSWER`/`PASSAGE_BASED`) — v1's
+`ExamsService.gradeAnswerSheet` and objective evidence (`DIGITAL_VALUE`/`OMR_MARK`, scored directly at capture
+per Phase 8) are both untouched, per `25` §4.1's own acceptance criteria and this session's standing rule
+against modifying already-working v1 code:
+- `POST /evaluations/:responseId/decide` — always creates a new `EvaluationVersion(source=TEACHER)`, even for
+  `ACCEPT_AI` (`25` §4.2 — "recording that a human reviewed and endorsed the AI's number... is a materially
+  different fact from no human has looked at this yet"). Branches on rubric scoring mode: `CRITERION_ADDITIVE`/
+  `STEP_WISE` responses require `criterionScores` and derive the total server-side (never trusting an
+  independently-supplied total, `26` §4.2's edge case); holistic responses (no rubric, or
+  `HOLISTIC_WITH_GUIDANCE`) require `marksAwarded` directly. `STEP_WISE`'s dependency rule (`26` §4.2 — a
+  criterion scoring above zero when its dependency scored zero requires a documented override) is enforced as a
+  real validation, not just described.
+- `GET /evaluations/:responseId/history` — the full ordered `EvaluationVersion` chain.
+- `GET /evaluation-work-items` — prioritized queue per `25` §7. The `aiFlag` query param is accepted but always
+  returns empty today, honestly, since no `AIRecommendation` exists until Phase 13 — not silently ignored, not
+  faked with placeholder flags.
+- A `score-aggregation` queue/processor (structurally identical to `mastery-recalc`), recomputing
+  `ScoreRecord.obtainedMarks`/`totalMarks`/`percentage` on every `EvaluationVersion` write, per `25` §5's
+  formula: each `Response`'s current `EvaluationVersion.marksAwarded` when one exists, falling back to
+  `Response.marksAwarded` directly for objective evidence that never gets an `Evaluation` row at all.
+
+**Schema — the same bridge pattern as `Response.attemptId` (Phase 8), applied to `ScoreRecord`:**
+`ScoreRecord.examId` loosened to optional, `ScoreRecord.attemptId String? @unique` added, so a `ScoreRecord` now
+belongs to either a v1 `Exam` or a v2 `Attempt`, never neither — needed because v2's `AssessmentDelivery` has no
+`Exam` counterpart (Phase 7's deliberate choice, see `exam_compatibility_view_design.md`) and `ScoreRecord.examId`
+was previously required.
+
+**A real regression this change would have caused, found by `pnpm typecheck` before it ever shipped:**
+loosening `examId` broke `report-generation.processor.ts` (Phase 6), which read `s.exam.title` unconditionally
+— a v2-native `ScoreRecord` (once Phase 12 started creating them) would have crashed that report on a null
+`exam` relation. Fixed by excluding `examId: null` rows from that query (this report's "exam" column is still
+v1-Exam-shaped; reporting on v2 attempts is a separate, real future increment, not silently pretended to work)
+and defensively filtering in the map step too. This is exactly the kind of cross-phase regression a full
+`pnpm typecheck` catches and a narrower "only run the new module's tests" pass would have missed — the same
+lesson as Phase 6's `PrismaService` crash and Phase 6.5's `ioredis` hang, just caught at compile time instead
+of runtime this time.
+
+**Teacher UI — a deliberately narrower slice of doc 28 than its full spec, same reasoning as Phase 10's
+document-viewer deferral.** Doc 28 §2's `TeacherDigitalCopyEvaluator` is a genuinely large screen — a pan/zoom
+source-image viewer with region-overlay highlighting, on top of the OCR-transcript/rubric/scoring panel — and
+building it well requires a canvas/pan-zoom library decision this session isn't positioned to make blindly
+without a real document to test it against (this sandbox has never had one). Investigated the existing frontend
+first, per this session's standing rule: found `TeacherEvaluationQueue.tsx` was still v1's mock (test-grouped
+progress cards from `lib/mock-data/teacher`, live-mounted on the Teacher dashboard's `evaluation-queue` tab) —
+applying the same "replace the mock with the real screen" precedent established across Phases 4–6 without
+re-asking. Built:
+- A rewritten `TeacherEvaluationQueue.tsx` — real, individual-response queue backed by `GET /evaluation-work-items`
+  (doc 28 §4's `TeacherEvaluationWorkQueue`), a genuine behavioral upgrade from v1's per-test progress-only view.
+- `EvaluationDecisionDialog.tsx` — a real scoring form (criterion inputs when a rubric exists, direct marks
+  otherwise, mistake tag, comment) submitting through `POST /evaluations/:responseId/decide`. This **is** the
+  scoring half of doc 28 §2, just without its left-pane image viewer — a response's `studentAnswer` text is
+  shown when present (the `DIGITAL_VALUE` capture case), with an honest placeholder rather than a fake image
+  frame when the evidence is `PAGE_REGION` (scanned/OCR'd) and no transcript viewer exists yet to show it.
+- `useEvaluationWorkItems`/`useDecideEvaluation` added to `useApi.ts`; the dialog reuses Phase 9's `useRubric`
+  hook directly rather than duplicating rubric-fetch logic.
+
+**Verified:** `prisma validate`/`generate` clean for both clients; full `pnpm typecheck` clean on `apps/api`
+(catching the `report-generation.processor.ts` regression above); 290/290 tests pass (267 pre-existing + 23
+new — access/eligibility gating, holistic and criterion-additive scoring paths, the `STEP_WISE` override rule,
+`ACCEPT_AI` with and without a prior AI version, history ordering, work-item filtering, and the score-aggregation
+formula's objective-vs-subjective fallback including the zero-total edge case); lint clean (0 errors, one
+pre-existing-style `any` warning). `apps/api-python`'s 18 tests pass against the regenerated client (no
+Python-side changes this phase). **Live-verified**: booted the real API, confirmed all three routes mapped and
+`Nest application successfully started` (including the new `score-aggregation` BullMQ queue resolving through
+DI), sent real `fetch()` `GET`/`POST` requests and confirmed prompt `401`s rather than crashes. On the
+frontend: `pnpm typecheck` clean, `next build` clean (13/13 pages, zero new lint warnings), Vitest suite
+unaffected, and a live click-through as a mock-login Teacher into the real (now-live-mounted) Evaluation Queue
+tab confirmed it renders its graceful error state — not a crash — against this sandbox's unreachable backend,
+the same verification depth every prior UI phase this session has been honest about being limited to.
 
 ## 6. Definition of Done reminder
 
