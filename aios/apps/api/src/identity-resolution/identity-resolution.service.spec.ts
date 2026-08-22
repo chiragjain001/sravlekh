@@ -81,6 +81,29 @@ describe('IdentityResolutionService', () => {
       await expect(service.confirm('inst-1', 'res-1', { studentProfileId: 'sp-1' }, teacher)).rejects.toThrow(NotFoundException);
     });
 
+    // 13-TESTING-STRATEGY.md v2 addendum: identity-resolution conflict/tenant
+    // fuzzing — a resolution belonging to another institute's document must
+    // never be readable or actionable via a correct-looking instituteId param.
+    it('404s (never leaks existence) when the resolution belongs to a different institute', async () => {
+      prisma.identityResolution.findUnique.mockResolvedValueOnce({
+        id: 'res-1',
+        documentId: 'doc-1',
+        status: IdentityStatus.PENDING,
+        document: {
+          documentBundle: {
+            assessmentDelivery: { id: 'delivery-1', batchId: 'batch-1', assessment: { instituteId: 'inst-OTHER' } },
+          },
+        },
+      });
+      await expect(service.confirm('inst-1', 'res-1', { studentProfileId: 'sp-1' }, teacher)).rejects.toThrow(NotFoundException);
+    });
+
+    it('rejects a fuzzed/nonexistent studentProfileId', async () => {
+      mockResolution();
+      prisma.studentProfile.findUnique.mockResolvedValueOnce(null);
+      await expect(service.confirm('inst-1', 'res-1', { studentProfileId: 'sp-does-not-exist' }, teacher)).rejects.toThrow(BadRequestException);
+    });
+
     it('rejects re-confirming an already-resolved document', async () => {
       mockResolution({ status: IdentityStatus.MANUALLY_CONFIRMED });
       await expect(service.confirm('inst-1', 'res-1', { studentProfileId: 'sp-1' }, teacher)).rejects.toThrow(ConflictException);

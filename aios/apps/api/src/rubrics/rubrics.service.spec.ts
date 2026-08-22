@@ -113,6 +113,26 @@ describe('RubricsService', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
+    // 13-TESTING-STRATEGY.md v2 addendum: rubric marks-mismatch/dependency
+    // fuzzing — an out-of-range index must never resolve to `criteria[undefined]`
+    // (which would otherwise crash the second pass in createVersion, or worse,
+    // silently write a garbage dependsOnCriterionId).
+    it('rejects a dependsOnCriterionIndex pointing past the end of the criteria array', async () => {
+      prisma.question.findUnique.mockResolvedValueOnce(subjectiveQuestion);
+      prisma.rubric.findUnique.mockResolvedValueOnce(null);
+      await expect(
+        service.createForQuestion(
+          'inst-1', 'q1',
+          {
+            name: 'x', scoringMode: RubricScoringMode.STEP_WISE,
+            criteria: [{ description: 'a', maxMarks: 5, dependsOnCriterionIndex: 7 }],
+          },
+          teacher,
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(txCriterionCreate).not.toHaveBeenCalled();
+    });
+
     it('resolves dependsOnCriterionIndex to the real created criterion id', async () => {
       prisma.question.findUnique.mockResolvedValueOnce(subjectiveQuestion);
       prisma.rubric.findUnique.mockResolvedValueOnce(null);

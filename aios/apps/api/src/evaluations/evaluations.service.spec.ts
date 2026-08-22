@@ -29,6 +29,7 @@ describe('EvaluationsService', () => {
   const teacher: AuthenticatedUser = { id: 'teacher-1', email: 't@x.com', name: 'T', role: UserRole.TEACHER, instituteId: 'inst-1' };
   const otherTeacher: AuthenticatedUser = { ...teacher, id: 'teacher-2', instituteId: 'inst-2' };
   const founder: AuthenticatedUser = { ...teacher, id: 'founder-1', role: UserRole.FOUNDER };
+  const admin: AuthenticatedUser = { ...teacher, id: 'admin-1', role: UserRole.ADMIN };
 
   beforeEach(async () => {
     prisma = {
@@ -315,6 +316,20 @@ describe('EvaluationsService', () => {
       await expect(
         service.override('inst-1', 'resp-1', { marksAwarded: 3, disputeReason: 'Student appealed the mark' }, teacher),
       ).resolves.toBeDefined();
+    });
+
+    // 13-TESTING-STRATEGY.md v2 addendum, verbatim: "an ADMIN without explicit
+    // grant must never succeed at POST /evaluations/:id/override" — ADMIN is
+    // route-level allowed (@Roles) but must not get an implicit service-level
+    // bypass the way FOUNDER does.
+    it('rejects an ADMIN without the REVIEW_EVALUATION grant', async () => {
+      prisma.response.findUnique.mockResolvedValueOnce(baseResponse);
+      permissionsService.hasPermission.mockResolvedValueOnce(false);
+
+      await expect(
+        service.override('inst-1', 'resp-1', { marksAwarded: 3, disputeReason: 'Student appealed the mark' }, admin),
+      ).rejects.toThrow(ForbiddenException);
+      expect(permissionsService.hasPermission).toHaveBeenCalledWith('admin-1', 'REVIEW_EVALUATION', { batchId: 'batch-1', subjectId: 'sub-1' });
     });
 
     it('never checks the grant for a FOUNDER — always allowed', async () => {

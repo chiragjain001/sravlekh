@@ -218,6 +218,30 @@ describe('DocumentsService', () => {
       prisma.attempt.findUnique.mockResolvedValueOnce({ id: 'att-1', studentProfileId: 'sp-OTHER' });
       await expect(service.getPageImageUrl('inst-1', 'doc-1', 'page-1', false, student)).rejects.toThrow(ForbiddenException);
     });
+
+    // 13-TESTING-STRATEGY.md v2 addendum: "cross-tenant document/page-image
+    // access attempts via guessed signed-URL patterns" — a real documentId
+    // that just happens to belong to another institute must 404 before any
+    // signed URL is ever minted, never leak via a ForbiddenException (which
+    // would confirm the resource exists) or a successful response.
+    it("404s (never mints a signed URL) for a documentId belonging to a different institute", async () => {
+      prisma.document.findUnique.mockResolvedValueOnce({
+        id: 'doc-1', attemptId: 'att-1', documentBundle: { assessmentDelivery: { assessment: { instituteId: 'inst-OTHER' } } },
+      });
+      await expect(service.getPageImageUrl('inst-1', 'doc-1', 'page-1', true, teacher)).rejects.toThrow(NotFoundException);
+      expect(storage.getSignedDownloadUrl).not.toHaveBeenCalled();
+    });
+
+    it("404s (never mints a signed URL) for a guessed pageId belonging to a different document", async () => {
+      prisma.document.findUnique.mockResolvedValueOnce({
+        id: 'doc-1', attemptId: 'att-1', documentBundle: { assessmentDelivery: { assessment: { instituteId: 'inst-1' } } },
+      });
+      prisma.page.findUnique.mockResolvedValueOnce({
+        id: 'page-1', documentId: 'doc-OTHER', images: [{ rawImageUrl: 'raw-key', processedImageUrl: null }],
+      });
+      await expect(service.getPageImageUrl('inst-1', 'doc-1', 'page-1', true, teacher)).rejects.toThrow(NotFoundException);
+      expect(storage.getSignedDownloadUrl).not.toHaveBeenCalled();
+    });
   });
 
   describe('reprocess', () => {
