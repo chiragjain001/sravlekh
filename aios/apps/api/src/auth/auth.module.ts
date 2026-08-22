@@ -18,7 +18,12 @@ import { UserThrottlerGuard } from '../shared/guards/user-throttler.guard';
       useFactory: (config: ConfigService) => ({
         secret: config.get<string>('JWT_SECRET'),
         signOptions: {
-          expiresIn: config.get<string>('JWT_EXPIRES_IN', '7d'),
+          // @nestjs/jwt 11's expiresIn now types against `ms`'s branded
+          // StringValue template-literal union rather than a plain string —
+          // a config-sourced value can't be narrowed to that at compile
+          // time, so this is a type-only cast; the runtime value (a
+          // ms-parseable duration string like "7d") is unchanged.
+          expiresIn: config.get<string>('JWT_EXPIRES_IN', '7d') as unknown as number,
         },
       }),
     }),

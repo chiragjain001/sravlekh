@@ -19,7 +19,9 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: configService.get<string>('JWT_SECRET'),
+      // env.schema.ts validates JWT_SECRET as a required min-32-char string
+      // at bootstrap — the app would already have failed to start otherwise.
+      secretOrKey: configService.get<string>('JWT_SECRET')!,
     });
   }
 
