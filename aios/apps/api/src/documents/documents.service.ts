@@ -211,7 +211,19 @@ export class DocumentsService {
     return this.prisma.document.findUnique({
       where: { id: document.id },
       include: {
-        pages: { orderBy: { pageNumber: 'asc' }, include: { images: { include: { regions: true } } } },
+        pages: {
+          orderBy: { pageNumber: 'asc' },
+          include: {
+            images: {
+              include: {
+                // Phase 11 (docs/33-GAP-ANALYSIS-AND-BUILD-PLAN.md): surfaces OCR
+                // transcripts alongside each region, per 05-API-SPECIFICATION.md
+                // (V2 section) §5 — "GET /documents/:id" region detail.
+                regions: { include: { ocrBlocks: { include: { results: { orderBy: { processedAt: 'desc' } } } } } },
+              },
+            },
+          },
+        },
         processingJobs: { orderBy: { stage: 'asc' } },
         identityResolution: true,
       },

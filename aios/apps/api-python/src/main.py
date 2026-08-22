@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.database import connect_db, disconnect_db
-from src.routers import ai, analytics, institutes, users
+from src.routers import ai, analytics, institutes, ocr, users
 
 
 @asynccontextmanager
@@ -34,6 +34,7 @@ app.include_router(ai.router)
 app.include_router(institutes.router)
 app.include_router(users.router)
 app.include_router(analytics.router)
+app.include_router(ocr.router)
 
 @app.get("/")
 async def root():

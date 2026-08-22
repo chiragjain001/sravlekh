@@ -1354,6 +1354,12 @@ model OCRResult {
   alternativeReadings Json?
   aiModelVersionId    String
   processedAt         DateTime  @default(now())
+  // Phase 11 (docs/33-GAP-ANALYSIS-AND-BUILD-PLAN.md) addition — 24-OCR-
+  // HANDWRITING-ARCHITECTURE.md §3.3 describes a "requires_visual_evaluation:
+  // true" flag for DIAGRAM_SKETCH/TABLE blocks (no text extraction attempted)
+  // but never defines where that flag structurally lives. A real schema gap,
+  // same class as Phase 10's IdentityStatus.CONFLICT finding.
+  requiresVisualEvaluation Boolean @default(false)
 
   ocrBlock      OCRBlock      @relation(fields: [ocrBlockId], references: [id], onDelete: Cascade)
   aiModelVersion AIModelVersion @relation(fields: [aiModelVersionId], references: [id])
