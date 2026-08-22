@@ -323,11 +323,18 @@ existing v1 engine unchanged" — investigation found no such engine exists in v
 the full finding, the resulting design, and a small additional additive schema change (`Response.attemptId`)
 needed to let v2 `Attempt`s own `Response` rows without depending on the still-deferred `Response` redefinition.
 
-**Phases 9–15 — Rubric Engine → Document Processing → OCR → Evaluation Engine [manual-only] → AI Evaluation →
-Reviewer Layer → v2 Hardening.** Unchanged from `20-IMPLEMENTATION-PLAN.md` — no existing code conflicts with
-these phases since none of that layer is built yet. The sequencing rationale in `20` (rubric before evaluation,
-document-processing before OCR, manual before AI evaluation, reviewer after AI) stands as written and should
-not be reordered.
+**Phase 9 — Rubric Engine — COMPLETE, backend and Teacher UI.** Native `POST /questions/:id/rubric`,
+`GET /questions/:id/rubric`, `GET /rubrics/:id`, `PATCH /rubrics/:id` — full versioning (`RubricVersion`
+immutable, `RubricCriterion` rows), the three scoring modes, server-side marks reconciliation
+(`422 RUBRIC_MARKS_MISMATCH`), `STEP_WISE` dependency chains, and the mid-evaluation edit lock
+(`409 RUBRIC_LOCKED_FOR_EVALUATION`) are all built and tested. A real rubric-authoring dialog was added to the
+live Question Bank screen (Teacher + Admin dashboards). See §5 "Phase 9" for a genuine API-contract ambiguity
+found and resolved (`dependsOnCriterionId` can't literally mean a persisted ID at authoring time).
+
+**Phases 10–15 — Document Processing → OCR → Evaluation Engine [manual-only] → AI Evaluation → Reviewer Layer →
+v2 Hardening.** Unchanged from `20-IMPLEMENTATION-PLAN.md` — no existing code conflicts with these phases since
+none of that layer is built yet. The sequencing rationale in `20` (document-processing before OCR, manual before
+AI evaluation, reviewer after AI) stands as written and should not be reordered.
 
 ---
 
@@ -1205,6 +1212,75 @@ the Phase 6 `PrismaService` crash and the Phase 6.5 `ioredis` hang, both of whic
 have caught on their own.
 
 `apps/web` untouched — Phase 8 is backend-only, no UI was in scope per doc 20's own phase description.
+
+### Phase 9: Rubric Engine (this session)
+
+**Goal, per `20-IMPLEMENTATION-PLAN.md`:** enable rubric authoring before evaluation depends on it — exit
+criteria was "a teacher can attach a criterion-additive rubric to a subjective question, with server-side marks
+reconciliation enforced." Unlike Phase 8, this phase's own doc text explicitly calls for a Teacher UI, not just
+a backend — both were built.
+
+**Backend — new `rubrics` module** (`apps/api/src/rubrics/`), per `05-API-SPECIFICATION.md` (V2 section) §7 /
+`26-RUBRIC-EVALUATION-SPECIFICATION.md`:
+- `POST /institutes/:instituteId/questions/:questionId/rubric` — creates `Rubric` + its first `RubricVersion` +
+  `RubricCriterion` rows in one transaction, rejects objective question types (`26` §2) with a plain `400`,
+  rejects a duplicate rubric for the same question with `409`, and enforces the three-way marks reconciliation
+  (`sum(criteria.maxMarks) === Rubric.maxMarks === Question.marks`) as `422 RUBRIC_MARKS_MISMATCH` — except for
+  `HOLISTIC_WITH_GUIDANCE`, whose bands are descriptive guidance and never sum-reconcile, per `26` §4.3.
+- `GET /institutes/:instituteId/questions/:questionId/rubric`, `GET .../rubrics/:rubricId` — added beyond the
+  doc's literal two endpoints, same as every prior phase's natural read-endpoint additions, for usability/
+  testability.
+- `PATCH /institutes/:instituteId/rubrics/:rubricId` — creates a new immutable `RubricVersion` rather than
+  mutating the live one (`26` §3.2's versioning discipline), blocked with `409 RUBRIC_LOCKED_FOR_EVALUATION`
+  while any `AssessmentDelivery` with `status=EVALUATING` has an `Attempt`/`Response` for this rubric's question
+  — a real nested-relation query (`assessmentDelivery.attempts.some.responses.some.questionId`), not a stub,
+  made possible by Phase 8's `Attempt.responses` wiring.
+
+**Real API-contract ambiguity found and resolved — `dependsOnCriterionId` can't literally be an ID at authoring
+time.** Doc 05 §7's request shape for `STEP_WISE` criteria includes `dependsOnCriterionId`, copied verbatim from
+doc 04/26's *read* model (`RubricCriterion.dependsOnCriterionId`, a real FK). But at creation time, the criteria
+in the request don't have persisted IDs yet — they're being created together, in the same call. Taking the doc
+literally would mean either rejecting every fresh `STEP_WISE` rubric outright, or asking the client to invent
+its own IDs and hope they collide correctly with what the server generates — neither is workable. Resolved by
+reinterpreting the field for authoring payloads as `dependsOnCriterionIndex`: a 0-based array position *within
+the same request*, explicitly documented as such in the DTO. The service creates all `RubricCriterion` rows in
+a first pass, then resolves each `dependsOnCriterionIndex` to the real generated ID in a second pass — self-
+reference and out-of-range indices are rejected with `400` before either pass runs. This is a genuine,
+flagged interpretation of an underspecified doc contract, not a silent deviation — the doc's *read*-side
+`dependsOnCriterionId` (on `GET`/history responses) is unchanged and still a real FK.
+
+**Frontend — Teacher UI, extending the existing (not the orphaned) Question Bank screen.** Investigated first,
+per this session's standing rule: two Question Bank UIs exist —
+[`components/dashboard/questions/QuestionBankManager.tsx`](../apps/web/src/components/dashboard/questions/QuestionBankManager.tsx)
+(mounted live on both `/dashboard/teacher` and `/dashboard/admin`) and a second,
+[`components/dashboard/admin/questions/QuestionsList.tsx`](../apps/web/src/components/dashboard/admin/questions/QuestionsList.tsx),
+reachable only via an orphaned standalone route (`/dashboard/admin/questions`) that no nav link points to. Both
+already call the real API — this isn't the mock-vs-real fork from Phases 2–6, just one live screen and one dead
+route — so the rubric UI extends the live one, per the doc's "extends Question authoring" instruction. Added:
+- `RubricEditorDialog.tsx` — new dialog, same shell/field style as the existing `QuestionFormDialog.tsx`, with a
+  scoring-mode picker, a repeatable criteria/bands list (add/remove rows, keyword hints, a `STEP_WISE`-only
+  dependency selector rendered as "Depends on #N" against the *other rows currently in the form*), and a live
+  reconciliation indicator (green/red running total vs. the question's marks) that disables Save until it
+  matches — client-side mirror of the server's own check, not a replacement for it.
+- A "Rubric" row action (📋 icon) added to `QuestionBankManager.tsx`'s action column, shown only for
+  `SHORT_ANSWER`/`LONG_ANSWER`/`PASSAGE_BASED` rows (`26` §2 — objective questions never show it).
+- `useRubric`/`useCreateRubric`/`useUpdateRubric` added to `apps/web/src/hooks/useApi.ts`, following the
+  existing `useQuestions`/`useCreateQuestion` react-query pattern exactly; `useRubric` treats a `404` (no rubric
+  yet) as `data: null` rather than an error state, since "no rubric authored yet" is the common case for a
+  freshly-added subjective question, not a failure.
+
+**Verified:** `pnpm typecheck` clean on `apps/api` (13 new rubric tests, 232/232 total, up from 219); lint
+clean (0 errors); `apps/api-python` unaffected (no schema change this phase — Rubric/RubricVersion/
+RubricCriterion tables already existed from Phase 7, only endpoints were added). Live-booted the API: all four
+rubric routes mapped, `Nest application successfully started`, `GET /institutes/inst-001/questions/q-1/rubric`
+returns a prompt `401` rather than hanging or 500ing. On the frontend: `pnpm typecheck` clean, `next build`
+clean (13/13 static pages, zero new lint warnings beyond this codebase's existing pre-Phase-9 baseline), Vitest
+suite unaffected. Live-clicked through the real dev server as a mock-login Teacher into the live Question Bank
+screen and confirmed it renders without crashing. **What was not verified, and can't be from this sandbox:**
+the Rubric icon actually appearing against a real subjective question row, or the full create/edit round-trip
+against live data — both require a real Postgres-backed API serving real questions, which this environment has
+never had at any point this session. This is the same category of honest limit flagged for every prior UI
+phase (Phases 2, 4, 5, 6), not a new one introduced here.
 
 ## 6. Definition of Done reminder
 
