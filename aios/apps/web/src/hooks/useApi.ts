@@ -212,6 +212,68 @@ export function useArchiveQuestion() {
   });
 }
 
+// ── Rubrics (26-RUBRIC-EVALUATION-SPECIFICATION.md, Phase 9) ────────────────
+
+export function useRubric(questionId?: string) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['rubric', user?.instituteId, questionId],
+    queryFn: async () => {
+      try {
+        const res = await apiClient.get(`/institutes/${user?.instituteId}/questions/${questionId}/rubric`);
+        return res.data;
+      } catch (error) {
+        // A question with no rubric yet is the common case, not an error —
+        // let the UI render "no rubric authored" instead of an error toast.
+        if (axios.isAxiosError(error) && error.response?.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: !!user?.instituteId && !!questionId,
+  });
+}
+
+export function useCreateRubric() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ questionId, ...data }: { questionId: string } & Record<string, unknown>) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/questions/${questionId}/rubric`, data);
+      return res.data;
+    },
+    onSuccess: (_result, variables) => {
+      toast.success('Rubric attached');
+      queryClient.invalidateQueries({ queryKey: ['rubric', user?.instituteId, variables.questionId] });
+      queryClient.invalidateQueries({ queryKey: ['questions', user?.instituteId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message : 'Failed to attach rubric';
+      toast.error(msg ?? 'Failed to attach rubric');
+    },
+  });
+}
+
+export function useUpdateRubric() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ rubricId, questionId, ...data }: { rubricId: string; questionId: string } & Record<string, unknown>) => {
+      const res = await apiClient.patch(`/institutes/${user?.instituteId}/rubrics/${rubricId}`, data);
+      return res.data;
+    },
+    onSuccess: (_result, variables) => {
+      toast.success('Rubric updated — a new version was created');
+      queryClient.invalidateQueries({ queryKey: ['rubric', user?.instituteId, variables.questionId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message : 'Failed to update rubric';
+      toast.error(msg ?? 'Failed to update rubric');
+    },
+  });
+}
+
 // ── Papers & Blueprints ──────────────────────────────────────────────────
 
 export function useBlueprints() {

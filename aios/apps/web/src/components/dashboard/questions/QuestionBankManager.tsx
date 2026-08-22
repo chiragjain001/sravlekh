@@ -4,7 +4,7 @@
 // dashboards. Real API from day one.
 
 import { useState } from 'react';
-import { Plus, Search, CheckCircle2, Archive, Pencil, BookOpen, Loader2 } from 'lucide-react';
+import { Plus, Search, CheckCircle2, Archive, Pencil, BookOpen, Loader2, ClipboardList } from 'lucide-react';
 import { useAuth } from '@/contexts/auth.context';
 import {
   useQuestions, useSubjects,
@@ -12,6 +12,10 @@ import {
 } from '@/hooks/useApi';
 import { SkeletonTable, EmptyState, ConfirmDialog } from '@/components/ui/foundation';
 import { QuestionFormDialog, type QuestionFormValue, type QuestionType, type DifficultyLevel, type QuestionOption } from './QuestionFormDialog';
+import { RubricEditorDialog } from './RubricEditorDialog';
+
+// 26-RUBRIC-EVALUATION-SPECIFICATION.md §2: rubrics only apply to these types — objective questions never require one.
+const RUBRIC_ELIGIBLE_TYPES: QuestionType[] = ['SHORT_ANSWER', 'LONG_ANSWER', 'PASSAGE_BASED'];
 
 interface QuestionListItem {
   id: string;
@@ -49,6 +53,7 @@ export function QuestionBankManager() {
   const [formOpen, setFormOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<QuestionListItem | null>(null);
   const [archiveTarget, setArchiveTarget] = useState<QuestionListItem | null>(null);
+  const [rubricTarget, setRubricTarget] = useState<QuestionListItem | null>(null);
 
   const { data: subjectsData } = useSubjects();
   const subjects = subjectsData ?? [];
@@ -196,6 +201,16 @@ export function QuestionBankManager() {
                       >
                         <Pencil className="w-3.5 h-3.5" />
                       </button>
+                      {RUBRIC_ELIGIBLE_TYPES.includes(q.type) && (
+                        <button
+                          onClick={() => setRubricTarget(q)}
+                          className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors"
+                          aria-label="Rubric"
+                          title="Rubric"
+                        >
+                          <ClipboardList className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                       {canApprove && !q.isApproved && (
                         <button
                           onClick={() => approveQuestion.mutate(q.id)}
@@ -269,6 +284,16 @@ export function QuestionBankManager() {
         onConfirm={confirmArchive}
         onCancel={() => setArchiveTarget(null)}
       />
+
+      {rubricTarget && (
+        <RubricEditorDialog
+          isOpen={!!rubricTarget}
+          onClose={() => setRubricTarget(null)}
+          questionId={rubricTarget.id}
+          questionMarks={rubricTarget.marks}
+          questionContent={rubricTarget.content}
+        />
+      )}
     </div>
   );
 }
