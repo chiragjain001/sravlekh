@@ -344,13 +344,26 @@ confirmation) is built for real, which is what makes the exit criteria's evidenc
 end-to-end today. See §5 "Phase 10" for the full scope reasoning, two more additive schema changes, and a subtle
 raw-image-access edge case that writing the test suite forced through to a correct, deliberate answer.
 
-**Phases 11–15 — OCR → Evaluation Engine [manual-only] → AI Evaluation → Reviewer Layer → v2 Hardening.**
-Unchanged from `20-IMPLEMENTATION-PLAN.md` — no existing code conflicts with these phases since none of that
-layer is built yet. The sequencing rationale in `20` (manual evaluation before AI, reviewer after AI) stands as
-written and should not be reordered. Phase 11 (OCR) in particular now has a concrete, real foundation to build
-on: `ProcessingJob(stage=OCR)` rows don't exist yet by design (Phase 10 deliberately scoped OCR out of its own
-`document-processing` queue, per doc 20's own phase split), so Phase 11 starts clean rather than needing to
-retrofit around partial OCR scaffolding.
+**Phase 11 — OCR / Handwriting Recognition — COMPLETE, genuinely real this time — the first phase where the
+v2 pack's AI Model Registry (`04` fix #6, built schema-only in Phase 7) actually resolves and is used, and the
+first NEW AI-calling code this session wrote (`src/ai/blueprint_agent.py` predates it and still hardcodes
+`ChatOpenAI` directly — a real, pre-existing gap noted but not retrofitted here).** Unlike Phase 10's vision-
+processing stages, OCR has a genuinely real implementation path available: `apps/api-python` already has a
+proven, working vision-capable-LLM pattern (`blueprint_agent.py`'s `ChatOpenAI`/`gpt-4o`), and multimodal image
+input is exactly what handwriting transcription needs. Built for real: `POST /ocr/extract` (FastAPI, internal-
+token gated), a `documents/pages/:pageId/image`-style signed-URL flow feeding a real `gpt-4o` vision call,
+`AIProvider`/`AIModel`/`AIModelVersion` bootstrap-on-first-use (idempotent find-or-create — no separate registry
+CRUD module built, since none existed to reuse), the `DIAGRAM_SKETCH`/`TABLE` no-extraction path per `24` §3.3,
+and a NestJS `ocr` queue/processor mirroring `mastery-recalc`'s exact structure. See §5 "Phase 11" for the
+honest limits (self-reported, not calibrated, LLM confidence; only `HANDWRITTEN_TEXT` auto-triggers today) and
+another schema gap the docs' own internal consistency was missing (`OCRResult.requiresVisualEvaluation`).
+
+**Phases 12–15 — Evaluation Engine [manual-only] → AI Evaluation → Reviewer Layer → v2 Hardening.** Unchanged
+from `20-IMPLEMENTATION-PLAN.md` — no existing code conflicts with these phases since none of that layer is
+built yet. The sequencing rationale in `20` (manual evaluation before AI, reviewer after AI) stands as written
+and should not be reordered. Phase 13 (AI Evaluation) inherits the real AI Model Registry usage pattern Phase 11
+established — `AIRecommendation` should resolve `AIModelVersion`/`PromptVersion` through the same registry, not
+hardcode a vendor call the way `blueprint_agent.py` still does.
 
 ---
 
@@ -1399,6 +1412,86 @@ documents, click confirm" (which the identity-resolution and region-authoring en
 programmatically) — building a bespoke booklet-viewer/region-drawing canvas UI ahead of that felt like a
 premature, large investment in a screen whose real shape depends on decisions (canvas library, annotation UX)
 that Phase 11's OCR integration will clarify.
+
+### Phase 11: OCR / Handwriting Recognition (this session)
+
+**Goal, per `20-IMPLEMENTATION-PLAN.md`:** extract text/math from mapped regions — exit criteria was "every
+`PAGE_REGION`-type Response has an associated OCR transcript (or an explicit `illegible_handwriting` flag),
+always paired with the source image in any read API/UI."
+
+**Why this phase is different from Phase 10, investigated before assuming it would be the same trap:** Phase
+10 drew a hard line against faking vision-processing capability because none existed anywhere in this codebase
+to build on honestly. Before repeating that reasoning here, checked what `apps/api-python` actually has —
+`src/ai/blueprint_agent.py` already makes a real, working `ChatOpenAI`/`gpt-4o` call (gated on
+`OPENAI_API_KEY`) for blueprint generation. `gpt-4o` is multimodal — reading a handwriting image and
+transcribing it is a legitimate, real use of that same already-proven integration, not a fabrication. So unlike
+Phase 10's auto-detection stages, Phase 11's core extraction step **is** genuinely buildable, and was built for
+real rather than stubbed.
+
+**What was built:**
+- `apps/api-python`: `src/ocr/handwriting_ocr.py` (real `gpt-4o` vision call per block type — `PRINTED_TEXT`/
+  `HANDWRITTEN_TEXT`/`MATHEMATICAL_EXPRESSION` prompts per `24` §4, `DIAGRAM_SKETCH`/`TABLE` short-circuit to
+  the no-extraction path per `24` §3.3 without spending an API call on work the architecture says not to do),
+  `src/ocr/ai_model_registry.py` (idempotent find-or-create bootstrap for `AIProvider`/`AIModel`/
+  `AIModelVersion` — the registry Phase 7 built but nothing had ever written to), `src/routers/ocr.py`
+  (`POST /ocr/extract`, internal-token gated exactly like the existing `/analytics/recalculate-mastery`
+  pattern, `OCRBlock` find-or-create + always-new `OCRResult` insert per `24` §6's append-only re-processing
+  discipline).
+- `apps/api`: a new `ocr` module — `OcrService`/`OcrProcessor`/`OcrController`, structurally identical to
+  `AnalyticsService`'s mastery-recalc queue/processor pattern. `POST /documents/:id/ocr` (not in doc 05's
+  literal list — same reasoning as Phase 10's extra endpoints, see below) enqueues extraction for every
+  confirmed, not-yet-transcribed `QuestionRegion` on a document. The job payload carries the storage **key**,
+  not a pre-signed URL — the processor signs it fresh at process time (600s TTL) specifically so a job sitting
+  queued for a while can never ship an already-expired URL to the FastAPI call, a correctness detail that would
+  only surface under real queue latency this sandbox can't produce but a real deployment definitely would.
+  `GET /documents/:id`'s existing `include` tree (Phase 10) was extended to surface `OCRBlock`/`OCRResult` data
+  per region, satisfying doc 05 §5's "surfaced via GET /documents/:id region detail" requirement without adding
+  a new endpoint.
+
+**A real, deliberate scope narrowing, flagged rather than silently decided:** the auto-trigger
+(`POST /documents/:id/ocr`) only ever enqueues `blockType=HANDWRITTEN_TEXT` — doc `24` §4.2's own framing as
+"the primary, highest-value... path" for exam answers. Doc §3.1 says `OCRBlock.blockType` is "classified before
+extraction," but building that classification step would itself be a vision-model call this session chose not
+to add scope for, and there is currently no way for a teacher to mark a region as a diagram/table/math-
+expression before extraction — that would mean extending Phase 10's `PageRegion` authoring DTOs with a
+block-type hint, deliberately not done here to avoid touching already-tested Phase 10 code for a Phase 11
+concern. `PRINTED_TEXT`/`MATHEMATICAL_EXPRESSION`/`DIAGRAM_SKETCH`/`TABLE` are all real, tested extraction
+paths in `apps/api-python` — only the *automatic* trigger is narrowed to the one type that matters for the
+overwhelming common case (a subjective exam answer is handwritten text). A teacher-settable block-type hint is
+a small, real, natural next increment, not built now.
+
+**Another schema gap in the docs' own internal consistency, same class as Phase 10's `IdentityStatus.CONFLICT`
+finding:** `24` §3.3 describes a `requires_visual_evaluation: true` flag for `DIAGRAM_SKETCH`/`TABLE` blocks,
+but never defines where that flag structurally lives — no schema field existed for it. Added
+`OCRResult.requiresVisualEvaluation Boolean @default(false)` (additive) rather than misusing
+`alternativeReadings` (documented specifically for "top-N alternative transcriptions," not a boolean flag) to
+carry it.
+
+**What "confidence" honestly means here, stated plainly rather than overclaimed:** `OCRExtractionResult
+.confidence` is the vision model's own self-reported confidence, elicited via a structured-output prompt
+(`PydanticOutputParser`, the same pattern `blueprint_agent.py` already established) — a real but genuinely
+imperfect signal, not a calibrated OCR/HWR confidence score in the traditional sense doc `24` §5's threshold
+table (`≥0.85` / `0.5–0.85` / `<0.5`) implicitly assumes. The threshold-*routing* behavior itself (skip AI
+evaluation below 0.5, flag `ocr_low_confidence` between 0.5–0.85) is explicitly **not** implemented in this
+phase — it operates on `AIRecommendation.flags`, a Phase 13 (AI Evaluation) concept that doesn't exist yet.
+Phase 11's job, per its own exit criteria, is to produce and store a correct `confidence` value on every
+`OCRResult`; routing decisions that read it are Phase 13's to build.
+
+**Verified:** `prisma validate`/`generate` clean for both clients; full `pnpm typecheck` clean on `apps/api`;
+267/267 tests pass (260 pre-existing + 7 new — cross-tenant rejection, the already-extracted skip, storage-key-
+not-signed-URL job payload, processed-over-raw image preference, fresh-signing at process time, and retry-on-
+failure); lint clean (0 errors). `apps/api-python`: 18/18 tests pass (7 pre-existing + 11 new — the registry's
+idempotent find-or-create, the `DIAGRAM_SKETCH`/`TABLE` short-circuit never reaching the LLM, the missing-
+`OPENAI_API_KEY` failure path, `OCRBlock` reuse vs. creation, and the extraction-failure-to-500 path); `ruff
+check` clean. **Live-verified**: booted the real NestJS API against this sandbox's always-unreachable
+Postgres/Redis, confirmed `POST /institutes/inst-001/documents/doc-001/ocr` mapped and `Nest application
+successfully started`, sent a real `fetch()` `POST` to it and confirmed a prompt `401` rather than a crash;
+separately imported `apps/api-python`'s FastAPI app directly and confirmed `POST /ocr/extract` registers among
+its 16 routes with no import-time errors.
+
+`apps/web` untouched — Phase 11 is backend-only, no UI was in scope per doc 20's own phase description (doc 24
+§5's low-confidence-underlining UX belongs to `28-DIGITAL-COPY-UX-SPECIFICATION.md`, itself downstream of the
+document-viewer UI Phase 10 already deferred).
 
 ## 6. Definition of Done reminder
 
