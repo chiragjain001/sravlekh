@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Body, Param, Query, Headers } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { EvaluationsService } from './evaluations.service';
-import { DecideEvaluationDto, QueryEvaluationWorkItemsDto } from './dto/evaluation.dto';
+import { DecideEvaluationDto, OverrideEvaluationDto, QueryEvaluationWorkItemsDto } from './dto/evaluation.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { AuthenticatedUser } from '../auth/auth.types';
@@ -46,6 +46,18 @@ export class EvaluationsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.evaluationsService.reprocess(instituteId, responseId, idempotencyKey, user);
+  }
+
+  @Post('evaluations/:responseId/override')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Reviewer override — requires the REVIEW_EVALUATION permission, not implied by role alone (21 §4.10)' })
+  override(
+    @Param('instituteId') instituteId: string,
+    @Param('responseId') responseId: string,
+    @Body() dto: OverrideEvaluationDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.evaluationsService.override(instituteId, responseId, dto, user);
   }
 
   @Get('evaluations/:responseId/history')

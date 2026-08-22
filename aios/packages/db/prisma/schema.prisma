@@ -267,11 +267,43 @@ model User {
   auditLogsAsActor   AuditLog[]       @relation("AuditActor")
   assignedDoubts     DoubtTicket[]    @relation("AssignedTeacher")
   createdNotices     Notice[]         @relation("NoticeCreator")
+  permissionGrants   UserPermissionGrant[] @relation("GrantHolder")
+  permissionGrantsIssued UserPermissionGrant[] @relation("GrantIssuer")
 
   @@unique([instituteId, email])
   @@index([email])
   @@index([instituteId, role])
   @@map("users")
+}
+
+/// Phase 14 (docs/33-GAP-ANALYSIS-AND-BUILD-PLAN.md) — 21-DOMAIN-MODEL-V2.md
+/// §4.10 sketches a full Role/Permission/Scope-as-data framework ("so that
+/// FUTURE roles... can be added as data, not new enum values"), but its own
+/// concrete schema is deferred to a 06B-AUTH-AUTHORIZATION-V2.md that does
+/// not exist in this docs pack. Rather than build that full generic
+/// framework speculatively, this is the minimal, real, additive mechanism
+/// Phase 14 actually needs: grant one named permission (optionally scoped
+/// to a batch/subject) to a specific user, without introducing a new Role
+/// entity — doc 25 §4.3 itself frames REVIEW_EVALUATION as "not necessarily
+/// a new hardcoded role, could be an ADMIN or a delegated senior TEACHER
+/// granted this permission." The 4-role enum stays authoritative for
+/// baseline access; this is a strictly additive, parallel check layered on
+/// top for capabilities the base roles don't automatically carry.
+model UserPermissionGrant {
+  id              String   @id @default(cuid())
+  userId          String
+  permission      String   // e.g. "REVIEW_EVALUATION" — string, not an enum, matching doc 21 §4.10's own "as data" framing
+  batchId         String?  // scope — null means institute-wide for this permission
+  subjectId       String?  // scope
+  grantedByUserId String
+  createdAt       DateTime @default(now())
+
+  user User @relation("GrantHolder", fields: [userId], references: [id], onDelete: Cascade)
+  grantedBy User @relation("GrantIssuer", fields: [grantedByUserId], references: [id])
+
+  @@unique([userId, permission, batchId, subjectId])
+  @@index([userId, permission])
+  @@map("user_permission_grants")
 }
 
 // ---------------------------------------------------------------------------
@@ -922,8 +954,14 @@ model Report {
   requestedByUserId String
   createdAt         DateTime     @default(now())
   completedAt       DateTime?
+  // Phase 14 addition — 31-EVALUATION-AUDIT-VERSIONING.md §4: a post-dispute
+  // score correction reissues an updated Report rather than silently
+  // replacing the original; both remain retrievable.
+  supersedesReportId String?     @unique
 
-  institute Institute @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  institute   Institute @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  supersedes  Report?   @relation("ReportSupersession", fields: [supersedesReportId], references: [id])
+  supersededBy Report?  @relation("ReportSupersession")
 
   @@index([instituteId, type])
   @@map("reports")

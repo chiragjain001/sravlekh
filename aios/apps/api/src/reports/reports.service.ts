@@ -89,6 +89,43 @@ export class ReportsService {
     return { data: reports, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
+  /**
+   * 31-EVALUATION-AUDIT-VERSIONING.md §4: a post-dispute score correction
+   * reissues an updated Report rather than silently replacing the original
+   * — both remain retrievable. Called by EvaluationsService.override() after
+   * a REVIEWER EvaluationVersion is created. Only reissues COMPLETE reports
+   * scoped to this exact student (Report.scope is a flexible JSON shape;
+   * matching narrowly on studentId is the honest, doc-example-matching case
+   * — "a Report Card correction request" — not a general re-derivation of
+   * every report format's applicability).
+   */
+  async reissueForStudent(instituteId: string, studentProfileId: string, actorId: string): Promise<void> {
+    const affected = await this.prisma.report.findMany({
+      where: {
+        instituteId,
+        status: ReportStatus.COMPLETE,
+        scope: { path: ['studentId'], equals: studentProfileId },
+        supersededBy: null, // don't re-reissue a report that's already been superseded
+      },
+    });
+
+    for (const original of affected) {
+      const reissue = await this.prisma.report.create({
+        data: {
+          instituteId,
+          type: original.type,
+          scope: original.scope as any,
+          format: original.format,
+          status: ReportStatus.QUEUED,
+          requestedByUserId: actorId,
+          supersedesReportId: original.id,
+        },
+      });
+      await this.generationQueue.add('generate', { reportId: reissue.id }, { attempts: 3, backoff: { type: 'exponential', delay: 1000 } });
+      await this.writeAudit(instituteId, actorId, AuditAction.CREATE, 'reports', reissue.id, { supersedes: original.id }, { type: original.type });
+    }
+  }
+
   // ── Private helpers ───────────────────────────────────────────────────────
 
   private async assertTeacherOwnsBatch(actor: AuthenticatedUser, batchId: string) {

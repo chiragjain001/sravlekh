@@ -11,9 +11,11 @@ import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { CacheService } from '../infrastructure/cache/cache.service';
 import { AiEvaluationService } from '../ai-evaluation/ai-evaluation.service';
+import { PermissionsService } from '../permissions/permissions.service';
+import { ReportsService } from '../reports/reports.service';
 import { AuditAction, UserRole, QuestionType, EvaluationSource, EvaluationStatus, RubricScoringMode, Prisma } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
-import { DecideEvaluationDto, EvaluationDecision, QueryEvaluationWorkItemsDto } from './dto/evaluation.dto';
+import { DecideEvaluationDto, EvaluationDecision, OverrideEvaluationDto, QueryEvaluationWorkItemsDto } from './dto/evaluation.dto';
 import { SCORE_AGGREGATION_QUEUE, ScoreAggregationJobData } from './score-aggregation.constants';
 
 const REPROCESS_IDEMPOTENCY_TTL_SECONDS = 60 * 60;
@@ -39,6 +41,8 @@ export class EvaluationsService {
     private readonly prisma: PrismaService,
     private readonly cache: CacheService,
     private readonly aiEvaluationService: AiEvaluationService,
+    private readonly permissionsService: PermissionsService,
+    private readonly reportsService: ReportsService,
     @InjectQueue(SCORE_AGGREGATION_QUEUE) private readonly scoreAggregationQueue: Queue<ScoreAggregationJobData>,
   ) {}
 
@@ -73,12 +77,8 @@ export class EvaluationsService {
     const previousVersion = response.evaluation?.currentVersion ?? null;
     const evaluation = response.evaluation ?? (await this.prisma.evaluation.create({ data: { responseId } }));
 
-    const rubric = response.question.rubric;
-    const currentRubricVersion = rubric?.versions[0];
-    const usesCriteria = !!currentRubricVersion && RUBRIC_ADDITIVE_MODES.includes(rubric!.scoringMode);
-
     let marksAwarded: number;
-    let criterionScoresData: Prisma.EvaluationCriterionScoreCreateWithoutEvaluationVersionInput[] = [];
+    let criterionScoresData: Prisma.EvaluationCriterionScoreCreateWithoutEvaluationVersionInput[];
 
     if (dto.decision === EvaluationDecision.ACCEPT_AI) {
       if (!previousVersion || previousVersion.source !== EvaluationSource.AI) {
@@ -90,47 +90,8 @@ export class EvaluationsService {
         marksAwarded: c.marksAwarded,
         note: c.note,
       }));
-    } else if (usesCriteria) {
-      if (!dto.criterionScores || dto.criterionScores.length === 0) {
-        throw new BadRequestException('criterionScores is required for a rubric-scored (CRITERION_ADDITIVE/STEP_WISE) response.');
-      }
-      const criteriaById = new Map(currentRubricVersion!.criteria.map((c) => [c.id, c]));
-      let sum = 0;
-      for (const cs of dto.criterionScores) {
-        const criterion = criteriaById.get(cs.rubricCriterionId);
-        if (!criterion) throw new BadRequestException(`Criterion ${cs.rubricCriterionId} does not belong to this question's current rubric version.`);
-        if (cs.marksAwarded < 0 || cs.marksAwarded > criterion.maxMarks) {
-          throw new BadRequestException(`Criterion "${criterion.description}" allows 0–${criterion.maxMarks} marks; got ${cs.marksAwarded}.`);
-        }
-        // 26 §4.2: STEP_WISE — a criterion can't be awarded marks if its
-        // dependency scored zero, unless the override is explicitly documented.
-        if (rubric!.scoringMode === RubricScoringMode.STEP_WISE && criterion.dependsOnCriterionId && cs.marksAwarded > 0) {
-          const dependencyScore = dto.criterionScores.find((d) => d.rubricCriterionId === criterion.dependsOnCriterionId);
-          if ((dependencyScore?.marksAwarded ?? 0) === 0 && !dto.teacherComment) {
-            throw new BadRequestException(
-              `Criterion "${criterion.description}" depends on a criterion that scored 0 — award marks here only with a documented override (teacherComment).`,
-            );
-          }
-        }
-        sum += cs.marksAwarded;
-      }
-      marksAwarded = Math.min(sum, rubric!.maxMarks);
-      criterionScoresData = dto.criterionScores.map((cs) => ({
-        rubricCriterion: { connect: { id: cs.rubricCriterionId } },
-        marksAwarded: cs.marksAwarded,
-        note: cs.note,
-      }));
     } else {
-      if (dto.criterionScores?.length) {
-        throw new BadRequestException('This response has no additive rubric — criterionScores is not applicable; provide marksAwarded directly.');
-      }
-      if (dto.marksAwarded === undefined) {
-        throw new BadRequestException('marksAwarded is required.');
-      }
-      if (dto.marksAwarded > response.marksAvailable) {
-        throw new BadRequestException(`marksAwarded (${dto.marksAwarded}) exceeds this response's available marks (${response.marksAvailable}).`);
-      }
-      marksAwarded = dto.marksAwarded;
+      ({ marksAwarded, criterionScoresData } = this.resolveMarksAndCriteria(response, dto));
     }
 
     const newVersion = await this.prisma.evaluationVersion.create({
@@ -156,6 +117,121 @@ export class EvaluationsService {
     await this.scoreAggregationQueue.add('recalculate', { attemptId: response.attemptId! }, { attempts: 3, backoff: { type: 'exponential', delay: 1000 } });
 
     return newVersion;
+  }
+
+  /**
+   * 05-API-SPECIFICATION.md (V2 section) §8 / 25 §4.3 / 31 §4: a second-pass,
+   * higher-authority correction. Requires the REVIEW_EVALUATION permission
+   * (never implied by ADMIN alone — 21 §4.10), a mandatory disputeReason, and
+   * — if the delivery is LOCKED — an unlock must already have happened
+   * (mirrors v1's exam-unlock discipline). Triggers the same score-
+   * aggregation as decide(), plus a Report reissue for the affected student.
+   */
+  async override(instituteId: string, responseId: string, dto: OverrideEvaluationDto, actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
+
+    const response = await this.getEvaluableResponse(instituteId, responseId);
+
+    if (actor.role !== UserRole.FOUNDER) {
+      const hasPermission = await this.permissionsService.hasPermission(actor.id, 'REVIEW_EVALUATION', {
+        batchId: response.attempt!.assessmentDelivery.batchId,
+        subjectId: response.question.subjectId,
+      });
+      if (!hasPermission) {
+        throw new ForbiddenException('Overriding an evaluation requires the REVIEW_EVALUATION permission.');
+      }
+    }
+
+    if (response.attempt!.assessmentDelivery.status === 'LOCKED') {
+      throw new ConflictException({
+        code: 'EVALUATION_LOCKED',
+        message: 'This delivery is locked — unlock it first before overriding an evaluation.',
+      });
+    }
+
+    const previousVersion = response.evaluation?.currentVersion ?? null;
+    const evaluation = response.evaluation ?? (await this.prisma.evaluation.create({ data: { responseId } }));
+    const { marksAwarded, criterionScoresData } = this.resolveMarksAndCriteria(response, dto);
+
+    const newVersion = await this.prisma.evaluationVersion.create({
+      data: {
+        evaluationId: evaluation.id,
+        previousVersionId: previousVersion?.id,
+        source: EvaluationSource.REVIEWER,
+        authorUserId: actor.id,
+        marksAwarded,
+        mistakeTagType: dto.mistakeTagType,
+        teacherComment: dto.teacherComment,
+        disputeReason: dto.disputeReason,
+        criterionScores: criterionScoresData.length ? { create: criterionScoresData } : undefined,
+      },
+      include: { criterionScores: true },
+    });
+
+    await this.prisma.evaluation.update({
+      where: { id: evaluation.id },
+      data: { currentEvaluationVersionId: newVersion.id, status: EvaluationStatus.REVIEWER_FINALIZED },
+    });
+
+    await this.writeAudit(instituteId, actor.id, responseId, { action: 'override', marksAwarded, disputeReason: dto.disputeReason });
+    await this.scoreAggregationQueue.add('recalculate', { attemptId: response.attemptId! }, { attempts: 3, backoff: { type: 'exponential', delay: 1000 } });
+    await this.reportsService.reissueForStudent(instituteId, response.attempt!.studentProfileId, actor.id);
+
+    return newVersion;
+  }
+
+  /** Shared by decide() (ADJUST/REJECT_RESCORE) and override() — the criteria-required-vs-holistic branching and validation is identical for both. */
+  private resolveMarksAndCriteria(
+    response: Awaited<ReturnType<EvaluationsService['getEvaluableResponse']>>,
+    dto: { marksAwarded?: number; criterionScores?: { rubricCriterionId: string; marksAwarded: number; note?: string }[]; teacherComment?: string },
+  ): { marksAwarded: number; criterionScoresData: Prisma.EvaluationCriterionScoreCreateWithoutEvaluationVersionInput[] } {
+    const rubric = response.question.rubric;
+    const currentRubricVersion = rubric?.versions[0];
+    const usesCriteria = !!currentRubricVersion && RUBRIC_ADDITIVE_MODES.includes(rubric!.scoringMode);
+
+    if (usesCriteria) {
+      if (!dto.criterionScores || dto.criterionScores.length === 0) {
+        throw new BadRequestException('criterionScores is required for a rubric-scored (CRITERION_ADDITIVE/STEP_WISE) response.');
+      }
+      const criteriaById = new Map(currentRubricVersion!.criteria.map((c) => [c.id, c]));
+      let sum = 0;
+      for (const cs of dto.criterionScores) {
+        const criterion = criteriaById.get(cs.rubricCriterionId);
+        if (!criterion) throw new BadRequestException(`Criterion ${cs.rubricCriterionId} does not belong to this question's current rubric version.`);
+        if (cs.marksAwarded < 0 || cs.marksAwarded > criterion.maxMarks) {
+          throw new BadRequestException(`Criterion "${criterion.description}" allows 0–${criterion.maxMarks} marks; got ${cs.marksAwarded}.`);
+        }
+        // 26 §4.2: STEP_WISE — a criterion can't be awarded marks if its
+        // dependency scored zero, unless the override is explicitly documented.
+        if (rubric!.scoringMode === RubricScoringMode.STEP_WISE && criterion.dependsOnCriterionId && cs.marksAwarded > 0) {
+          const dependencyScore = dto.criterionScores.find((d) => d.rubricCriterionId === criterion.dependsOnCriterionId);
+          if ((dependencyScore?.marksAwarded ?? 0) === 0 && !dto.teacherComment) {
+            throw new BadRequestException(
+              `Criterion "${criterion.description}" depends on a criterion that scored 0 — award marks here only with a documented override (teacherComment).`,
+            );
+          }
+        }
+        sum += cs.marksAwarded;
+      }
+      const marksAwarded = Math.min(sum, rubric!.maxMarks);
+      const criterionScoresData = dto.criterionScores.map((cs) => ({
+        rubricCriterion: { connect: { id: cs.rubricCriterionId } },
+        marksAwarded: cs.marksAwarded,
+        note: cs.note,
+      }));
+      return { marksAwarded, criterionScoresData };
+    }
+
+    if (dto.criterionScores?.length) {
+      throw new BadRequestException('This response has no additive rubric — criterionScores is not applicable; provide marksAwarded directly.');
+    }
+    if (dto.marksAwarded === undefined) {
+      throw new BadRequestException('marksAwarded is required.');
+    }
+    if (dto.marksAwarded > response.marksAvailable) {
+      throw new BadRequestException(`marksAwarded (${dto.marksAwarded}) exceeds this response's available marks (${response.marksAvailable}).`);
+    }
+    return { marksAwarded: dto.marksAwarded, criterionScoresData: [] };
   }
 
   async getHistory(instituteId: string, responseId: string, actor: AuthenticatedUser) {

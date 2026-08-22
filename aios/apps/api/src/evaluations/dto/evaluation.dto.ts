@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsEnum, IsNumber, IsArray, ValidateNested, Min, IsInt } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsEnum, IsNumber, IsArray, ValidateNested, Min, IsInt, MinLength } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { MistakeTagType } from '@prisma/client';
@@ -53,6 +53,36 @@ export class DecideEvaluationDto {
   @IsOptional()
   @IsString()
   teacherComment?: string;
+}
+
+export class OverrideEvaluationDto {
+  @ApiPropertyOptional({ description: 'Required for a holistic (no rubric, or HOLISTIC_WITH_GUIDANCE) response' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  marksAwarded?: number;
+
+  @ApiPropertyOptional({ type: [CriterionScoreDto], description: 'Required for a CRITERION_ADDITIVE/STEP_WISE rubric response — total is always derived from these' })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CriterionScoreDto)
+  criterionScores?: CriterionScoreDto[];
+
+  @ApiPropertyOptional({ enum: MistakeTagType })
+  @IsOptional()
+  @IsEnum(MistakeTagType)
+  mistakeTagType?: MistakeTagType;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  teacherComment?: string;
+
+  @ApiProperty({ description: '31-EVALUATION-AUDIT-VERSIONING.md §4: mandatory — a reviewer override is never a silent edit' })
+  @IsString()
+  @MinLength(10)
+  disputeReason!: string;
 }
 
 export class QueryEvaluationWorkItemsDto {

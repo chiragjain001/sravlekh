@@ -8,6 +8,8 @@ import { SCORE_AGGREGATION_QUEUE } from './score-aggregation.constants';
 import { PrismaService } from '../prisma/prisma.service';
 import { CacheService } from '../infrastructure/cache/cache.service';
 import { AiEvaluationService } from '../ai-evaluation/ai-evaluation.service';
+import { PermissionsService } from '../permissions/permissions.service';
+import { ReportsService } from '../reports/reports.service';
 import { AuthenticatedUser } from '../auth/auth.types';
 
 describe('EvaluationsService', () => {
@@ -21,9 +23,12 @@ describe('EvaluationsService', () => {
   let queue: { add: jest.Mock };
   let cache: { get: jest.Mock; set: jest.Mock };
   let aiEvaluationService: { enqueueSingle: jest.Mock };
+  let permissionsService: { hasPermission: jest.Mock };
+  let reportsService: { reissueForStudent: jest.Mock };
 
   const teacher: AuthenticatedUser = { id: 'teacher-1', email: 't@x.com', name: 'T', role: UserRole.TEACHER, instituteId: 'inst-1' };
   const otherTeacher: AuthenticatedUser = { ...teacher, id: 'teacher-2', instituteId: 'inst-2' };
+  const founder: AuthenticatedUser = { ...teacher, id: 'founder-1', role: UserRole.FOUNDER };
 
   beforeEach(async () => {
     prisma = {
@@ -35,6 +40,8 @@ describe('EvaluationsService', () => {
     queue = { add: jest.fn().mockResolvedValue({}) };
     cache = { get: jest.fn().mockResolvedValue(undefined), set: jest.fn().mockResolvedValue(undefined) };
     aiEvaluationService = { enqueueSingle: jest.fn().mockResolvedValue(undefined) };
+    permissionsService = { hasPermission: jest.fn().mockResolvedValue(false) };
+    reportsService = { reissueForStudent: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -42,6 +49,8 @@ describe('EvaluationsService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: CacheService, useValue: cache },
         { provide: AiEvaluationService, useValue: aiEvaluationService },
+        { provide: PermissionsService, useValue: permissionsService },
+        { provide: ReportsService, useValue: reportsService },
         { provide: getQueueToken(SCORE_AGGREGATION_QUEUE), useValue: queue },
       ],
     }).compile();
@@ -52,8 +61,8 @@ describe('EvaluationsService', () => {
     id: 'resp-1',
     attemptId: 'att-1',
     marksAvailable: 5,
-    attempt: { assessmentDelivery: { assessment: { instituteId: 'inst-1' } } },
-    question: { type: QuestionType.SHORT_ANSWER, rubric: null },
+    attempt: { studentProfileId: 'sp-1', assessmentDelivery: { batchId: 'batch-1', status: 'EVALUATING', assessment: { instituteId: 'inst-1' } } },
+    question: { type: QuestionType.SHORT_ANSWER, rubric: null, subjectId: 'sub-1' },
     evaluation: null,
   };
 
@@ -283,6 +292,68 @@ describe('EvaluationsService', () => {
       prisma.response.findUnique.mockResolvedValueOnce({ ...baseResponse, question: { type: 'MCQ', rubric: null } });
       await expect(service.reprocess('inst-1', 'resp-1', 'key-1', teacher)).rejects.toThrow(BadRequestException);
       expect(aiEvaluationService.enqueueSingle).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('override — REVIEW_EVALUATION permission gate (25 §4.3 / 21 §4.10)', () => {
+    it('rejects a TEACHER without the REVIEW_EVALUATION grant', async () => {
+      prisma.response.findUnique.mockResolvedValueOnce(baseResponse);
+      permissionsService.hasPermission.mockResolvedValueOnce(false);
+
+      await expect(
+        service.override('inst-1', 'resp-1', { marksAwarded: 3, disputeReason: 'Student appealed the mark' }, teacher),
+      ).rejects.toThrow(ForbiddenException);
+      expect(permissionsService.hasPermission).toHaveBeenCalledWith('teacher-1', 'REVIEW_EVALUATION', { batchId: 'batch-1', subjectId: 'sub-1' });
+    });
+
+    it('allows a TEACHER holding the REVIEW_EVALUATION grant', async () => {
+      prisma.response.findUnique.mockResolvedValueOnce(baseResponse);
+      permissionsService.hasPermission.mockResolvedValueOnce(true);
+      prisma.evaluation.create.mockResolvedValueOnce({ id: 'eval-1' });
+      prisma.evaluationVersion.create.mockResolvedValueOnce({ id: 'ev-reviewer-1', marksAwarded: 3 });
+
+      await expect(
+        service.override('inst-1', 'resp-1', { marksAwarded: 3, disputeReason: 'Student appealed the mark' }, teacher),
+      ).resolves.toBeDefined();
+    });
+
+    it('never checks the grant for a FOUNDER — always allowed', async () => {
+      prisma.response.findUnique.mockResolvedValueOnce(baseResponse);
+      prisma.evaluation.create.mockResolvedValueOnce({ id: 'eval-1' });
+      prisma.evaluationVersion.create.mockResolvedValueOnce({ id: 'ev-reviewer-1', marksAwarded: 3 });
+
+      await service.override('inst-1', 'resp-1', { marksAwarded: 3, disputeReason: 'Student appealed the mark' }, founder);
+
+      expect(permissionsService.hasPermission).not.toHaveBeenCalled();
+    });
+
+    it('rejects overriding a LOCKED delivery (must unlock first)', async () => {
+      prisma.response.findUnique.mockResolvedValueOnce({
+        ...baseResponse,
+        attempt: { ...baseResponse.attempt, assessmentDelivery: { ...baseResponse.attempt.assessmentDelivery, status: 'LOCKED' } },
+      });
+      permissionsService.hasPermission.mockResolvedValueOnce(true);
+
+      await expect(
+        service.override('inst-1', 'resp-1', { marksAwarded: 3, disputeReason: 'Student appealed the mark' }, teacher),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('creates a REVIEWER_FINALIZED EvaluationVersion with the dispute reason, and triggers report reissue', async () => {
+      prisma.response.findUnique.mockResolvedValueOnce(baseResponse);
+      permissionsService.hasPermission.mockResolvedValueOnce(true);
+      prisma.evaluation.create.mockResolvedValueOnce({ id: 'eval-1' });
+      prisma.evaluationVersion.create.mockResolvedValueOnce({ id: 'ev-reviewer-1', marksAwarded: 4 });
+
+      await service.override('inst-1', 'resp-1', { marksAwarded: 4, disputeReason: 'Re-graded per moderation policy' }, teacher);
+
+      expect(prisma.evaluationVersion.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ source: EvaluationSource.REVIEWER, disputeReason: 'Re-graded per moderation policy' }) }),
+      );
+      expect(prisma.evaluation.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: EvaluationStatus.REVIEWER_FINALIZED }) }),
+      );
+      expect(reportsService.reissueForStudent).toHaveBeenCalledWith('inst-1', 'sp-1', 'teacher-1');
     });
   });
 

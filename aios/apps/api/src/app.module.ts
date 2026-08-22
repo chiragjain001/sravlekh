@@ -31,6 +31,7 @@ import { DocumentsModule } from './documents/documents.module';
 import { IdentityResolutionModule } from './identity-resolution/identity-resolution.module';
 import { OcrModule } from './ocr/ocr.module';
 import { EvaluationsModule } from './evaluations/evaluations.module';
+import { PermissionsModule } from './permissions/permissions.module';
 import { QueueModule } from './infrastructure/queue/queue.module';
 import { StorageModule } from './infrastructure/storage/storage.module';
 import { CacheModule } from './infrastructure/cache/cache.module';
@@ -92,6 +93,7 @@ import { RequestLoggingInterceptor } from './shared/interceptors/request-logging
     IdentityResolutionModule,
     OcrModule,
     EvaluationsModule,
+    PermissionsModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

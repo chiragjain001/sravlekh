@@ -10,7 +10,7 @@ import { AuthenticatedUser } from '../auth/auth.types';
 describe('ReportsService', () => {
   let service: ReportsService;
   let prisma: {
-    report: { create: jest.Mock; findUnique: jest.Mock };
+    report: { create: jest.Mock; findUnique: jest.Mock; findMany: jest.Mock };
     teacherProfile: { findUnique: jest.Mock };
     batchTeacher: { findFirst: jest.Mock };
     auditLog: { create: jest.Mock };
@@ -23,7 +23,7 @@ describe('ReportsService', () => {
 
   beforeEach(async () => {
     prisma = {
-      report: { create: jest.fn(), findUnique: jest.fn() },
+      report: { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn() },
       teacherProfile: { findUnique: jest.fn() },
       batchTeacher: { findFirst: jest.fn() },
       auditLog: { create: jest.fn() },
@@ -66,6 +66,44 @@ describe('ReportsService', () => {
       );
       expect(queue.add).toHaveBeenCalledWith('generate', { reportId: 'report-1' }, expect.any(Object));
       expect(result.status).toBe(ReportStatus.QUEUED);
+    });
+  });
+
+  describe('reissueForStudent — 31-EVALUATION-AUDIT-VERSIONING.md §4', () => {
+    it('does nothing when no COMPLETE report covers this student', async () => {
+      prisma.report.findMany.mockResolvedValueOnce([]);
+      await service.reissueForStudent('inst-1', 'sp-1', 'admin-1');
+      expect(prisma.report.create).not.toHaveBeenCalled();
+      expect(queue.add).not.toHaveBeenCalled();
+    });
+
+    it('creates a superseding QUEUED report and enqueues regeneration for each affected report', async () => {
+      prisma.report.findMany.mockResolvedValueOnce([
+        { id: 'report-old-1', type: ReportType.REPORT_CARD, scope: { studentId: 'sp-1' }, format: 'PDF' },
+      ]);
+      prisma.report.create.mockResolvedValueOnce({ id: 'report-new-1' });
+
+      await service.reissueForStudent('inst-1', 'sp-1', 'admin-1');
+
+      expect(prisma.report.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: ReportStatus.QUEUED, supersedesReportId: 'report-old-1' }) }),
+      );
+      expect(queue.add).toHaveBeenCalledWith('generate', { reportId: 'report-new-1' }, expect.any(Object));
+    });
+
+    it('only queries reports scoped to this exact student, not already superseded', async () => {
+      prisma.report.findMany.mockResolvedValueOnce([]);
+      await service.reissueForStudent('inst-1', 'sp-1', 'admin-1');
+      expect(prisma.report.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            instituteId: 'inst-1',
+            status: ReportStatus.COMPLETE,
+            scope: { path: ['studentId'], equals: 'sp-1' },
+            supersededBy: null,
+          }),
+        }),
+      );
     });
   });
 
