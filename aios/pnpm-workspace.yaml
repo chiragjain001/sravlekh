@@ -33,4 +33,8 @@ allowBuilds:
   esbuild: true
   msgpackr-extract: true
   prisma: true
+  # Next.js 15's native image-optimization backend for next/image — a
+  # legitimate, functional native binary (not telemetry), needed since this
+  # app configures images.remotePatterns.
+  sharp: true
   unrs-resolver: true
