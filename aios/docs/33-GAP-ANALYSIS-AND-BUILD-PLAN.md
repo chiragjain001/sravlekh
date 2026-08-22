@@ -369,13 +369,28 @@ real one backed by `GET /evaluation-work-items`, deliberately scoped to the queu
 28 §2's full split-pane source-image/OCR-transcript viewer — see §5 "Phase 12" for the reasoning, matching
 Phase 10's same deferral logic for the document-viewer UI.
 
-**Phases 13–15 — AI Evaluation → Reviewer Layer → v2 Hardening.** Unchanged from `20-IMPLEMENTATION-PLAN.md` —
-no existing code conflicts with these phases since none of that layer is built yet. The sequencing rationale in
-`20` (manual evaluation before AI, reviewer after AI) stands as written and should not be reordered. Phase 13
-inherits the real AI Model Registry usage pattern Phase 11 established — `AIRecommendation` should resolve
-`AIModelVersion`/`PromptVersion` through the same registry, not hardcode a vendor call the way
-`blueprint_agent.py` still does — and now also has a real, tested `EvaluationVersion` chain
-(`source=TEACHER` rows exist) to chain an `AI`-sourced version in front of.
+**Phase 13 — AI Evaluation — COMPLETE, governance gate implemented and tested first as doc 20 explicitly
+requires.** The `SCHOOL_EXAM_LOCK_BLOCKED_UNEVALUATED` gate (`32` §2 / `27` §7, fix #3 — keys off
+`stakesLevel`, never `assessmentKind`) was built and adversarially tested — including a parametrized test
+across all five `AssessmentKind` values proving the block is invariant to kind — **before** any AI-evaluation
+code existed, so its correctness never depended on the AI feature being present. `apps/api-python` gained a
+real `evaluation/ai_evaluator.py` (the same proven `ChatOpenAI` pattern, now genuinely resolving through the AI
+Model Registry — the first evaluation-domain code this session wrote that does, per `27` §8a's own requirement;
+`blueprint_agent.py` still doesn't, a real pre-existing gap left as-is). `apps/api` gained an `ai-evaluation`
+queue mirroring the established mastery-recalc/ocr/score-aggregation structure, a real
+`POST /evaluations/:id/reprocess` (Idempotency-Key required), an automatic batch trigger when a delivery enters
+`EVALUATING` (`25` §4.1), and `GET /evaluation-work-items`'s `aiFlag` filter — left honestly stubbed-empty in
+Phase 12 — is now real. The Teacher UI's `EvaluationDecisionDialog` (Phase 12) gained the AI suggestion panel
+doc 28 §2 calls for, with a real, distinct Accept action per `25` §4.2. See §5 "Phase 13" for the full detail,
+including a real (not fabricated) doc-vs-schema gap fixed (`EvaluationVersion.aiRecommendation` had no relation
+since Phase 7) and the deliberate deviation from doc 05 §10's literal internal-contract shape.
+
+**Phases 14–15 — Reviewer Layer → v2 Hardening.** Unchanged from `20-IMPLEMENTATION-PLAN.md` — no existing code
+conflicts with these phases since neither is built yet. Phase 14 (Reviewer Layer) now has a real
+`EvaluationVersion` chain with both `TEACHER`- and `AI`-sourced versions to review/override, and the
+`REVIEW_EVALUATION` permission model it introduces is the first place this session builds anything beyond the
+four hardcoded `UserRole` values — worth scoping deliberately when that phase starts, not assumed to be a small
+addition.
 
 ---
 
@@ -1581,6 +1596,112 @@ frontend: `pnpm typecheck` clean, `next build` clean (13/13 pages, zero new lint
 unaffected, and a live click-through as a mock-login Teacher into the real (now-live-mounted) Evaluation Queue
 tab confirmed it renders its graceful error state — not a crash — against this sandbox's unreachable backend,
 the same verification depth every prior UI phase this session has been honest about being limited to.
+
+### Phase 13: AI Evaluation (this session)
+
+**Goal, per `20-IMPLEMENTATION-PLAN.md`:** add the AI first-pass layer on top of the now-proven manual
+evaluation engine — exit criteria was "AI recommendations appear in the evaluation queue, teachers can accept/
+adjust/reject, full AI→Teacher version chain is correct and queryable, and the governance gate is verified
+un-bypassable by an explicit adversarial test."
+
+**The governance gate — built and tested first, exactly as doc 20 instructs, before any AI-evaluation code
+existed.** Extended `AssessmentsService.updateDeliveryStatus()` (Phase 8): a `LOCKED` transition on a
+`stakesLevel=GRADED` assessment now checks every subjective `Response` under the delivery has a human
+(`TEACHER`+) current `EvaluationVersion` — `409 SCHOOL_EXAM_LOCK_BLOCKED_UNEVALUATED` otherwise. Five adversarial
+tests, per `32` §9's own acceptance criterion: blocks with unevaluated responses present, allows once all are
+evaluated, does **not** gate a non-`GRADED` delivery at all (even with unevaluated responses present — proving
+the check is skipped entirely, not just passed), and — the specific adversarial case doc 32 names —
+**blocks identically across all five `AssessmentKind` values**, proving the gate truly reads only
+`stakesLevel` and never `assessmentKind` (fix #3). This landed as its own commit-worthy unit before a single
+line of `ai_evaluator.py` was written, so its correctness is independent of the AI feature working at all —
+exactly the point of a "governance gate," not a UI nicety.
+
+**`apps/api-python`: `evaluation/ai_evaluator.py` — the first evaluation-domain code this session wrote that
+actually satisfies `27` §8a's "no hardcoded vendor SDK call" requirement.** Reuses the same proven `ChatOpenAI`
+pattern as `blueprint_agent.py`/`handwriting_ocr.py`, but resolves `AIProvider`→`AIModel(purpose=EVALUATION)`→
+`AIModelVersion` + `PromptVersion` through the registry (idempotent bootstrap, mirroring OCR's — kept as a
+**separate** module, not shared code, so a change to one purpose's registry rows can't accidentally affect the
+other's). Real, honest behavior throughout:
+- Skips cleanly (no `AIRecommendation` written, `Evaluation.status` untouched) when the question has no
+  reference answer (`question.solution` — doc 27 §3 calls this `Question.solutionExplanation`, another
+  doc-vs-schema naming mismatch, same class as `Response.digitalValue` vs. the actual `studentAnswer` field —
+  both flagged, neither renamed, since the working field already serves the purpose) or when `PAGE_REGION`
+  evidence has no usable OCR transcript yet (`illegible_handwriting`).
+- Computes real flags: `low_confidence` (the model's own self-reported confidence — an honest, imperfect
+  signal, the same caveat already documented for OCR — not a calibrated metric), `ocr_low_confidence` (genuinely
+  reusing the stored `OCRResult.confidence`), `off_topic_suspected` (model self-report), and
+  `answer_exceeds_expected_length` (a real, simple length-ratio heuristic).
+- `CRITERION_ADDITIVE`/`STEP_WISE` responses get real `EvaluationCriterionScore` rows; the total is capped at
+  `Response.marksAvailable` server-side, mirroring `26` §4.1's rule.
+- `evaluate_delivery_batch()` (backing `POST /evaluation/ai-evaluate-batch`) processes a delivery's pending
+  subjective responses with bounded concurrency (`asyncio.Semaphore(5)`) and per-item failure isolation — one
+  response's exception never aborts the rest, mirroring `mastery_engine.py`'s per-topic isolation discipline.
+
+**A deliberate deviation from doc 05 §10's literal internal-contract shape, flagged rather than silently
+changed:** the doc specifies `POST /evaluation/ai-evaluate` receiving `{ instituteId, responseId, questionId,
+rubricVersionId?, referenceAnswer, studentAnswerText }` — the caller pre-fetching context. Built instead as
+`{ instituteId, responseId, requestedByUserId }`, with Python resolving everything else itself, matching the
+OCR precedent (Phase 11) of Python owning its own DB reads rather than NestJS duplicating fetch logic it would
+otherwise need to build and keep in sync.
+
+**A real doc-vs-schema gap fixed, same class as Phase 10's `IdentityStatus.CONFLICT` and Phase 11's
+`OCRResult.requiresVisualEvaluation` findings:** `EvaluationVersion.aiRecommendationId` has existed as a bare,
+unrelated string column since Phase 7 — nothing ever gave it a real `@relation` to `AIRecommendation`. Phase 13
+needed a genuine join (to read `.flags` for `GET /evaluation-work-items`'s `aiFlag` filter), so added
+`EvaluationVersion.aiRecommendation` (+ `AIRecommendation.evaluationVersions` back-relation) — additive,
+caught by trying to actually use the FK the schema had only pretended to have.
+
+**`apps/api`: a new `ai-evaluation` module**, structurally identical to `AnalyticsService`'s mastery-recalc
+queue/processor — `AiEvaluationService.enqueueSingle`/`enqueueBatch`, one queue carrying two job types (`single`/
+`batch`) distinguished at the processor level. `POST /evaluations/:id/reprocess` (Idempotency-Key required,
+same `CacheService`-backed check-and-cache-result pattern as Phase 10's document upload) enqueues a single-
+response job. `AssessmentsService.updateDeliveryStatus()` — already being touched this phase for the governance
+gate — additionally enqueues a **batch** job when a delivery enters `EVALUATING`, per `25` §4.1's "system-
+triggered... when AssessmentDelivery enters EVALUATING, mirroring v1's timing." `GET /evaluation-work-items`'s
+`aiFlag` filter, left honestly empty in Phase 12 ("no such data exists until Phase 13"), now does a real query:
+narrows eligibility to `AI_SUGGESTED` responses whose current version's `AIRecommendation.flags` array contains
+the requested flag. **Not implemented**: doc 25 §7's full priority ordering (AI-flagged-low-confidence sorted
+first) — still oldest-submitted-first only; a real, bounded future refinement, not attempted here to avoid a
+complex computed sort.
+
+**A known, documented limitation, not silently accepted:** `requestBatchEvaluation`'s HTTP call to
+`/evaluation/ai-evaluate-batch` is held open for the full batch duration (up to `27` §9's own ~15-minute p95
+target for 200 responses), rather than Python enqueueing its own internal work and returning immediately. A
+long-held synchronous HTTP call inside a BullMQ job works, but a webhook/polling-based design would be more
+robust at real production scale — flagged as a real, deliberate simplification rather than an oversight, since
+this sandbox has no way to exercise it at that scale to justify the extra complexity now.
+
+**Teacher UI — `EvaluationDecisionDialog` (Phase 12) gains the AI suggestion panel doc 28 §2 calls for.** When
+a response's evaluation is `AI_SUGGESTED`, shows the suggested marks, confidence, and flags — visually distinct
+(violet panel, not blended into the manual form) — with a real "Accept AI Score" action that submits
+`decision: ACCEPT_AI` as its own genuine, distinct `EvaluationVersion` (never a UI-only no-op, per `25` §4.2's
+explicit requirement), and an "Adjust & Submit" path pre-filled from the AI's numbers rather than starting from
+zero. `TeacherEvaluationQueue`'s list rows show an "AI suggested" badge for items awaiting review. Still not
+built: the source-image/OCR-transcript viewer (doc 28 §2's left pane) — same deferral as Phase 10/12, for the
+same reason.
+
+**Verified:** `prisma validate`/`generate` clean for both clients; full `pnpm typecheck` clean on `apps/api`;
+306/306 tests pass (290 pre-existing + 16 new — the 5 adversarial governance-gate tests, the `EVALUATING`→batch-
+enqueue trigger and its negative case, 4 `reprocess` tests, the real `aiFlag` filter test replacing Phase 12's
+stub, and 5 `AiEvaluationService` tests); lint clean (0 errors, only pre-existing-style `any` warnings).
+`apps/api-python`: 28/28 tests pass (18 pre-existing + 10 new — the evaluation registry's idempotent find-or-
+create including prompt-version reuse, the `no_reference_answer`/`illegible_handwriting` skip paths, a
+successful holistic evaluation end-to-end, `low_confidence`/`ocr_low_confidence` flag computation, criterion-
+score persistence with the marks-available cap, and the batch orchestrator's per-item failure isolation);
+`ruff check` clean. Two real test-authoring bugs were caught and fixed while writing these, not by the
+service code: `patch.dict()` with dotted string keys silently no-ops against a module's `__dict__` (fixed by
+using three separate `patch()` calls instead), and a `captured_list or []` idiom silently substitutes a
+throwaway list when the real list is legitimately empty (fixed by an explicit `is None` check) — both are
+exactly the kind of subtle-but-real mistake this session's "write the test, verify it actually tests what you
+think" discipline exists to catch. **Live-verified**: booted the real NestJS API, confirmed all 4 new/changed
+routes mapped and `Nest application successfully started` — including the full `AssessmentsModule`→
+`AiEvaluationModule` and `EvaluationsModule`→`AiEvaluationModule`+`CacheModule` DI graph resolving cleanly, the
+exact class of check that would catch a circular-dependency or missing-module-import mistake — sent real
+`fetch()` requests and confirmed prompt `401`s; separately imported `apps/api-python`'s FastAPI app and
+confirmed both new routes register with no import-time errors. On the frontend: `pnpm typecheck` clean,
+`next build` clean (13/13 pages — one real lint fix along the way, an unescaped apostrophe caught by the build
+itself), Vitest suite unaffected, live click-through into the Evaluation Queue tab confirmed it still renders
+its graceful degraded state against this sandbox's unreachable backend.
 
 ## 6. Definition of Done reminder
 
