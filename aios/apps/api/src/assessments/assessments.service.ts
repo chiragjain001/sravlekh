@@ -7,9 +7,17 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { AuditAction, UserRole, ExamStatus, EvaluationPolicyMode, StakesLevel } from '@prisma/client';
+import { AuditAction, UserRole, ExamStatus, EvaluationPolicyMode, StakesLevel, QuestionType, EvaluationStatus } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
+import { AiEvaluationService } from '../ai-evaluation/ai-evaluation.service';
 import { EXAM_STATUS_TRANSITIONS as NEXT_STATUS } from '../shared/exam-status-transitions';
+
+/**
+ * 32-AI-GOVERNANCE-POLICY.md §2 / 27-AI-EVALUATION-ARCHITECTURE.md §7, fix #3:
+ * keys off Assessment.stakesLevel, NOT assessmentKind — a graded PRACTICE_TEST
+ * is gated identically to a graded SCHOOL_THEORY_EXAM.
+ */
+const SUBJECTIVE_QUESTION_TYPES: QuestionType[] = [QuestionType.SHORT_ANSWER, QuestionType.LONG_ANSWER, QuestionType.PASSAGE_BASED];
 import {
   CreateAssessmentDto,
   CreateAssessmentDeliveryDto,
@@ -29,7 +37,10 @@ import {
 export class AssessmentsService {
   private readonly logger = new Logger(AssessmentsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly aiEvaluationService: AiEvaluationService,
+  ) {}
 
   // ── Assessments ───────────────────────────────────────────────────────────
 
@@ -154,6 +165,10 @@ export class AssessmentsService {
       throw new ForbiddenException('Only admins can approve a delivery.');
     }
 
+    if (dto.status === ExamStatus.LOCKED && delivery.assessment.stakesLevel === StakesLevel.GRADED) {
+      await this.assertNoUnevaluatedSubjectiveResponses(deliveryId);
+    }
+
     const data: Record<string, unknown> = { status: dto.status, version: { increment: 1 } };
 
     const auditAction: AuditAction =
@@ -179,6 +194,14 @@ export class AssessmentsService {
 
     const updated = await this.prisma.assessmentDelivery.update({ where: { id: deliveryId }, data });
     await this.writeAudit(instituteId, actor.id, auditAction, 'assessment_deliveries', deliveryId, { status: delivery.status }, { status: dto.status });
+
+    // 25-EVALUATION-ENGINE.md §4.1: AI first-pass is triggered when a
+    // delivery enters EVALUATING, mirroring v1's timing — system-triggered,
+    // async, never blocking this status-transition response.
+    if (dto.status === ExamStatus.EVALUATING) {
+      await this.aiEvaluationService.enqueueBatch(instituteId, deliveryId, actor.id);
+    }
+
     return updated;
   }
 
@@ -221,11 +244,39 @@ export class AssessmentsService {
 
   // ── Private helpers ───────────────────────────────────────────────────────
 
+  /**
+   * 32-AI-GOVERNANCE-POLICY.md §2 / 27 §7 / 05-API-SPECIFICATION.md (V2 section)
+   * §11 SCHOOL_EXAM_LOCK_BLOCKED_UNEVALUATED — hard state-machine gate, not a
+   * policy document alone. A GRADED assessment's delivery cannot reach LOCKED
+   * while any subjective Response still lacks a TEACHER+ (i.e. not merely
+   * AI-suggested) current EvaluationVersion. This must hold true independent of
+   * whether AI evaluation is even in use for this delivery — an AI-suggested-
+   * but-never-reviewed response blocks LOCK exactly the same as an untouched one.
+   */
+  private async assertNoUnevaluatedSubjectiveResponses(deliveryId: string): Promise<void> {
+    const unevaluatedCount = await this.prisma.response.count({
+      where: {
+        attempt: { assessmentDeliveryId: deliveryId },
+        question: { type: { in: SUBJECTIVE_QUESTION_TYPES } },
+        OR: [
+          { evaluation: null },
+          { evaluation: { status: { in: [EvaluationStatus.PENDING, EvaluationStatus.AI_SUGGESTED] } } },
+        ],
+      },
+    });
+    if (unevaluatedCount > 0) {
+      throw new ConflictException({
+        code: 'SCHOOL_EXAM_LOCK_BLOCKED_UNEVALUATED',
+        message: `${unevaluatedCount} subjective response(s) still need a human evaluation decision before this GRADED delivery can be locked.`,
+      });
+    }
+  }
+
   private async getDeliveryWithTenantCheck(instituteId: string, deliveryId: string, actor: AuthenticatedUser) {
     this.assertInstituteAccess(actor, instituteId);
     const delivery = await this.prisma.assessmentDelivery.findUnique({
       where: { id: deliveryId },
-      include: { assessment: { select: { instituteId: true } } },
+      include: { assessment: { select: { instituteId: true, stakesLevel: true } } },
     });
     if (!delivery || delivery.assessment.instituteId !== instituteId) throw new NotFoundException('Assessment delivery not found');
     return delivery;

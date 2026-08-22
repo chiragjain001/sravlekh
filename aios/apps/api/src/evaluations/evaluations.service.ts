@@ -9,10 +9,14 @@ import {
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
+import { CacheService } from '../infrastructure/cache/cache.service';
+import { AiEvaluationService } from '../ai-evaluation/ai-evaluation.service';
 import { AuditAction, UserRole, QuestionType, EvaluationSource, EvaluationStatus, RubricScoringMode, Prisma } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { DecideEvaluationDto, EvaluationDecision, QueryEvaluationWorkItemsDto } from './dto/evaluation.dto';
 import { SCORE_AGGREGATION_QUEUE, ScoreAggregationJobData } from './score-aggregation.constants';
+
+const REPROCESS_IDEMPOTENCY_TTL_SECONDS = 60 * 60;
 
 /**
  * 25-EVALUATION-ENGINE.md. A Response is never graded in place — every
@@ -33,8 +37,34 @@ export class EvaluationsService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly cache: CacheService,
+    private readonly aiEvaluationService: AiEvaluationService,
     @InjectQueue(SCORE_AGGREGATION_QUEUE) private readonly scoreAggregationQueue: Queue<ScoreAggregationJobData>,
   ) {}
+
+  /**
+   * 05-API-SPECIFICATION.md (V2 section) §8: "triggers a fresh AIRecommendation
+   * ... creates a new chained EvaluationVersion(source=AI) without discarding
+   * prior versions." Idempotency-Key required, same CacheService-backed
+   * check-and-cache-result pattern as Phase 10's document upload.
+   */
+  async reprocess(instituteId: string, responseId: string, idempotencyKey: string | undefined, actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
+    if (!idempotencyKey) {
+      throw new BadRequestException('Idempotency-Key header is required for reprocess.');
+    }
+    const cacheKey = `idempotency:reprocess:${instituteId}:${idempotencyKey}`;
+    const cached = await this.cache.get<{ status: string; responseId: string }>(cacheKey);
+    if (cached) return cached;
+
+    await this.getEvaluableResponse(instituteId, responseId);
+    await this.aiEvaluationService.enqueueSingle(instituteId, responseId, actor.id);
+    await this.writeAudit(instituteId, actor.id, responseId, { action: 'reprocess' });
+
+    const result = { status: 'queued', responseId };
+    await this.cache.set(cacheKey, result, REPROCESS_IDEMPOTENCY_TTL_SECONDS);
+    return result;
+  }
 
   async decide(instituteId: string, responseId: string, dto: DecideEvaluationDto, actor: AuthenticatedUser) {
     this.assertInstituteAccess(actor, instituteId);
@@ -150,17 +180,20 @@ export class EvaluationsService {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
 
-    // 25 §7 prioritizes AI-flagged-low-confidence first — no such data exists
-    // until Phase 13 (AI Evaluation), so an aiFlag filter is honestly empty
-    // today rather than silently ignored.
-    if (query.aiFlag) {
-      return { data: [], meta: { total: 0, page, pageSize, totalPages: 0 } };
-    }
+    // 25 §7: prioritizes AI-flagged-low-confidence first. A response can only
+    // carry an AI flag once it has an AI-suggested evaluation, so an aiFlag
+    // filter narrows eligibility to AI_SUGGESTED + a matching flag, rather
+    // than OR-ing with the null/PENDING branches (Phase 12 left this filter
+    // honestly empty since no AIRecommendation existed yet — Phase 13 makes
+    // it real).
+    const eligibility: Prisma.ResponseWhereInput[] = query.aiFlag
+      ? [{ evaluation: { status: EvaluationStatus.AI_SUGGESTED, currentVersion: { aiRecommendation: { flags: { has: query.aiFlag } } } } }]
+      : [{ evaluation: null }, { evaluation: { status: { in: [EvaluationStatus.PENDING, EvaluationStatus.AI_SUGGESTED] } } }];
 
     const where: Prisma.ResponseWhereInput = {
       attemptId: { not: null },
       question: { type: { in: SUBJECTIVE_QUESTION_TYPES }, ...(query.subjectId && { subjectId: query.subjectId }) },
-      OR: [{ evaluation: null }, { evaluation: { status: { in: [EvaluationStatus.PENDING, EvaluationStatus.AI_SUGGESTED] } } }],
+      OR: eligibility,
       attempt: {
         assessmentDelivery: {
           assessment: { instituteId },
@@ -174,7 +207,7 @@ export class EvaluationsService {
         where,
         include: {
           question: { select: { id: true, content: true, marks: true, subjectId: true } },
-          evaluation: true,
+          evaluation: { include: { currentVersion: { include: { aiRecommendation: true } } } },
           attempt: {
             select: {
               studentProfile: { select: { rollNumber: true, user: { select: { name: true } } } },
@@ -182,7 +215,10 @@ export class EvaluationsService {
             },
           },
         },
-        orderBy: { createdAt: 'asc' }, // oldest-submitted-first (25 §7's fallback ordering — no AI flags to prioritize on yet)
+        // 25 §7's full priority ordering (AI-flagged-low-confidence first) isn't
+        // implemented — oldest-submitted-first only. A real, bounded future
+        // refinement, not attempted here to avoid a complex computed sort.
+        orderBy: { createdAt: 'asc' },
         skip: (page - 1) * pageSize,
         take: pageSize,
       }),

@@ -1526,6 +1526,11 @@ model EvaluationVersion {
   nextVersions    EvaluationVersion[]        @relation("EvaluationVersionChain")
   currentOfEvaluation Evaluation?            @relation("CurrentEvaluationVersion")
   criterionScores EvaluationCriterionScore[]
+  // Phase 13 (docs/33-GAP-ANALYSIS-AND-BUILD-PLAN.md) addition — aiRecommendationId
+  // was a bare column with no @relation since Phase 7; Phase 13 needs a real join
+  // from an AI-sourced EvaluationVersion back to its AIRecommendation (e.g. to read
+  // .flags for GET /evaluation-work-items's aiFlag filter).
+  aiRecommendation AIRecommendation? @relation(fields: [aiRecommendationId], references: [id])
 
   @@index([evaluationId, createdAt])
   @@map("evaluation_versions")
@@ -1566,6 +1571,7 @@ model AIRecommendation {
   questionVersion QuestionVersion @relation(fields: [questionVersionId], references: [id])
   aiModelVersion  AIModelVersion  @relation(fields: [aiModelVersionId], references: [id])
   promptVersion   PromptVersion   @relation(fields: [promptVersionId], references: [id])
+  evaluationVersions EvaluationVersion[]
 
   @@index([responseId, createdAt])
   @@index([aiModelVersionId])

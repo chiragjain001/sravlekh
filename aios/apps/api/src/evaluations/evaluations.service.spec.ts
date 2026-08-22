@@ -6,6 +6,8 @@ import { EvaluationsService } from './evaluations.service';
 import { EvaluationDecision } from './dto/evaluation.dto';
 import { SCORE_AGGREGATION_QUEUE } from './score-aggregation.constants';
 import { PrismaService } from '../prisma/prisma.service';
+import { CacheService } from '../infrastructure/cache/cache.service';
+import { AiEvaluationService } from '../ai-evaluation/ai-evaluation.service';
 import { AuthenticatedUser } from '../auth/auth.types';
 
 describe('EvaluationsService', () => {
@@ -17,6 +19,8 @@ describe('EvaluationsService', () => {
     auditLog: { create: jest.Mock };
   };
   let queue: { add: jest.Mock };
+  let cache: { get: jest.Mock; set: jest.Mock };
+  let aiEvaluationService: { enqueueSingle: jest.Mock };
 
   const teacher: AuthenticatedUser = { id: 'teacher-1', email: 't@x.com', name: 'T', role: UserRole.TEACHER, instituteId: 'inst-1' };
   const otherTeacher: AuthenticatedUser = { ...teacher, id: 'teacher-2', instituteId: 'inst-2' };
@@ -29,11 +33,15 @@ describe('EvaluationsService', () => {
       auditLog: { create: jest.fn().mockResolvedValue({}) },
     };
     queue = { add: jest.fn().mockResolvedValue({}) };
+    cache = { get: jest.fn().mockResolvedValue(undefined), set: jest.fn().mockResolvedValue(undefined) };
+    aiEvaluationService = { enqueueSingle: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         EvaluationsService,
         { provide: PrismaService, useValue: prisma },
+        { provide: CacheService, useValue: cache },
+        { provide: AiEvaluationService, useValue: aiEvaluationService },
         { provide: getQueueToken(SCORE_AGGREGATION_QUEUE), useValue: queue },
       ],
     }).compile();
@@ -249,6 +257,35 @@ describe('EvaluationsService', () => {
     });
   });
 
+  describe('reprocess', () => {
+    it('rejects a missing Idempotency-Key', async () => {
+      await expect(service.reprocess('inst-1', 'resp-1', undefined, teacher)).rejects.toThrow(BadRequestException);
+    });
+
+    it('returns the cached ack on a repeated Idempotency-Key without re-enqueueing', async () => {
+      cache.get.mockResolvedValueOnce({ status: 'queued', responseId: 'resp-1' });
+      const result = await service.reprocess('inst-1', 'resp-1', 'key-1', teacher);
+      expect(result).toEqual({ status: 'queued', responseId: 'resp-1' });
+      expect(aiEvaluationService.enqueueSingle).not.toHaveBeenCalled();
+    });
+
+    it('validates eligibility, enqueues a single AI evaluation, and caches the ack', async () => {
+      prisma.response.findUnique.mockResolvedValueOnce(baseResponse);
+
+      const result = await service.reprocess('inst-1', 'resp-1', 'key-1', teacher);
+
+      expect(aiEvaluationService.enqueueSingle).toHaveBeenCalledWith('inst-1', 'resp-1', 'teacher-1');
+      expect(cache.set).toHaveBeenCalledWith('idempotency:reprocess:inst-1:key-1', { status: 'queued', responseId: 'resp-1' }, expect.any(Number));
+      expect(result).toEqual({ status: 'queued', responseId: 'resp-1' });
+    });
+
+    it('rejects reprocessing an ineligible (objective) response without enqueueing', async () => {
+      prisma.response.findUnique.mockResolvedValueOnce({ ...baseResponse, question: { type: 'MCQ', rubric: null } });
+      await expect(service.reprocess('inst-1', 'resp-1', 'key-1', teacher)).rejects.toThrow(BadRequestException);
+      expect(aiEvaluationService.enqueueSingle).not.toHaveBeenCalled();
+    });
+  });
+
   describe('getHistory', () => {
     it('returns an empty chain when no evaluation exists yet', async () => {
       prisma.response.findUnique.mockResolvedValueOnce(baseResponse);
@@ -271,10 +308,19 @@ describe('EvaluationsService', () => {
   });
 
   describe('getWorkItems', () => {
-    it('returns empty immediately when aiFlag is set — no AI data exists until Phase 13', async () => {
-      const result = await service.getWorkItems('inst-1', { aiFlag: 'low_confidence' }, teacher);
-      expect(result).toEqual({ data: [], meta: { total: 0, page: 1, pageSize: 20, totalPages: 0 } });
-      expect(prisma.response.findMany).not.toHaveBeenCalled();
+    it('narrows eligibility to AI_SUGGESTED + a matching flag when aiFlag is set (Phase 13 — real, not the Phase 12 always-empty stub)', async () => {
+      prisma.response.findMany.mockResolvedValueOnce([]);
+      prisma.response.count.mockResolvedValueOnce(0);
+
+      await service.getWorkItems('inst-1', { aiFlag: 'low_confidence' }, teacher);
+
+      expect(prisma.response.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            OR: [{ evaluation: { status: EvaluationStatus.AI_SUGGESTED, currentVersion: { aiRecommendation: { flags: { has: 'low_confidence' } } } } }],
+          }),
+        }),
+      );
     });
 
     it('scopes by instituteId and applies batchId/subjectId filters', async () => {

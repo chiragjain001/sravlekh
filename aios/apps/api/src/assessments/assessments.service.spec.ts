@@ -3,6 +3,7 @@ import { ConflictException, ForbiddenException, NotFoundException, Unprocessable
 import { UserRole, ExamStatus, EvaluationPolicyMode, StakesLevel, AssessmentKind } from '@prisma/client';
 import { AssessmentsService } from './assessments.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { AiEvaluationService } from '../ai-evaluation/ai-evaluation.service';
 import { AuthenticatedUser } from '../auth/auth.types';
 
 describe('AssessmentsService', () => {
@@ -14,9 +15,11 @@ describe('AssessmentsService', () => {
     captureProvider: { findUnique: jest.Mock };
     evaluationPolicy: { findUnique: jest.Mock };
     assessmentDelivery: { create: jest.Mock; findUnique: jest.Mock; update: jest.Mock };
+    response: { count: jest.Mock };
     auditLog: { create: jest.Mock };
     $transaction: jest.Mock;
   };
+  let aiEvaluationService: { enqueueBatch: jest.Mock };
 
   const admin: AuthenticatedUser = { id: 'admin-1', email: 'a@x.com', name: 'Admin', role: UserRole.ADMIN, instituteId: 'inst-1' };
   const teacher: AuthenticatedUser = { ...admin, id: 'teacher-1', role: UserRole.TEACHER };
@@ -29,11 +32,17 @@ describe('AssessmentsService', () => {
       captureProvider: { findUnique: jest.fn() },
       evaluationPolicy: { findUnique: jest.fn() },
       assessmentDelivery: { create: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
+      response: { count: jest.fn().mockResolvedValue(0) },
       auditLog: { create: jest.fn().mockResolvedValue({}) },
       $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
     };
+    aiEvaluationService = { enqueueBatch: jest.fn().mockResolvedValue(undefined) };
     const module: TestingModule = await Test.createTestingModule({
-      providers: [AssessmentsService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        AssessmentsService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: AiEvaluationService, useValue: aiEvaluationService },
+      ],
     }).compile();
     service = module.get(AssessmentsService);
   });
@@ -142,11 +151,101 @@ describe('AssessmentsService', () => {
       expect(prisma.auditLog.create).toHaveBeenCalled();
     });
 
+    it('enqueues the AI evaluation batch job when a delivery enters EVALUATING (25 §4.1)', async () => {
+      mockDelivery(ExamStatus.ONGOING, 0);
+      prisma.assessmentDelivery.update.mockResolvedValueOnce({ id: 'd1', status: ExamStatus.EVALUATING });
+
+      await service.updateDeliveryStatus('inst-1', 'd1', { status: ExamStatus.EVALUATING, version: 0 }, teacher);
+
+      expect(aiEvaluationService.enqueueBatch).toHaveBeenCalledWith('inst-1', 'd1', 'teacher-1');
+    });
+
+    it('does not enqueue AI evaluation for any other transition', async () => {
+      mockDelivery(ExamStatus.DRAFT, 0);
+      prisma.assessmentDelivery.update.mockResolvedValueOnce({ id: 'd1', status: ExamStatus.REVIEW });
+
+      await service.updateDeliveryStatus('inst-1', 'd1', { status: ExamStatus.REVIEW, version: 0 }, teacher);
+
+      expect(aiEvaluationService.enqueueBatch).not.toHaveBeenCalled();
+    });
+
     it('writes LOCK atomically via $transaction', async () => {
       mockDelivery(ExamStatus.EVALUATING, 0);
       prisma.assessmentDelivery.update.mockResolvedValueOnce({ id: 'd1', status: ExamStatus.LOCKED });
       await service.updateDeliveryStatus('inst-1', 'd1', { status: ExamStatus.LOCKED, version: 0 }, admin);
       expect(prisma.$transaction).toHaveBeenCalled();
+    });
+  });
+
+  describe('LOCK governance gate — 32-AI-GOVERNANCE-POLICY.md §2 / 27 §7 (adversarial, unbypassable-by-construction)', () => {
+    function mockGradedDelivery(status: ExamStatus, stakesLevel: StakesLevel) {
+      prisma.assessmentDelivery.findUnique.mockResolvedValueOnce({
+        id: 'd1', status, version: 0, assessment: { instituteId: 'inst-1', stakesLevel },
+      });
+    }
+
+    it('blocks LOCK on a GRADED assessment with unevaluated subjective responses (409 SCHOOL_EXAM_LOCK_BLOCKED_UNEVALUATED)', async () => {
+      mockGradedDelivery(ExamStatus.EVALUATING, StakesLevel.GRADED);
+      prisma.response.count.mockResolvedValueOnce(3);
+
+      await expect(
+        service.updateDeliveryStatus('inst-1', 'd1', { status: ExamStatus.LOCKED, version: 0 }, admin),
+      ).rejects.toMatchObject({ response: expect.objectContaining({ code: 'SCHOOL_EXAM_LOCK_BLOCKED_UNEVALUATED' }) });
+      expect(prisma.assessmentDelivery.update).not.toHaveBeenCalled();
+    });
+
+    it('allows LOCK on a GRADED assessment once every subjective response has a human evaluation', async () => {
+      mockGradedDelivery(ExamStatus.EVALUATING, StakesLevel.GRADED);
+      prisma.response.count.mockResolvedValueOnce(0);
+      prisma.assessmentDelivery.update.mockResolvedValueOnce({ id: 'd1', status: ExamStatus.LOCKED });
+
+      await expect(
+        service.updateDeliveryStatus('inst-1', 'd1', { status: ExamStatus.LOCKED, version: 0 }, admin),
+      ).resolves.toBeDefined();
+    });
+
+    it('does not gate LOCK at all for a non-GRADED assessment, even with unevaluated responses present', async () => {
+      mockGradedDelivery(ExamStatus.EVALUATING, StakesLevel.PRACTICE);
+      prisma.response.count.mockResolvedValueOnce(5); // would block if this delivery were GRADED
+      prisma.assessmentDelivery.update.mockResolvedValueOnce({ id: 'd1', status: ExamStatus.LOCKED });
+
+      await expect(
+        service.updateDeliveryStatus('inst-1', 'd1', { status: ExamStatus.LOCKED, version: 0 }, admin),
+      ).resolves.toBeDefined();
+      expect(prisma.response.count).not.toHaveBeenCalled();
+    });
+
+    it('blocks a GRADED delivery identically regardless of assessmentKind — the gate reads only stakesLevel (fix #3, adversarial per 32 §9)', async () => {
+      const ALL_ASSESSMENT_KINDS = ['COACHING_TEST', 'SCHOOL_THEORY_EXAM', 'PRACTICE_TEST', 'DIAGNOSTIC', 'HOMEWORK_GRADED'];
+      for (const kind of ALL_ASSESSMENT_KINDS) {
+        prisma.assessmentDelivery.findUnique.mockResolvedValueOnce({
+          id: 'd1', status: ExamStatus.EVALUATING, version: 0,
+          assessment: { instituteId: 'inst-1', stakesLevel: StakesLevel.GRADED, assessmentKind: kind },
+        });
+        prisma.response.count.mockResolvedValueOnce(1);
+
+        await expect(
+          service.updateDeliveryStatus('inst-1', 'd1', { status: ExamStatus.LOCKED, version: 0 }, admin),
+          // eslint-disable-next-line no-loop-func
+        ).rejects.toMatchObject({ response: expect.objectContaining({ code: 'SCHOOL_EXAM_LOCK_BLOCKED_UNEVALUATED' }) });
+      }
+      expect(prisma.assessmentDelivery.update).not.toHaveBeenCalled();
+    });
+
+    it("only counts unevaluated SUBJECTIVE responses — the count query scopes to SHORT_ANSWER/LONG_ANSWER/PASSAGE_BASED", async () => {
+      mockGradedDelivery(ExamStatus.EVALUATING, StakesLevel.GRADED);
+      prisma.response.count.mockResolvedValueOnce(0);
+      prisma.assessmentDelivery.update.mockResolvedValueOnce({ id: 'd1', status: ExamStatus.LOCKED });
+
+      await service.updateDeliveryStatus('inst-1', 'd1', { status: ExamStatus.LOCKED, version: 0 }, admin);
+
+      expect(prisma.response.count).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            question: { type: { in: ['SHORT_ANSWER', 'LONG_ANSWER', 'PASSAGE_BASED'] } },
+          }),
+        }),
+      );
     });
   });
 

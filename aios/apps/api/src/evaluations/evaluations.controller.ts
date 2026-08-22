@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query, Headers } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { EvaluationsService } from './evaluations.service';
 import { DecideEvaluationDto, QueryEvaluationWorkItemsDto } from './dto/evaluation.dto';
@@ -34,6 +34,18 @@ export class EvaluationsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.evaluationsService.decide(instituteId, responseId, dto, user);
+  }
+
+  @Post('evaluations/:responseId/reprocess')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Trigger a fresh AI evaluation pass for one response — chains a new EvaluationVersion(source=AI), never discards prior versions' })
+  reprocess(
+    @Param('instituteId') instituteId: string,
+    @Param('responseId') responseId: string,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.evaluationsService.reprocess(instituteId, responseId, idempotencyKey, user);
   }
 
   @Get('evaluations/:responseId/history')
