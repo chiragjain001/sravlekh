@@ -331,10 +331,26 @@ immutable, `RubricCriterion` rows), the three scoring modes, server-side marks r
 live Question Bank screen (Teacher + Admin dashboards). See §5 "Phase 9" for a genuine API-contract ambiguity
 found and resolved (`dependsOnCriterionId` can't literally mean a persisted ID at authoring time).
 
-**Phases 10–15 — Document Processing → OCR → Evaluation Engine [manual-only] → AI Evaluation → Reviewer Layer →
-v2 Hardening.** Unchanged from `20-IMPLEMENTATION-PLAN.md` — no existing code conflicts with these phases since
-none of that layer is built yet. The sequencing rationale in `20` (document-processing before OCR, manual before
-AI evaluation, reviewer after AI) stands as written and should not be reordered.
+**Phase 10 — Document Processing Pipeline — COMPLETE, with an explicit, load-bearing scope boundary.** Real
+`documents`/`identity-resolution` modules: bundle creation, real multipart page-image upload wired to
+`StorageService` for the first time (flagged unwired since Phase 1), full document status reads, signed page-
+image URLs with student/raw access gating, pipeline reprocessing, manual region drawing/correction, and manual
+identity confirmation with `30 §5`'s conflict detection. What is **not** built: any actual image-processing or
+vision capability (deskew, auto page-order, auto region detection, vision-assisted question-marker detection,
+barcode/QR/roll-number-OCR identity auto-resolution) — none of that exists anywhere in this codebase and
+building fake versions would misrepresent capability, the same trap Phase 8 caught in the "OMR engine" claim.
+Every human-in-the-loop checkpoint the docs mandate regardless (manual region authoring, manual identity
+confirmation) is built for real, which is what makes the exit criteria's evidence-producing pipeline usable
+end-to-end today. See §5 "Phase 10" for the full scope reasoning, two more additive schema changes, and a subtle
+raw-image-access edge case that writing the test suite forced through to a correct, deliberate answer.
+
+**Phases 11–15 — OCR → Evaluation Engine [manual-only] → AI Evaluation → Reviewer Layer → v2 Hardening.**
+Unchanged from `20-IMPLEMENTATION-PLAN.md` — no existing code conflicts with these phases since none of that
+layer is built yet. The sequencing rationale in `20` (manual evaluation before AI, reviewer after AI) stands as
+written and should not be reordered. Phase 11 (OCR) in particular now has a concrete, real foundation to build
+on: `ProcessingJob(stage=OCR)` rows don't exist yet by design (Phase 10 deliberately scoped OCR out of its own
+`document-processing` queue, per doc 20's own phase split), so Phase 11 starts clean rather than needing to
+retrofit around partial OCR scaffolding.
 
 ---
 
@@ -1281,6 +1297,108 @@ the Rubric icon actually appearing against a real subjective question row, or th
 against live data — both require a real Postgres-backed API serving real questions, which this environment has
 never had at any point this session. This is the same category of honest limit flagged for every prior UI
 phase (Phases 2, 4, 5, 6), not a new one introduced here.
+
+### Phase 10: Document Processing Pipeline (this session)
+
+**Goal, per `20-IMPLEMENTATION-PLAN.md`:** the scan-to-region pipeline, without evaluation yet — exit criteria
+was "a batch of scanned booklets can be uploaded, identity-resolved (with mandatory manual confirmation below
+threshold), and question-mapped, producing `Response(evidenceType=PAGE_REGION)` rows with linked
+`QuestionRegion`s." This is the largest and most consequential scope decision of the v2 build so far, made
+explicitly rather than discovered mid-implementation — see below.
+
+**The scope boundary, decided before writing any code:** `23-DOCUMENT-PROCESSING-ARCHITECTURE.md` specifies a
+9-stage pipeline (deskew/enhance, auto page-order, template-geometry region detection, vision-assisted
+question-marker layout analysis for free-form booklets, auto question-mapping) that requires real image-
+processing and vision-model capability. **None of that exists anywhere in this codebase** — no deskew library,
+no computer-vision SDK, no OCR provider wired at any layer, in either `apps/api` or `apps/api-python`. Building
+stage processors that flip `ProcessingJob.status` to `SUCCEEDED` without doing the real work they claim to do
+would misrepresent capability — precisely the trap Phase 8's "OMR engine" investigation caught and corrected.
+So this phase draws a hard, honest line: **build every human-in-the-loop checkpoint the docs already mandate
+regardless of auto-detection (23 §5, 30 §4's conservative default) for real, and leave every auto-detection
+stage as a genuinely queued-but-unconsumed `ProcessingJob` row** — visible, inspectable, honestly labeled as
+not-yet-processed, never faked. This is not a workaround forced by the gap — doc 30 §4's own default behavior
+("no fully-automatic resolution below 0.95 confidence... status remains PENDING... mandatory human
+confirmation") is already what happens when no auto-detection ever runs. Building the manual path as the
+*primary*, fully-working mechanism rather than a fallback stub is what makes Phase 10's exit criteria
+achievable end-to-end without fabricating anything.
+
+**What was built** — two new NestJS modules:
+- `documents` (`apps/api/src/documents/`): `POST /document-bundles` (rejects non-`PHOTO_CAPTURE_SUBJECTIVE`
+  deliveries per `23` §2), `POST /document-bundles/:id/documents` (real multipart upload via `FilesInterceptor`,
+  finally wiring `StorageService` to an endpoint — flagged unwired since Phase 1's own write-up), `GET
+  /documents/:id`, `GET /documents/:id/pages/:pageId/image` (signed URL, raw-access gating), `POST
+  /documents/:id/reprocess` (real stage-reset state machine), and two endpoints beyond doc 05's literal list —
+  `POST /page-images/:id/regions` and `PATCH /page-regions/:id` — added because the doc's `PATCH`-only listing
+  implicitly assumes regions already exist from an auto-detection stage that, per the scope boundary above,
+  this phase doesn't build; a teacher needs a way to draw the first region manually.
+- `identity-resolution` (`apps/api/src/identity-resolution/`): `GET /identity-resolutions?status=PENDING`,
+  `POST /identity-resolutions/:id/confirm` — batch-membership validation, `30 §5`'s duplicate/conflict
+  detection (a second document resolving to an already-claimed student+delivery is flagged `CONFLICT`, never
+  auto-linked), and `Attempt` creation/reuse following the exact fix-#2 insert-not-toggle discipline Phase 8
+  established for `POST /attempts`. This closes a loop Phase 8 deliberately left open: `AttemptsService.create()`
+  explicitly rejected `PHOTO_CAPTURE_SUBJECTIVE` with a "requires Phase 10" error — that's now genuinely true;
+  `Attempt` creation for this capture path is owned here instead, per `23` fix #7's "`Document → IdentityResolution
+  → Attempt`" flow.
+
+Both region-mapping and identity-confirmation independently call a shared, idempotent
+`syncPageRegionResponses()` helper (`apps/api/src/shared/sync-page-region-responses.ts`) that upserts
+`Response(evidenceType=PAGE_REGION)` rows once both a `QuestionRegion` mapping and `Document.attemptId` exist —
+handles either ordering (map-then-identify or identify-then-map) without one service needing to know which
+happened first.
+
+**Two more additive schema changes, same discipline as Phases 7–9:**
+- `Response.questionRegionId String?` (+ `PageRegion.responses` back-relation) — the evidence-pointer
+  traceability doc 04 §5's constraints summary describes ("`Response.evidenceType` determines which of
+  `digitalValue`/`questionRegionId` must be non-null") but Phase 7/8 never actually added, since Phase 8 didn't
+  yet need `PAGE_REGION` evidence. Without it, the exit criteria's "linked `QuestionRegion`s" requirement would
+  be unsatisfiable.
+- `IdentityStatus.CONFLICT` enum value — doc 30 §5 describes "flagged CONFLICT" behavior, but the doc's own §2
+  entity table (and this schema, until now) never defined a status value to hold that state in. A real gap in
+  the doc's own internal consistency, caught by trying to implement exactly what it specifies.
+
+**Deliberately not implemented, and why, beyond the headline scope boundary above:**
+- **Multi-page PDF booklet upload** (doc 05 §5, doc 23 §7) — splitting a PDF into per-page images needs a
+  PDF-processing library not in this dependency tree. Rejected with a clear `422` naming the gap rather than
+  silently mishandling it; only direct image uploads (jpg/jpeg/png/webp) work today.
+- **Malware scanning and EXIF stripping** (`07-SECURITY-SPECIFICATION.md` §9) — no scanning provider is wired
+  (`17-THIRD-PARTY-INTEGRATIONS.md`); flagged in the module's own header comment rather than pretended.
+- **The `Idempotency-Key` mechanism doc 05 §5 requires** — investigated first, per this session's standing
+  rule: the doc claims it "mirrors v1's grade-sheet idempotency requirement," but v1's grade-sheet endpoint
+  achieves idempotency purely through Prisma `upsert` semantics, not a header-based dedup mechanism — there was
+  never anything to literally "mirror." Built for real anyway, since unlike the OMR case this is a genuinely
+  buildable, well-understood pattern: `CacheService` (already built in Phase 6.5, fail-open) backs a real
+  check-and-cache-result flow. In this sandbox's always-unreachable Redis, it degrades to "no dedup, every
+  request re-processes" — a documented, consistent degradation, not a fake feature.
+
+**A subtle access-control edge case, clarified by writing the test suite, not by a code bug:** the first draft
+of `getPageImageUrl`'s test asserted a student's `?raw=true` request must always come back `raw:false`. The
+service failed that assertion — not because of a bug, but because when no processed image exists yet (true for
+every document right now, since deskew isn't built), the "processed" and "raw" URLs are the same bytes, and
+serving that fallback to a student isn't actually a confidentiality violation doc 05 §5's rule is protecting
+against (deskewing is geometric correction, not redaction — the raw and eventual-processed image show the same
+content). The test's assumption was wrong, not the service; fixed by isolating the assertion against a case
+where a processed image *does* exist, where the student's `raw:true` request is correctly ignored. Documented
+here because it's exactly the kind of "write the test, discover the real question isn't quite what you assumed"
+moment this session's testing discipline is meant to surface.
+
+**Verified:** `prisma validate`/`generate` clean for both clients; full `pnpm typecheck` clean; 260/260
+`apps/api` tests pass (232 pre-existing + 28 new — `PHOTO_CAPTURE_SUBJECTIVE` enforcement, Idempotency-Key
+requirement and cache short-circuit, file-size/type/PDF rejection, `layoutType` derivation from
+`bookletTemplateId` presence, per-stage `ProcessingJob` creation excluding `OCR`, the default `PENDING`
+`IdentityResolution` row, `reprocess`'s stage-reset boundaries, region creation/remapping and the resulting
+`Response` sync/cleanup, student vs. teacher raw-image access, and the `30 §5` conflict-detection path); lint
+clean (0 errors, only pre-existing-style `any` warnings); `apps/api-python`'s 7 tests pass against the
+regenerated client (no Python-side changes needed — purely additive schema). **Live-verified**: booted the
+real API against this sandbox's always-unreachable Postgres/Redis, confirmed all 8 new routes mapped and `Nest
+application successfully started`, confirmed `GET /institutes/inst-001/identity-resolutions` and `GET
+/institutes/inst-001/documents/doc-001` both return a prompt `401` rather than hanging or 500ing.
+
+`apps/web` untouched — Phase 10 is backend-only; doc 20's `TeacherDocumentQueue` UI is deferred to whenever a
+real image-processing/vision integration exists to make the queue meaningfully different from "list of
+documents, click confirm" (which the identity-resolution and region-authoring endpoints already fully support
+programmatically) — building a bespoke booklet-viewer/region-drawing canvas UI ahead of that felt like a
+premature, large investment in a screen whose real shape depends on decisions (canvas library, annotation UX)
+that Phase 11's OCR integration will clarify.
 
 ## 6. Definition of Done reminder
 
