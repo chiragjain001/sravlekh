@@ -608,4 +608,184 @@ export function useArchiveTopic() {
   );
 }
 
+// ── Notices ──────────────────────────────────────────────────────────────
+
+export function useNotices(params?: Record<string, unknown>) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['notices', user?.instituteId, params],
+    queryFn: async () => {
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/notices`, { params });
+      return res.data;
+    },
+    enabled: !!user?.instituteId,
+  });
+}
+
+export function useNoticeDeliveryReport(noticeId: string | null) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['notices', user?.instituteId, noticeId, 'delivery-report'],
+    queryFn: async () => {
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/notices/${noticeId}/delivery-report`);
+      return res.data;
+    },
+    enabled: !!user?.instituteId && !!noticeId,
+  });
+}
+
+export function useCreateNotice() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (data: any) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/notices`, data);
+      return res.data;
+    },
+    onSuccess: () => {
+      toast.success('Notice broadcast queued');
+      queryClient.invalidateQueries({ queryKey: ['notices', user?.instituteId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to broadcast notice';
+      toast.error(msg);
+    },
+  });
+}
+
+// ── Reports ──────────────────────────────────────────────────────────────
+
+export function useReportsList(params?: Record<string, unknown>) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['reports', user?.instituteId, params],
+    queryFn: async () => {
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/reports`, { params });
+      return res.data;
+    },
+    enabled: !!user?.instituteId,
+  });
+}
+
+export function useReport(reportId: string | null, opts?: { poll?: boolean }) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['reports', user?.instituteId, reportId],
+    queryFn: async () => {
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/reports/${reportId}`);
+      return res.data;
+    },
+    enabled: !!user?.instituteId && !!reportId,
+    refetchInterval: (query) => {
+      if (!opts?.poll) return false;
+      const status = (query.state.data as { status?: string } | undefined)?.status;
+      return status === 'QUEUED' || status === 'PROCESSING' ? 2000 : false;
+    },
+  });
+}
+
+export function useRequestReport() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (data: any) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/reports`, data);
+      return res.data;
+    },
+    onSuccess: () => {
+      toast.success('Report queued for generation');
+      queryClient.invalidateQueries({ queryKey: ['reports', user?.instituteId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to request report';
+      toast.error(msg);
+    },
+  });
+}
+
+// ── Audit Logs ───────────────────────────────────────────────────────────
+
+export function useAuditLogs(params?: Record<string, unknown>) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['audit-logs', user?.instituteId, params],
+    queryFn: async () => {
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/audit-logs`, { params });
+      return res.data;
+    },
+    enabled: !!user?.instituteId,
+  });
+}
+
+// ── Founder ──────────────────────────────────────────────────────────────
+
+export function useFounderInstitutes(params?: Record<string, unknown>) {
+  return useQuery({
+    queryKey: ['founder', 'institutes', params],
+    queryFn: async () => {
+      const res = await apiClient.get('/founder/institutes', { params });
+      return res.data;
+    },
+  });
+}
+
+export function useFounderHealth() {
+  return useQuery({
+    queryKey: ['founder', 'health'],
+    queryFn: async () => {
+      const res = await apiClient.get('/founder/health');
+      return res.data;
+    },
+    refetchInterval: 30_000,
+  });
+}
+
+export function useFounderAuditLogs(params?: Record<string, unknown>) {
+  return useQuery({
+    queryKey: ['founder', 'audit-logs', params],
+    queryFn: async () => {
+      const res = await apiClient.get('/founder/audit-logs', { params });
+      return res.data;
+    },
+  });
+}
+
+export function useUpdateInstitutePlan() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ instituteId, plan }: { instituteId: string; plan: string }) => {
+      const res = await apiClient.patch(`/founder/institutes/${instituteId}/plan`, { plan });
+      return res.data;
+    },
+    onSuccess: () => {
+      toast.success('Plan updated');
+      queryClient.invalidateQueries({ queryKey: ['founder', 'institutes'] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to update plan';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useArchiveInstitute() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (instituteId: string) => {
+      const res = await apiClient.post(`/founder/institutes/${instituteId}/archive`);
+      return res.data;
+    },
+    onSuccess: () => {
+      toast.success('Institute archived');
+      queryClient.invalidateQueries({ queryKey: ['founder', 'institutes'] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to archive institute';
+      toast.error(msg);
+    },
+  });
+}
+
 

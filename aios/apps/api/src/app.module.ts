@@ -17,6 +17,10 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { DoubtsModule } from './doubts/doubts.module';
 import { AssignmentsModule } from './assignments/assignments.module';
 import { TimetableModule } from './timetable/timetable.module';
+import { NoticesModule } from './notices/notices.module';
+import { ReportsModule } from './reports/reports.module';
+import { AuditModule } from './audit/audit.module';
+import { FounderModule } from './founder/founder.module';
 import { HealthModule } from './health/health.module';
 import { QueueModule } from './infrastructure/queue/queue.module';
 import { StorageModule } from './infrastructure/storage/storage.module';
@@ -62,6 +66,10 @@ import { RequestIdMiddleware } from './shared/middleware/request-id.middleware';
     DoubtsModule,
     AssignmentsModule,
     TimetableModule,
+    NoticesModule,
+    ReportsModule,
+    AuditModule,
+    FounderModule,
     HealthModule,
   ],
   providers: [{ provide: APP_FILTER, useClass: AllExceptionsFilter }],

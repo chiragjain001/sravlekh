@@ -1,0 +1,118 @@
+import {
+  Injectable,
+  ForbiddenException,
+  NotFoundException,
+  Logger,
+} from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+import { PrismaService } from '../prisma/prisma.service';
+import { AuditAction, ReportStatus, UserRole } from '@prisma/client';
+import { AuthenticatedUser } from '../auth/auth.types';
+import { CreateReportDto, QueryReportsDto } from './dto/report.dto';
+import { REPORT_GENERATION_QUEUE, ReportGenerationJobData } from './report-generation.constants';
+
+@Injectable()
+export class ReportsService {
+  private readonly logger = new Logger(ReportsService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    @InjectQueue(REPORT_GENERATION_QUEUE) private readonly generationQueue: Queue<ReportGenerationJobData>,
+  ) {}
+
+  // ── Report Generation (03-FEATURE-SPECIFICATIONS.md) ──────────────────────
+
+  async requestReport(instituteId: string, dto: CreateReportDto, actor: AuthenticatedUser) {
+    if (actor.role === UserRole.STUDENT) {
+      throw new ForbiddenException('Students cannot generate reports.');
+    }
+    this.assertInstituteAccess(actor, instituteId);
+
+    if (actor.role === UserRole.TEACHER && dto.scope.batchId) {
+      await this.assertTeacherOwnsBatch(actor, dto.scope.batchId);
+    }
+
+    const report = await this.prisma.report.create({
+      data: {
+        instituteId,
+        type: dto.type,
+        scope: dto.scope as any,
+        format: dto.format ?? 'PDF',
+        status: ReportStatus.QUEUED,
+        requestedByUserId: actor.id,
+      },
+    });
+
+    await this.generationQueue.add(
+      'generate',
+      { reportId: report.id },
+      { attempts: 3, backoff: { type: 'exponential', delay: 1000 } },
+    );
+
+    await this.writeAudit(instituteId, actor.id, AuditAction.CREATE, 'reports', report.id, null, {
+      type: report.type, scope: dto.scope,
+    });
+
+    return report;
+  }
+
+  async findById(instituteId: string, reportId: string, actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
+
+    const report = await this.prisma.report.findUnique({ where: { id: reportId } });
+    if (!report || report.instituteId !== instituteId) throw new NotFoundException('Report not found.');
+
+    if (actor.role === UserRole.TEACHER && report.requestedByUserId !== actor.id) {
+      throw new ForbiddenException('You can only view reports you requested.');
+    }
+
+    return report;
+  }
+
+  async findAll(instituteId: string, query: QueryReportsDto, actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const skip = (page - 1) * limit;
+
+    const where: Record<string, unknown> = { instituteId };
+    if (actor.role === UserRole.TEACHER) {
+      where.requestedByUserId = actor.id;
+    }
+
+    const [reports, total] = await Promise.all([
+      this.prisma.report.findMany({ where, skip, take: limit, orderBy: { createdAt: 'desc' } }),
+      this.prisma.report.count({ where }),
+    ]);
+
+    return { data: reports, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+  }
+
+  // ── Private helpers ───────────────────────────────────────────────────────
+
+  private async assertTeacherOwnsBatch(actor: AuthenticatedUser, batchId: string) {
+    const teacherProfile = await this.prisma.teacherProfile.findUnique({ where: { userId: actor.id } });
+    const assignment = teacherProfile
+      ? await this.prisma.batchTeacher.findFirst({ where: { teacherProfileId: teacherProfile.id, batchId, removedAt: null } })
+      : null;
+    if (!assignment) {
+      throw new ForbiddenException('You can only generate reports for batches you are assigned to.');
+    }
+  }
+
+  private assertInstituteAccess(actor: AuthenticatedUser, instituteId: string) {
+    if (actor.role === UserRole.FOUNDER) return;
+    if (actor.instituteId !== instituteId) throw new ForbiddenException("You don't have access to this.");
+  }
+
+  private async writeAudit(instituteId: string, actorId: string, action: AuditAction, entity: string, entityId: string, oldValue: unknown, newValue: unknown) {
+    try {
+      await this.prisma.auditLog.create({
+        data: { instituteId, actorId, action, entity, entityId, oldValue: oldValue as any, newValue: newValue as any },
+      });
+    } catch (err) {
+      this.logger.warn(`Failed to write audit log for ${entity}:${entityId}`, err as Error);
+    }
+  }
+}

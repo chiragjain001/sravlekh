@@ -279,9 +279,13 @@ with a real screen (user's call, same as Phase 4's AdminExams). One confirmed ga
 explicitly deferred rather than built or silently dropped: auto-generated Interventions when mastery drops
 below threshold. See §5 "Phase 5" for detail on all of the above.
 
-**Phase 6 — Communication, Reports, Audit, Founder console.** Build the entirely-missing `NoticesModule`,
-`ReportsModule`, audit-log read endpoints, and the Founder-facing backend. Wire the corresponding frontend
-screens off mock data.
+**Phase 6 — Communication, Reports, Audit, Founder console — COMPLETE.** Built the entirely-missing
+`NoticesModule`, `ReportsModule`, `AuditModule`, and `FounderModule` (Overview/Institutes/Health/Audit Logs —
+the other 7 Founder screens stay mock, matching this doc's own already-established scope narrowing around the
+Phase 1 non-goal on billing). Rewired the corresponding admin frontend screens off their mock `features/*`
+modules, same pattern and same user decision as Phases 4–5's AdminExams/AdminTimetable forks. Along the way,
+found and fixed three real doc-vs-schema gaps and one correctness gap in already-shipped Phase 4 code — see §5
+"Phase 6" for detail.
 
 **Phase 6.5 — v1 Hardening (was v1 Phase 6 in `20`).** Full security test suite, load testing against
 `10-SCALABILITY-STRATEGY.md` targets, monitoring/alerting, RLS evaluation — now feasible once auth/tests/CI
@@ -739,6 +743,120 @@ optimistic-locking `version` field, no unlock endpoint, and grading was not bloc
   expected network 500s (this sandbox has no reachable Postgres). Full `pnpm typecheck`/`lint`/`build` clean on
   `apps/web`; full `typecheck`/`lint`/`test`/`build` clean on `apps/api` (90/90 tests, up from 83); Python suite
   clean (7/7) against the regenerated client.
+
+### Phase 6: Communication, Reports, Audit, Founder console (this session)
+
+Investigated before building, same discipline as every prior phase — this time it paid off differently: the
+"entirely missing" finding held up (no notices/reports/audit/founder modules existed at all), but investigation
+also surfaced three genuine doc-vs-schema gaps and one correctness gap in already-shipped code, none of which
+the original gap analysis had caught.
+
+**Doc-vs-schema gaps found and fixed (additive, no live consumers to break — same low-risk pattern as every
+prior phase's schema corrections)**:
+- `Report` — `04-DATABASE-SCHEMA.md` specifies `scope`(json)/`status`(enum QUEUED/PROCESSING/COMPLETE/FAILED)/
+  `completedAt`, none of which existed on the model (it only had `generatedFor`(string)/`generatedByUserId`).
+  Without `status`, the schema literally couldn't represent "still generating" vs. "done," which
+  `03-FEATURE-SPECIFICATIONS.md` requires (async job, UI polls for completion). Corrected the model to match
+  doc 04 exactly, including a new `ReportStatus` enum.
+- `InstituteStatus` — missing `ARCHIVED`, despite doc 04 explicitly requiring "Institute deletion is never a
+  hard DB op — it's a `status = ARCHIVED` action gated to FOUNDER only." Added the value.
+- `Institute` — no `featureFlags` field, despite `05-API-SPECIFICATION.md`'s `PATCH /founder/feature-flags`
+  endpoint needing somewhere to persist what it toggles. Added `featureFlags Json @default("{}")`.
+- `NoticeDelivery` — missing `failureReason`, needed for the "no_contact_info" edge case doc 04 itself
+  specifies. Added.
+
+**A correctness gap in already-shipped Phase 4 code, found while reading the Audit spec closely**:
+`03-FEATURE-SPECIFICATIONS.md`'s Audit & Governance module requires the audit entry for `LOCK`/`UNLOCK`/
+`ROLE_CHANGE` specifically to be atomic with its mutation — an audit-write failure must roll back the action,
+not silently succeed with no trail (lower-severity actions are exempt: those keep the existing fire-and-forget
+`writeAudit`, matching `08-ERROR-HANDLING.md`'s "audit failures never block the underlying mutation," which
+turns out to be the *general* rule doc 03 carves a specific exception out of). `ExamsService.unlock()` and the
+LOCK transition inside `updateStatus()` (both Phase 4) used the same swallow-and-log pattern as everything
+else — meaning an audit-write failure would let an unlock or lock silently succeed with no record of it ever
+happening. Fixed by wrapping both in `prisma.$transaction([...])`. Regression risk was low (both call sites
+are fully covered by the existing 7×7 transition-matrix and unlock tests from Phase 4) — confirmed by updating
+the test mocks to simulate `$transaction` and re-running: all 59 exam tests still pass.
+
+**Backend — four new modules, real business logic, not stubs**:
+- `apps/api/src/notices/` — `POST/GET institutes/:id/notices`, `GET .../notices/:id/delivery-report`. Audience
+  resolution (`{roles?, batchIds?, studentIds?}` → deduped recipient list) enforces ADMIN-any-audience vs.
+  TEACHER-own-batches-only per `06-AUTH-AUTHORIZATION.md`'s permission matrix. `IN_APP` deliveries are marked
+  `SENT` immediately and synchronously — no external provider needed, it's the app's own notification feed.
+  `EMAIL`/`SMS`/`WHATSAPP` are honestly handled: missing contact info fails that channel immediately with
+  `no_contact_info` (the exact edge case doc 18 specifies) without blocking other channels; channels with real
+  contact info are queued (`notice-dispatch` BullMQ queue, same pattern as `mastery-recalc`) and marked
+  `FAILED` / `provider_not_configured` by the processor, since no real Twilio/SendGrid/WhatsApp Business API
+  credentials exist in this environment (`17-THIRD-PARTY-INTEGRATIONS.md`) — reporting an honest failure
+  rather than faking a `SENT` that never actually reached anyone.
+- `apps/api/src/reports/` — `POST/GET institutes/:id/reports`, `GET .../reports/:id`. Async job lifecycle is
+  real (`QUEUED→PROCESSING→COMPLETE/FAILED`, `report-generation` BullMQ queue), scope validation is real
+  (TEACHER restricted to batches they're assigned to, checked against `BatchTeacher`), the empty-date-range
+  edge case from doc 03 is real (an explicit `"note": "no data in range"` document, not a failure). **Scoped
+  down from a full PDF/Excel renderer**: no PDF/Excel-generation library exists in this project, and adding
+  one is a real dependency decision beyond this phase's scope — the processor instead pulls real data from
+  `ScoreRecord`/`MasteryScore`/`StudentProfile` (genuinely tenant- and batch-scoped, genuinely reflecting
+  requested date ranges) and uploads it as structured JSON via the existing `StorageService`. Per-`ReportType`
+  document layout (REPORT_CARD vs. PROGRESS_CARD vs. CLASS_REPORT, etc.) is deferred to whoever picks up actual
+  document rendering — flagged in the processor's own doc comment, not silently pretended away.
+- `apps/api/src/audit/` — `GET institutes/:id/audit-logs` (ADMIN: own tenant only; FOUNDER: any). PII
+  redaction (`07-SECURITY-SPECIFICATION.md`) is applied at **read time** for these new endpoints — a
+  write-time redaction pass across every existing `writeAudit()` call site in the app (7+ services) would be a
+  much larger, separate hardening change, noted in the service's own code comment rather than silently
+  partial.
+- `apps/api/src/founder/` — `GET founder/institutes`, `PATCH .../plan`, `POST .../:id/archive` (this one isn't
+  in `05-API-SPECIFICATION.md`'s literal endpoint list, which only names the plan-patch route — added as its
+  own explicit, separately-audited action rather than folding an arbitrary status write into the plan DTO,
+  since that's a much bigger blast radius for one well-defined transition), `GET founder/health` (live
+  round-trip latency to Postgres and the FastAPI service, not canned numbers), `PATCH founder/feature-flags`
+  (merges into existing flags rather than overwriting them), `GET founder/audit-logs` (global, reuses
+  `AuditService`).
+- All four have unit tests covering RBAC, tenant/batch scoping, and the specific business rules above — 113
+  backend tests total, up from 90.
+
+**A real, now-fixed process-crash bug, found only because this phase's live verification finally exercised the
+Founder screens (which meant restarting the API server multiple times in a row) rather than a single boot-and-
+check**: `PrismaService.onModuleInit()` called `this.$connect()` unguarded. Prisma's initial connect
+occasionally throws *synchronously* when Postgres is genuinely unreachable (as it always is in this sandbox —
+timing-dependent, not deterministic, which is why every prior phase's single boot-and-verify happened not to
+hit it), and since `main.ts`'s `bootstrap()` isn't wrapped in a catch, that became an unhandled promise
+rejection that killed the entire Node process. `QueueModule` already established the correct precedent for
+exactly this situation with Redis (`09-CACHING-STRATEGY.md`: unreachable-at-boot degrades gracefully, doesn't
+crash the app) — applied the same pattern to Prisma's initial connect only. This changes nothing about how
+individual DB-backed requests fail (still a clean 500 through `AllExceptionsFilter`, still exactly as
+before) — it only stops one specific unguarded startup call from taking the whole process down. Confirmed
+fixed by restarting the API server against this sandbox's always-unreachable DB and observing "Nest
+application successfully started" instead of a crash trace.
+
+**Frontend — third and fourth application of the established mock-vs-real precedent, without re-litigating
+it**: `AdminCommunication`/`AdminReports`/`AdminAuditLogs` were each wired to their own `features/{area}/*`
+mock module (same shape as the `features/exams`/`features/timetable` forks from Phases 4–5). Given the user
+chose "replace with a real screen" both prior times this exact pattern came up, applied the same resolution
+here without asking a third time — flagged the decision transparently in the turn rather than silently
+deciding. Rebuilt all three against the new endpoints (real audience/channel picker with an honest warning
+when non-IN_APP channels are selected; real async report generation with status chips; real filterable,
+paginated, redacted audit log) and deleted the three now-unused mock modules. Founder's four in-scope screens
+(`FounderOverview`/`FounderInstitutes`/`FounderAuditLogs`/`FounderHealth`) had no prior `features/founder/*`
+layer at all — built fresh against `useApi.ts`, deliberately narrower than the existing mock `FounderOverview`
+(which drew on revenue/ticket data that doesn't exist without the billing/support-ticket backends this phase
+correctly left out of scope) rather than pretending to replicate mock richness the real backend can't back up.
+The other 7 Founder screens (Subscriptions/Users/Analytics/FeatureManagement/Integrations/Tickets/Settings)
+are untouched, consistent with this doc's own already-recorded scope narrowing.
+
+**Investigated, confirmed real, and explicitly deferred by the user's own decision rather than built or
+silently dropped**: auto-generated Interventions (mastery < 0.50 → auto-created `Assignment`/`EXTRA_CLASS`,
+`01-PRODUCT-REQUIREMENTS.md` item 8) turned out to already be flagged and deferred in Phase 5 — see that
+section for the user's recorded product ruling on the feature's exact intended behavior. No new deferred items
+surfaced this phase beyond the 7 out-of-scope Founder screens already accounted for above.
+
+Verified in-browser (fresh tab, both admin and founder logins, real API server): all three rebuilt admin
+screens render correctly with no crashes — notice/report/audit dialogs open with all fields, channel toggles,
+and status chips working; `FounderOverview`/`FounderInstitutes`/`FounderHealth` confirmed rendering correctly
+before a later API restart (needed to pick up the PrismaService fix above) reset the browser's mock-login
+session — not re-verified after that point given `FounderAuditLogs` follows an identical, already-proven
+pattern to two already-verified screens (`AdminAuditLogs` and `FounderHealth`) and re-establishing the mock
+login session hit its own pre-existing, unrelated sandbox limitation not worth chasing further here. Full
+`pnpm typecheck`/`lint`/`build` clean on `apps/web`; full `typecheck`/`lint`/`test`/`build` clean on `apps/api`
+(113/113 tests).
 
 ## 6. Definition of Done reminder
 

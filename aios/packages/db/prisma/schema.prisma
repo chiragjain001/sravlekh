@@ -45,6 +45,7 @@ enum InstituteStatus {
   ACTIVE
   SUSPENDED
   ONBOARDING
+  ARCHIVED
 }
 
 enum ExamType {
@@ -187,6 +188,7 @@ model Institute {
   logoUrl         String?
   address         String?
   phone           String?
+  featureFlags    Json            @default("{}") // 05-API-SPECIFICATION.md: PATCH /founder/feature-flags — per-tenant toggles (e.g. omrCapture, aiBlueprintAgent)
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
 
@@ -833,13 +835,14 @@ model Notice {
 }
 
 model NoticeDelivery {
-  id        String         @id @default(cuid())
-  noticeId  String
-  userId    String
-  channel   NoticeChannel
-  status    DeliveryStatus @default(QUEUED)
-  sentAt    DateTime?
-  readAt    DateTime?
+  id            String         @id @default(cuid())
+  noticeId      String
+  userId        String
+  channel       NoticeChannel
+  status        DeliveryStatus @default(QUEUED)
+  failureReason String?        // 04-DATABASE-SCHEMA.md: e.g. "no_contact_info", "provider_not_configured"
+  sentAt        DateTime?
+  readAt        DateTime?
 
   notice Notice @relation(fields: [noticeId], references: [id], onDelete: Cascade)
 
@@ -851,15 +854,24 @@ model NoticeDelivery {
 // REPORTS
 // ---------------------------------------------------------------------------
 
+enum ReportStatus {
+  QUEUED
+  PROCESSING
+  COMPLETE
+  FAILED
+}
+
 model Report {
-  id            String     @id @default(cuid())
-  instituteId   String
-  type          ReportType
-  generatedFor  String     // userId, batchId, or teacherUserId
-  fileUrl       String?    // S3/Supabase URL to PDF or Excel
-  format        String     @default("PDF") // "PDF" | "EXCEL"
-  generatedByUserId String
-  createdAt     DateTime   @default(now())
+  id                String       @id @default(cuid())
+  instituteId       String
+  type              ReportType
+  scope             Json         // 04-DATABASE-SCHEMA.md: { studentId? | batchId?, dateFrom?, dateTo? }
+  format            String       @default("PDF") // "PDF" | "EXCEL"
+  status            ReportStatus @default(QUEUED)
+  fileUrl           String?      // signed URL, set once status = COMPLETE
+  requestedByUserId String
+  createdAt         DateTime     @default(now())
+  completedAt       DateTime?
 
   institute Institute @relation(fields: [instituteId], references: [id], onDelete: Cascade)
 

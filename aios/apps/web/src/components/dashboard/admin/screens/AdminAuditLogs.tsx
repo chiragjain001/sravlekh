@@ -1,215 +1,129 @@
 'use client';
-// ─── AdminAuditLogs — Audit Logs & Activity History Console ─────────────────
-// Service layer backed implementation with TanStack Query hooks, profile drawers & analytics.
+// ─── AdminAuditLogs — tenant-scoped, real backend ──────────────────────────
+// 07-SECURITY-SPECIFICATION.md: PII fields in oldValue/newValue are redacted
+// server-side before this ever reaches the browser.
 
-import React, { useState, useCallback } from 'react';
-import {
-  Search, ChevronDown, Calendar, Bell,
-  Download, RefreshCw, ShieldAlert, FileText,
-} from 'lucide-react';
-import { AdminOverlapModal } from '../shared/AdminOverlapModal';
+import { useState } from 'react';
+import { Search, Shield } from 'lucide-react';
+import { useAuditLogs } from '@/hooks/useApi';
+import { SkeletonTable, EmptyState } from '@/components/ui/foundation';
 
-import {
-  useAuditLogs,
-  useExportAuditLogs,
-} from '@/features/audit-logs/hooks/useAuditLogs';
-import { AuditLogsTable }       from '@/features/audit-logs/components/AuditLogsTable';
-import { AuditLogDrawer }       from '@/features/audit-logs/components/AuditLogDrawer';
-import { AuditAnalyticsPanel }  from '@/features/audit-logs/components/AuditAnalyticsPanel';
+const ACTIONS = ['CREATE', 'UPDATE', 'DELETE', 'APPROVE', 'PUBLISH', 'LOCK', 'UNLOCK', 'TRANSFER', 'ROLE_CHANGE', 'LOGIN', 'LOGIN_FAILED'];
 
-import type {
-  AuditLogItem,
-  GetAuditLogsParams,
-} from '@/features/audit-logs/types/audit-log.types';
+const ACTION_STYLE: Record<string, string> = {
+  CREATE: 'bg-emerald-50 text-emerald-700',
+  UPDATE: 'bg-sky-50 text-sky-700',
+  DELETE: 'bg-rose-50 text-rose-700',
+  APPROVE: 'bg-emerald-50 text-emerald-700',
+  PUBLISH: 'bg-indigo-50 text-indigo-700',
+  LOCK: 'bg-orange-50 text-orange-700',
+  UNLOCK: 'bg-amber-50 text-amber-700',
+  ROLE_CHANGE: 'bg-violet-50 text-violet-700',
+  LOGIN_FAILED: 'bg-rose-50 text-rose-700',
+};
 
-function useToast() {
-  const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
-  const show = useCallback((msg: string, type: 'success' | 'error' = 'success') => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3000);
-  }, []);
-  return { toast, show };
-}
-
-function Toast({ msg, type }: { msg: string; type: string }) {
-  return (
-    <div className={`fixed bottom-6 right-6 z-[200] flex items-center gap-3 px-5 py-3.5 rounded-xl shadow-2xl text-white text-sm font-bold transition-all
-      ${type === 'success' ? 'bg-emerald-600' : 'bg-rose-600'}`}>
-      {type === 'success' ? '✓' : '✗'} {msg}
-    </div>
-  );
+interface AuditLogRow {
+  id: string;
+  actorId: string;
+  action: string;
+  entity: string;
+  entityId: string;
+  createdAt: string;
 }
 
 export function AdminAuditLogs() {
-  const [search, setSearch]             = useState('');
-  const [userFilter, setUserFilter]     = useState('');
-  const [moduleFilter, setModuleFilter] = useState('');
-  const [actionFilter, setActionFilter] = useState('');
-  const [page, setPage]                 = useState(1);
+  const [action, setAction] = useState('');
+  const [entity, setEntity] = useState('');
+  const [page, setPage] = useState(1);
 
-  // Drawers & Modals
-  const [selectedLog, setSelectedLog]     = useState<AuditLogItem | null>(null);
-  const [activeModal, setActiveModal]     = useState<'securityLog' | null>(null);
+  const { data, isPending, isError } = useAuditLogs({
+    ...(action ? { action } : {}),
+    ...(entity.trim() ? { entity: entity.trim() } : {}),
+    page, pageSize: 20,
+  });
 
-  const { toast, show: showToast } = useToast();
-
-  const params: GetAuditLogsParams = {
-    user:   userFilter   || undefined,
-    module: moduleFilter || undefined,
-    action: actionFilter || undefined,
-    search,
-    page,
-    limit: 10,
-  };
-
-  const { data: paginatedLogs, isLoading, refetch } = useAuditLogs(params);
-  const exportMutation = useExportAuditLogs();
-
-  async function handleExport() {
-    await exportMutation.mutateAsync();
-    showToast('Audit log exported to CSV');
-  }
+  const logs: AuditLogRow[] = data?.data ?? [];
+  const meta = data?.meta as { total: number; page: number; totalPages: number } | undefined;
 
   return (
-    <div className="p-6 text-[#1e293b] animate-fadein space-y-6 max-w-[1700px] mx-auto w-full">
-      {/* Header */}
-      <div className="flex items-center justify-between pb-4 border-b border-gray-200">
-        <div>
-          <h1 className="text-xl font-bold text-gray-900">Audit Logs &amp; Activity History</h1>
-          <p className="text-xs text-gray-500 mt-0.5">Track all administrative actions, system modifications, and security events</p>
-        </div>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-1.5 text-xs text-gray-500 font-medium">
-            <Calendar className="w-3.5 h-3.5 text-gray-400" />
-            <span>Today, 23 May 2025</span>
-          </div>
-          <div className="relative p-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 cursor-pointer">
-            <Bell className="w-4 h-4 text-gray-500" />
-            <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 rounded-full text-white text-[9px] font-bold flex items-center justify-center">
-              4
-            </span>
-          </div>
-        </div>
+    <div className="p-6 space-y-4 max-w-[1300px] mx-auto w-full">
+      <div>
+        <h2 className="text-[15px] font-bold text-slate-900">Audit Log</h2>
+        <p className="text-xs text-slate-500 mt-0.5">Immutable, tenant-scoped record of every sensitive action. PII fields are redacted.</p>
       </div>
 
-      <div className="space-y-6">
-        {/* Full-Width Controls Bar */}
-        <div className="flex items-center justify-between gap-3 flex-wrap bg-white p-2.5 rounded-xl border border-gray-100 shadow-[0_2px_10px_rgba(0,0,0,0.02)]">
-          <div className="flex items-center gap-2 flex-wrap flex-1 min-w-[280px]">
-            <div className="relative flex-1 max-w-sm">
-              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Search by user, action, module or details..."
-                className="pl-8 pr-3 py-1.5 w-full text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-blue-500 text-gray-700 bg-white"
-                value={search}
-                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-              />
-            </div>
-
-            {/* Filter: All Users */}
-            <div className="relative">
-              <select
-                value={userFilter}
-                onChange={(e) => { setUserFilter(e.target.value); setPage(1); }}
-                className="appearance-none py-1.5 pl-3 pr-8 text-xs font-semibold border border-gray-200 rounded-lg bg-white text-gray-700 hover:bg-gray-50 focus:outline-none focus:border-blue-500 cursor-pointer"
-              >
-                <option value="">All Users</option>
-                <option value="Neha Malhotra">Neha Malhotra</option>
-                <option value="Rahul Verma">Rahul Verma</option>
-                <option value="Priya Sharma">Priya Sharma</option>
-                <option value="System Bot">System Bot</option>
-              </select>
-              <ChevronDown className="w-3.5 h-3.5 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
-
-            {/* Filter: All Modules */}
-            <div className="relative">
-              <select
-                value={moduleFilter}
-                onChange={(e) => { setModuleFilter(e.target.value); setPage(1); }}
-                className="appearance-none py-1.5 pl-3 pr-8 text-xs font-semibold border border-gray-200 rounded-lg bg-white text-gray-700 hover:bg-gray-50 focus:outline-none focus:border-blue-500 cursor-pointer"
-              >
-                <option value="">All Modules</option>
-                <option value="Students">Students</option>
-                <option value="Batches">Batches</option>
-                <option value="Academics">Academics</option>
-                <option value="Attendance">Attendance</option>
-                <option value="Exams">Exams</option>
-                <option value="Finance">Finance</option>
-              </select>
-              <ChevronDown className="w-3.5 h-3.5 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => refetch()}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 whitespace-nowrap cursor-pointer"
-            >
-              <RefreshCw className="w-3.5 h-3.5 text-gray-500" /> Refresh
-            </button>
-            <button
-              onClick={handleExport}
-              className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-sm transition-colors whitespace-nowrap cursor-pointer"
-            >
-              <Download className="w-3.5 h-3.5" /> Export Audit Log
-            </button>
-          </div>
-        </div>
-
-        {/* ── AUDIT LOGS TABLE SET TO FULL WIDTH CARD ── */}
-        {paginatedLogs ? (
-          <AuditLogsTable
-            paginated={paginatedLogs}
-            onRowClick={(log) => setSelectedLog(log)}
-            onPageChange={(p) => setPage(p)}
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="relative flex-1 min-w-[220px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+          <input
+            value={entity}
+            onChange={(e) => { setEntity(e.target.value); setPage(1); }}
+            placeholder="Filter by entity, e.g. exams..."
+            className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400"
           />
-        ) : (
-          <div className="h-64 bg-slate-100 rounded-xl animate-pulse" />
-        )}
-
-        {/* ── OTHER CARDS SET BELOW THE AUDIT TRAIL TABLE ── */}
-        <AuditAnalyticsPanel
-          onOpenSecurityLog={() => setActiveModal('securityLog')}
-        />
+        </div>
+        <select
+          value={action}
+          onChange={(e) => { setAction(e.target.value); setPage(1); }}
+          className="px-3 py-2 text-xs border border-slate-200 rounded-lg bg-white text-slate-700"
+        >
+          <option value="">All actions</option>
+          {ACTIONS.map((a) => <option key={a} value={a}>{a.replace(/_/g, ' ')}</option>)}
+        </select>
       </div>
 
-      {/* Profile Drawer */}
-      <AuditLogDrawer
-        log={selectedLog}
-        onClose={() => setSelectedLog(null)}
-      />
+      {isPending && <SkeletonTable rows={8} cols={5} />}
 
-      {/* ── OVERLAP MODAL: Security Log ── */}
-      <AdminOverlapModal
-        isOpen={activeModal === 'securityLog'}
-        onClose={() => setActiveModal(null)}
-        title="Security Audit &amp; Access Alert Log"
-        subtitle="Detailed trace of authentication failures, permission changes, and security events"
-        icon={ShieldAlert}
-        badgeText="12 Security Alerts"
-        badgeColor="bg-rose-50 text-rose-600 border-rose-100"
-      >
-        <div className="space-y-3">
-          <div className="p-4 rounded-xl bg-rose-50 border border-rose-100 flex items-center justify-between">
-            <div>
-              <h4 className="text-xs font-bold text-rose-900">Failed Login Attempt (IP: 192.168.1.105)</h4>
-              <p className="text-[11px] text-rose-700">Invalid password attempt for account admin@aios.edu.in</p>
+      {isError && (
+        <EmptyState icon={<Shield className="w-6 h-6" />} title="Couldn't load the audit log" description="Something went wrong. Try refreshing the page." />
+      )}
+
+      {!isPending && !isError && logs.length === 0 && (
+        <EmptyState icon={<Shield className="w-6 h-6" />} title="No matching audit entries" description="Try a different filter." />
+      )}
+
+      {!isPending && !isError && logs.length > 0 && (
+        <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="border-b border-slate-100 bg-slate-50/50">
+                <th className="px-4 py-2.5 text-[11px] font-bold text-slate-500 uppercase tracking-wide">Action</th>
+                <th className="px-4 py-2.5 text-[11px] font-bold text-slate-500 uppercase tracking-wide">Entity</th>
+                <th className="px-4 py-2.5 text-[11px] font-bold text-slate-500 uppercase tracking-wide">Actor</th>
+                <th className="px-4 py-2.5 text-[11px] font-bold text-slate-500 uppercase tracking-wide">When</th>
+              </tr>
+            </thead>
+            <tbody>
+              {logs.map((log) => (
+                <tr key={log.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50">
+                  <td className="px-4 py-3">
+                    <span className={`text-[10.5px] font-bold px-2 py-0.5 rounded-md ${ACTION_STYLE[log.action] ?? 'bg-slate-100 text-slate-600'}`}>
+                      {log.action.replace(/_/g, ' ')}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-[12.5px] text-slate-800">{log.entity} <span className="text-slate-400">/{log.entityId}</span></td>
+                  <td className="px-4 py-3 text-[12px] text-slate-500 font-mono">{log.actorId}</td>
+                  <td className="px-4 py-3 text-[12px] text-slate-500">{new Date(log.createdAt).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {meta && meta.totalPages > 1 && (
+            <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100">
+              <span className="text-[11px] text-slate-500">Page {meta.page} of {meta.totalPages} · {meta.total} entries</span>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1} className="px-3 py-1.5 text-[11px] font-semibold border border-slate-200 rounded-lg disabled:opacity-40 hover:bg-slate-50">
+                  Previous
+                </button>
+                <button onClick={() => setPage((p) => Math.min(meta.totalPages, p + 1))} disabled={page >= meta.totalPages} className="px-3 py-1.5 text-[11px] font-semibold border border-slate-200 rounded-lg disabled:opacity-40 hover:bg-slate-50">
+                  Next
+                </button>
+              </div>
             </div>
-            <span className="text-xs font-bold text-rose-600">23 May, 10:14 AM</span>
-          </div>
-          <div className="p-4 rounded-xl bg-amber-50 border border-amber-100 flex items-center justify-between">
-            <div>
-              <h4 className="text-xs font-bold text-amber-900">User Permission Modified</h4>
-              <p className="text-[11px] text-amber-700">Super Admin Neha Malhotra modified RBAC role for Rahul Verma</p>
-            </div>
-            <span className="text-xs font-bold text-amber-600">22 May, 07:30 PM</span>
-          </div>
+          )}
         </div>
-      </AdminOverlapModal>
-
-      {toast && <Toast msg={toast.msg} type={toast.type} />}
+      )}
     </div>
   );
 }

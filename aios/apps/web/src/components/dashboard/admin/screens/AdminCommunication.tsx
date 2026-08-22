@@ -1,357 +1,277 @@
 'use client';
-// ─── AdminCommunication — Communication & Announcements Console ─────────────
-// Full service layer integration with TanStack Query, drawer inspection, creation modal & overlap overlays.
+// ─── AdminCommunication — Notice Center ────────────────────────────────────
+// Real backend: broadcast is queued (IN_APP delivers immediately; EMAIL/SMS/
+// WHATSAPP need a provider that isn't configured in this environment, so
+// those deliveries land as FAILED "provider_not_configured" rather than a
+// faked SENT — see NoticeDispatchProcessor).
 
-import React, { useState, useCallback } from 'react';
-import {
-  Calendar, Bell, Plus, Search, ChevronDown, Send, Mail, MessageSquare,
-  CheckCircle2, Megaphone, Users, PhoneCall, ChevronRight, Eye, Clock,
-} from 'lucide-react';
-import { AdminOverlapModal } from '../shared/AdminOverlapModal';
+import { useState } from 'react';
+import { Plus, Search, Send, Loader2, Megaphone } from 'lucide-react';
+import { useAuth } from '@/contexts/auth.context';
+import { useNotices, useCreateNotice, useNoticeDeliveryReport, useBatches } from '@/hooks/useApi';
+import { SkeletonTable, EmptyState } from '@/components/ui/foundation';
 
-import {
-  useAnnouncementsList,
-  useCreateAnnouncement,
-  useUpdateAnnouncement,
-  useDeleteAnnouncement,
-} from '@/features/communication/hooks/useCommunication';
-import { AnnouncementsTable }           from '@/features/communication/components/AnnouncementsTable';
-import { AnnouncementProfileDrawer }    from '@/features/communication/components/AnnouncementProfileDrawer';
-import { CreateAnnouncementDialog }    from '@/features/communication/components/CreateAnnouncementDialog';
-import { DeleteAnnouncementDialog }    from '@/features/communication/components/DeleteAnnouncementDialog';
-import { CommunicationAnalyticsPanel } from '@/features/communication/components/CommunicationAnalyticsPanel';
+const CHANNELS = ['IN_APP', 'EMAIL', 'SMS', 'WHATSAPP'];
+const STATUS_STYLE: Record<string, string> = {
+  QUEUED: 'bg-slate-100 text-slate-600',
+  SENT: 'bg-emerald-50 text-emerald-700',
+  DELIVERED: 'bg-emerald-50 text-emerald-700',
+  FAILED: 'bg-rose-50 text-rose-700',
+  READ: 'bg-indigo-50 text-indigo-700',
+};
 
-import type {
-  AnnouncementItem,
-  GetAnnouncementsParams,
-  CreateAnnouncementInput,
-  UpdateAnnouncementInput,
-} from '@/features/communication/types/communication.types';
-
-function useToast() {
-  const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
-  const show = useCallback((msg: string, type: 'success' | 'error' = 'success') => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3000);
-  }, []);
-  return { toast, show };
+interface NoticeRow {
+  id: string;
+  title: string;
+  channels: string[];
+  createdAt: string;
+  _count?: { deliveries: number };
 }
 
-function Toast({ msg, type }: { msg: string; type: string }) {
+export function AdminCommunication() {
+  const [search, setSearch] = useState('');
+  const [createOpen, setCreateOpen] = useState(false);
+  const [reportTarget, setReportTarget] = useState<NoticeRow | null>(null);
+
+  const { data, isPending, isError } = useNotices();
+  const notices: NoticeRow[] = data?.data ?? [];
+  const visible = search.trim()
+    ? notices.filter((n) => n.title.toLowerCase().includes(search.trim().toLowerCase()))
+    : notices;
+
   return (
-    <div className={`fixed bottom-6 right-6 z-[200] flex items-center gap-3 px-5 py-3.5 rounded-xl shadow-2xl text-white text-sm font-bold transition-all
-      ${type === 'success' ? 'bg-emerald-600' : 'bg-rose-600'}`}>
-      {type === 'success' ? '✓' : '✗'} {msg}
+    <div className="p-6 space-y-4 max-w-[1300px] mx-auto w-full">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-[15px] font-bold text-slate-900">Notice Center</h2>
+          <p className="text-xs text-slate-500 mt-0.5">Broadcast notices to students, batches, or staff across channels.</p>
+        </div>
+        <button
+          onClick={() => setCreateOpen(true)}
+          className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white text-[12.5px] font-bold rounded-xl hover:bg-indigo-700 transition-colors"
+        >
+          <Plus className="w-3.5 h-3.5" /> New Notice
+        </button>
+      </div>
+
+      <div className="relative max-w-sm">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search notices by title..."
+          className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400"
+        />
+      </div>
+
+      {isPending && <SkeletonTable rows={6} cols={4} />}
+
+      {isError && (
+        <EmptyState icon={<Megaphone className="w-6 h-6" />} title="Couldn't load notices" description="Something went wrong. Try refreshing the page." />
+      )}
+
+      {!isPending && !isError && visible.length === 0 && (
+        <EmptyState
+          icon={<Megaphone className="w-6 h-6" />}
+          title="No notices sent yet"
+          description="Broadcast your first notice to students, a batch, or staff."
+          action={{ label: 'New Notice', onClick: () => setCreateOpen(true) }}
+        />
+      )}
+
+      {!isPending && !isError && visible.length > 0 && (
+        <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="border-b border-slate-100 bg-slate-50/50">
+                <th className="px-4 py-2.5 text-[11px] font-bold text-slate-500 uppercase tracking-wide">Title</th>
+                <th className="px-4 py-2.5 text-[11px] font-bold text-slate-500 uppercase tracking-wide">Channels</th>
+                <th className="px-4 py-2.5 text-[11px] font-bold text-slate-500 uppercase tracking-wide">Recipients</th>
+                <th className="px-4 py-2.5 text-[11px] font-bold text-slate-500 uppercase tracking-wide">Sent</th>
+                <th className="px-4 py-2.5 text-[11px] font-bold text-slate-500 uppercase tracking-wide text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((n) => (
+                <tr key={n.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50">
+                  <td className="px-4 py-3 text-[12.5px] font-medium text-slate-800">{n.title}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex gap-1 flex-wrap">
+                      {n.channels.map((c) => (
+                        <span key={c} className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700">{c}</span>
+                      ))}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-[12px] text-slate-500">{n._count?.deliveries ?? '—'}</td>
+                  <td className="px-4 py-3 text-[12px] text-slate-500">{new Date(n.createdAt).toLocaleString()}</td>
+                  <td className="px-4 py-3 text-right">
+                    <button onClick={() => setReportTarget(n)} className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800">
+                      Delivery Report
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <CreateNoticeDialog isOpen={createOpen} onClose={() => setCreateOpen(false)} />
+      <DeliveryReportDialog notice={reportTarget} onClose={() => setReportTarget(null)} />
     </div>
   );
 }
 
-export function AdminCommunication() {
-  const [search, setSearch]               = useState('');
-  const [targetFilter, setTargetFilter]   = useState('');
-  const [channelFilter, setChannelFilter] = useState('');
-  const [statusFilter, setStatusFilter]   = useState('');
+// ─── Create Notice ──────────────────────────────────────────────────────────
 
-  // Modals & Drawers
-  const [activeModal, setActiveModal]                 = useState<'broadcasts' | 'messages' | 'scheduled' | null>(null);
-  const [selectedAnnouncement, setSelectedAnnouncement] = useState<AnnouncementItem | null>(null);
-  const [createOpen, setCreateOpen]                   = useState(false);
-  const [editTarget, setEditTarget]                   = useState<AnnouncementItem | null>(null);
-  const [deleteTarget, setDeleteTarget]               = useState<AnnouncementItem | null>(null);
+function CreateNoticeDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+  const { user } = useAuth();
+  const isTeacher = user?.role === 'TEACHER';
+  const { data: batches } = useBatches();
+  const createNotice = useCreateNotice();
 
-  const { toast, show: showToast } = useToast();
+  const [title, setTitle] = useState('');
+  const [body, setBody] = useState('');
+  const [channels, setChannels] = useState<string[]>(['IN_APP']);
+  const [batchId, setBatchId] = useState('');
 
-  const params: GetAnnouncementsParams = {
-    search,
-    target:  targetFilter  || undefined,
-    channel: channelFilter || undefined,
-    status:  statusFilter  || undefined,
-  };
+  if (!isOpen) return null;
 
-  const { data: announcements = [], isLoading } = useAnnouncementsList(params);
-
-  const createMutation = useCreateAnnouncement();
-  const updateMutation = useUpdateAnnouncement();
-  const deleteMutation = useDeleteAnnouncement();
-
-  async function handleCreateAnnouncement(input: CreateAnnouncementInput | UpdateAnnouncementInput) {
-    await createMutation.mutateAsync(input as CreateAnnouncementInput);
-    showToast('Broadcast announcement dispatched successfully');
+  function toggleChannel(c: string) {
+    setChannels((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));
   }
 
-  async function handleEditAnnouncement(input: CreateAnnouncementInput | UpdateAnnouncementInput) {
-    await updateMutation.mutateAsync(input as UpdateAnnouncementInput);
-    showToast('Announcement updated');
-    setEditTarget(null);
+  function reset() {
+    setTitle(''); setBody(''); setChannels(['IN_APP']); setBatchId('');
   }
 
-  async function handleDeleteConfirm() {
-    if (!deleteTarget) return;
-    await deleteMutation.mutateAsync(deleteTarget.id);
-    setDeleteTarget(null);
-    setSelectedAnnouncement(null);
-    showToast('Announcement withdrawn');
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!title.trim() || !body.trim() || channels.length === 0) return;
+    const targetAudience = batchId
+      ? { batchIds: [batchId] }
+      : { roles: ['STUDENT'] }; // ADMIN default broadcast; teachers must pick a batch
+    createNotice.mutate(
+      { title: title.trim(), body: body.trim(), channels, targetAudience },
+      { onSuccess: () => { reset(); onClose(); } },
+    );
   }
 
   return (
-    <div className="p-6 text-[#1e293b] animate-fadein space-y-6 max-w-[1700px] mx-auto w-full">
-      {/* Header */}
-      <div className="flex items-center justify-between pb-4 border-b border-gray-200">
-        <div>
-          <h1 className="text-xl font-bold text-gray-900">Communication &amp; Announcements</h1>
-          <p className="text-xs text-gray-500 mt-0.5">Broadcast updates, manage notification channels, and view delivery metrics</p>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm" role="dialog" aria-modal="true">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+          <h3 className="text-[14px] font-bold text-slate-900">New Notice</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">×</button>
         </div>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-1.5 text-xs text-gray-500 font-medium">
-            <Calendar className="w-3.5 h-3.5 text-gray-400" />
-            <span>Today, 23 May 2025</span>
+
+        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+          <div>
+            <label className="block text-[12px] font-semibold text-slate-700 mb-1">Title</label>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g. Diwali Break Schedule"
+              required
+              className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            />
           </div>
-          <div className="relative p-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 cursor-pointer">
-            <Bell className="w-4 h-4 text-gray-500" />
-            <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 rounded-full text-white text-[9px] font-bold flex items-center justify-center">
-              4
-            </span>
+          <div>
+            <label className="block text-[12px] font-semibold text-slate-700 mb-1">Message</label>
+            <textarea
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              rows={3}
+              required
+              className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            />
+          </div>
+          <div>
+            <label className="block text-[12px] font-semibold text-slate-700 mb-1">
+              Batch {isTeacher ? '(required — you can only notify your own batches)' : '(optional — leave blank to notify all students)'}
+            </label>
+            <select value={batchId} onChange={(e) => setBatchId(e.target.value)} required={isTeacher} className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg bg-white">
+              <option value="">{isTeacher ? 'Select a batch' : 'All students'}</option>
+              {(batches ?? []).map((b: { id: string; name: string }) => (
+                <option key={b.id} value={b.id}>{b.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-[12px] font-semibold text-slate-700 mb-1">Channels</label>
+            <div className="flex gap-2 flex-wrap">
+              {CHANNELS.map((c) => (
+                <button
+                  key={c} type="button" onClick={() => toggleChannel(c)}
+                  className={`px-2.5 py-1.5 text-[11px] font-semibold rounded-md border transition-colors ${
+                    channels.includes(c) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  {c.replace(/_/g, ' ')}
+                </button>
+              ))}
+            </div>
+            {channels.some((c) => c !== 'IN_APP') && (
+              <p className="text-[11px] text-amber-600 mt-1.5">Email/SMS/WhatsApp providers aren't configured in this environment — those deliveries will show as failed.</p>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={onClose} className="px-4 py-2 text-[12px] font-semibold text-slate-700 border border-slate-200 rounded-lg hover:bg-slate-50">
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={createNotice.isPending || channels.length === 0}
+              className="flex items-center gap-1.5 px-4 py-2 text-[12px] font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {createNotice.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+              Broadcast
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ─── Delivery Report ────────────────────────────────────────────────────────
+
+function DeliveryReportDialog({ notice, onClose }: { notice: NoticeRow | null; onClose: () => void }) {
+  const { data } = useNoticeDeliveryReport(notice?.id ?? null);
+
+  if (!notice) return null;
+
+  const deliveries: { id: string; channel: string; status: string; failureReason?: string | null }[] = data?.deliveries ?? [];
+  const summary: Record<string, number> = data?.summary ?? {};
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm" role="dialog" aria-modal="true">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden max-h-[85vh] flex flex-col">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+          <h3 className="text-[14px] font-bold text-slate-900">Delivery Report — {notice.title}</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">×</button>
+        </div>
+        <div className="p-5 space-y-4 overflow-y-auto">
+          <div className="flex gap-2 flex-wrap">
+            {Object.entries(summary).map(([status, count]) => (
+              <span key={status} className={`text-[10.5px] font-bold px-2.5 py-1 rounded-md ${STATUS_STYLE[status] ?? 'bg-slate-100 text-slate-600'}`}>
+                {status}: {count}
+              </span>
+            ))}
+          </div>
+          <div className="divide-y divide-slate-50 border border-slate-100 rounded-lg overflow-hidden">
+            {deliveries.map((d) => (
+              <div key={d.id} className="flex items-center justify-between px-3 py-2 text-[12px]">
+                <span className="text-slate-600">{d.channel}</span>
+                <span className={`text-[10.5px] font-bold px-2 py-0.5 rounded-md ${STATUS_STYLE[d.status] ?? 'bg-slate-100 text-slate-600'}`}>
+                  {d.status}{d.failureReason ? ` — ${d.failureReason}` : ''}
+                </span>
+              </div>
+            ))}
           </div>
         </div>
       </div>
-
-      <div className="space-y-6">
-        {/* Controls Bar */}
-        <div className="flex items-center justify-between gap-3 flex-wrap bg-white p-2.5 rounded-xl border border-gray-100 shadow-[0_2px_10px_rgba(0,0,0,0.02)]">
-          <div className="flex items-center gap-2 flex-wrap flex-1 min-w-[280px]">
-            <div className="relative flex-1 max-w-sm">
-              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Search announcements by title or target..."
-                className="pl-8 pr-3 py-1.5 w-full text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-blue-500 text-gray-700 bg-white"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </div>
-
-            <div className="relative">
-              <select
-                value={targetFilter} onChange={(e) => setTargetFilter(e.target.value)}
-                className="appearance-none py-1.5 pl-3 pr-8 text-xs font-semibold border border-gray-200 rounded-lg bg-white text-gray-700 hover:bg-gray-50 focus:outline-none focus:border-blue-500 cursor-pointer"
-              >
-                <option value="">All Target Groups</option>
-                <option value="Students">All Students</option>
-                <option value="Parents">All Parents</option>
-                <option value="JEE">JEE Batches</option>
-                <option value="NEET">NEET Batches</option>
-              </select>
-              <ChevronDown className="w-3.5 h-3.5 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
-
-            <div className="relative">
-              <select
-                value={channelFilter} onChange={(e) => setChannelFilter(e.target.value)}
-                className="appearance-none py-1.5 pl-3 pr-8 text-xs font-semibold border border-gray-200 rounded-lg bg-white text-gray-700 hover:bg-gray-50 focus:outline-none focus:border-blue-500 cursor-pointer"
-              >
-                <option value="">All Channels</option>
-                <option value="App Push">App Push</option>
-                <option value="SMS">SMS Alert</option>
-                <option value="WhatsApp">WhatsApp</option>
-                <option value="Email">Email</option>
-              </select>
-              <ChevronDown className="w-3.5 h-3.5 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
-
-            <div className="relative">
-              <select
-                value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
-                className="appearance-none py-1.5 pl-3 pr-8 text-xs font-semibold border border-gray-200 rounded-lg bg-white text-gray-700 hover:bg-gray-50 focus:outline-none focus:border-blue-500 cursor-pointer"
-              >
-                <option value="">All Statuses</option>
-                <option value="Published">Published</option>
-                <option value="Scheduled">Scheduled</option>
-                <option value="Draft">Draft</option>
-              </select>
-              <ChevronDown className="w-3.5 h-3.5 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => { setEditTarget(null); setCreateOpen(true); }}
-              className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-sm transition-colors whitespace-nowrap cursor-pointer"
-            >
-              <Megaphone className="w-3.5 h-3.5" /> New Broadcast Announcement
-            </button>
-          </div>
-        </div>
-
-        {/* ── RECENT ANNOUNCEMENTS MASTER TABLE SET TO FULL WIDTH CARD ── */}
-        <div className="w-full bg-white rounded-xl border border-gray-100 shadow-[0_2px_10px_rgba(0,0,0,0.02)] overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
-                <Megaphone className="w-4 h-4" />
-              </div>
-              <div>
-                <h2 className="text-sm font-bold text-gray-900">Recent &amp; Broadcast Announcements</h2>
-                <p className="text-[11px] text-gray-500">Master record of institute notices dispatched across channels</p>
-              </div>
-            </div>
-            <button
-              onClick={() => setActiveModal('broadcasts')}
-              className="text-xs font-bold text-blue-600 hover:underline cursor-pointer"
-            >
-              View Full History →
-            </button>
-          </div>
-
-          <AnnouncementsTable
-            announcements={announcements}
-            loading={isLoading}
-            onSelect={(ann) => setSelectedAnnouncement(ann)}
-            onViewStats={(ann) => setSelectedAnnouncement(ann)}
-          />
-        </div>
-
-        {/* ── SECONDARY COMMUNICATION WIDGETS BELOW FULL WIDTH MASTER TABLE ── */}
-        <CommunicationAnalyticsPanel
-          onOpenBroadcastModal={() => { setEditTarget(null); setCreateOpen(true); }}
-          onOpenDirectMessages={() => setActiveModal('messages')}
-          onOpenScheduled={() => setActiveModal('scheduled')}
-        />
-      </div>
-
-      {/* Drawer */}
-      <AnnouncementProfileDrawer
-        announcement={selectedAnnouncement}
-        onClose={() => setSelectedAnnouncement(null)}
-        onEdit={(ann) => { setEditTarget(ann); setCreateOpen(true); setSelectedAnnouncement(null); }}
-      />
-
-      {/* Create / Edit Dialog */}
-      <CreateAnnouncementDialog
-        isOpen={createOpen}
-        onClose={() => { setCreateOpen(false); setEditTarget(null); }}
-        editTarget={editTarget}
-        onSubmit={editTarget ? handleEditAnnouncement : handleCreateAnnouncement}
-      />
-
-      {/* Delete Dialog */}
-      <DeleteAnnouncementDialog
-        isOpen={!!deleteTarget}
-        onClose={() => setDeleteTarget(null)}
-        onConfirm={handleDeleteConfirm}
-        announcement={deleteTarget}
-        loading={deleteMutation.isPending}
-      />
-
-      {/* ── OVERLAP MODALS ── */}
-
-      {/* 1. All Broadcast Announcements Directory Modal */}
-      <AdminOverlapModal
-        isOpen={activeModal === 'broadcasts'}
-        onClose={() => setActiveModal(null)}
-        title="Institute Broadcast Announcements Directory"
-        subtitle="Complete archive of all dispatched notices and push broadcasts"
-        icon={Megaphone}
-        badgeText={`${announcements.length} Dispatches`}
-      >
-        <div className="space-y-3">
-          <div className="overflow-x-auto rounded-xl border border-slate-100">
-            <table className="w-full text-left text-xs whitespace-nowrap">
-              <thead className="bg-slate-50 text-slate-700 font-bold border-b border-slate-100">
-                <tr>
-                  <th className="p-3">Title</th>
-                  <th className="p-3">Target Cohort</th>
-                  <th className="p-3">Dispatch Time</th>
-                  <th className="p-3">Delivery Rate</th>
-                  <th className="p-3 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {announcements.map((item) => (
-                  <tr key={item.id} className="hover:bg-blue-50/20">
-                    <td className="p-3 font-bold text-slate-900">{item.title}</td>
-                    <td className="p-3 text-slate-700">{item.targetAudience}</td>
-                    <td className="p-3 text-slate-500">{item.publishDate}</td>
-                    <td className="p-3 font-bold text-emerald-600">{item.readRate}% Read Rate</td>
-                    <td className="p-3 text-right">
-                      <button
-                        onClick={() => { setSelectedAnnouncement(item); setActiveModal(null); }}
-                        className="px-3 py-1 bg-blue-600 text-white font-bold text-[11px] rounded-lg cursor-pointer"
-                      >
-                        Inspect
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </AdminOverlapModal>
-
-      {/* 2. Direct Messages Modal */}
-      <AdminOverlapModal
-        isOpen={activeModal === 'messages'}
-        onClose={() => setActiveModal(null)}
-        title="Direct Parent &amp; Student Messages Queue"
-        subtitle="Incoming inquiries and direct support messages"
-        icon={MessageSquare}
-        badgeText="14 Unread"
-      >
-        <div className="space-y-3">
-          {[
-            { sender: 'Rohan Verma (Parent)', msg: 'Inquiry regarding PTM timing slot and teacher availability', time: '10 min ago' },
-            { sender: 'Ananya Sharma (Student)', msg: 'Request for Physics revision numericals PDF', time: '42 min ago' },
-            { sender: 'Dr. Ramesh Kumar (Faculty)', msg: 'Submitted test paper blueprint for review', time: '1 hr ago' },
-          ].map((m, i) => (
-            <div key={i} className="p-4 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between">
-              <div>
-                <h4 className="text-xs font-bold text-slate-900">{m.sender}</h4>
-                <p className="text-xs text-slate-600 mt-0.5">{m.msg}</p>
-                <span className="text-[10px] text-slate-400">{m.time}</span>
-              </div>
-              <button
-                onClick={() => { showToast('Reply sent'); setActiveModal(null); }}
-                className="px-3 py-1 bg-blue-600 text-white font-bold text-xs rounded-lg cursor-pointer"
-              >
-                Reply
-              </button>
-            </div>
-          ))}
-        </div>
-      </AdminOverlapModal>
-
-      {/* 3. Scheduled Broadcasts Modal */}
-      <AdminOverlapModal
-        isOpen={activeModal === 'scheduled'}
-        onClose={() => setActiveModal(null)}
-        title="Scheduled Automated Broadcasts"
-        subtitle="Manage upcoming queue of automated push alerts and emails"
-        icon={Clock}
-        badgeText="4 Scheduled"
-      >
-        <div className="space-y-3">
-          {[
-            { title: 'Weekly Performance Digest', time: 'Tomorrow, 09:00 AM', target: 'All Parents' },
-            { title: 'NEET Practice Test Reminder', time: '25 May, 06:00 PM', target: 'NEET Batches' },
-          ].map((s, i) => (
-            <div key={i} className="p-4 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between">
-              <div>
-                <h4 className="text-xs font-bold text-slate-900">{s.title}</h4>
-                <p className="text-xs text-blue-600 font-bold mt-0.5">Scheduled for: {s.time}</p>
-                <span className="text-[10px] text-slate-400">Target: {s.target}</span>
-              </div>
-              <button
-                onClick={() => { showToast('Scheduled broadcast cancelled'); setActiveModal(null); }}
-                className="px-3 py-1 bg-rose-50 text-rose-600 border border-rose-100 font-bold text-xs rounded-lg cursor-pointer"
-              >
-                Cancel
-              </button>
-            </div>
-          ))}
-        </div>
-      </AdminOverlapModal>
-
-      {toast && <Toast msg={toast.msg} type={toast.type} />}
     </div>
   );
 }
