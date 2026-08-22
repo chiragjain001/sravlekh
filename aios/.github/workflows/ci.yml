@@ -60,18 +60,17 @@ jobs:
     # every moderate advisory) so this is a real gate, not noisy enough to get
     # reflexively ignored.
     #
-    # continue-on-error: this repo has 18 pre-existing high-severity findings
-    # as of this job's introduction (mostly transitive: postcss/nanoid/js-yaml/
-    # lodash/multer via build tooling and Next.js's own dependency tree, not
-    # directly-controlled versions) — see docs/33-GAP-ANALYSIS-AND-BUILD-PLAN.md's
-    # Phase 6.5 section. The one critical finding (Next.js middleware auth
-    # bypass) was fixed in the same change that added this job. Remediating the
-    # rest needs case-by-case major-version-bump testing, not a blanket CI
-    # block that would fail on day one and train everyone to ignore it. Flip
-    # this to blocking once that backlog is cleared.
+    # Blocking as of the dependency-backlog pass (docs/33-GAP-ANALYSIS-AND-
+    # BUILD-PLAN.md's Phase 6.5 continue-on-error note, closed out in a later
+    # session): the pnpm side is genuinely at zero findings — every pre-
+    # existing advisory was closed via scoped pnpm-workspace.yaml overrides
+    # or a regression-tested major-version bump (Next 15, NestJS 11, Vitest 3,
+    # file-type 21, sharp 0.35). The one remaining Python finding (`ecdsa`,
+    # PYSEC-2026-1325) has no patched version to bump to — explicitly
+    # allowlisted below rather than left to silently fail the gate forever;
+    # revisit if a fix ever ships.
     name: Dependency vulnerability scan
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -85,7 +84,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm audit --audit-level=high
       - run: pip install pip-audit
-      - run: pip-audit -r apps/api-python/requirements.txt
+      - run: pip-audit -r apps/api-python/requirements.txt --ignore-vuln PYSEC-2026-1325
 
   api-python:
     name: apps/api-python (FastAPI)
