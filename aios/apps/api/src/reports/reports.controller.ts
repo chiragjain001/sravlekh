@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, Query, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query, HttpCode, HttpStatus, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { ReportsService } from './reports.service';
 import { CreateReportDto, QueryReportsDto } from './dto/report.dto';
@@ -6,6 +6,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { UserRole } from '@prisma/client';
+import { InstituteBulkThrottleGuard } from '../shared/guards/institute-bulk-throttle.guard';
 
 @ApiTags('reports')
 @ApiBearerAuth()
@@ -14,9 +15,10 @@ export class ReportsController {
   constructor(private readonly reportsService: ReportsService) {}
 
   @Post()
+  @UseGuards(InstituteBulkThrottleGuard)
   @HttpCode(HttpStatus.ACCEPTED)
   @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
-  @ApiOperation({ summary: 'Queue a report for generation' })
+  @ApiOperation({ summary: 'Queue a report for generation (rate-limited per institute per hour)' })
   requestReport(
     @Param('instituteId') instituteId: string,
     @Body() dto: CreateReportDto,

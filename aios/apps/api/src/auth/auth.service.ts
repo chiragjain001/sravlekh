@@ -8,18 +8,30 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { OAuth2Client, TokenPayload } from 'google-auth-library';
 import { PrismaService } from '../prisma/prisma.service';
-import { AuditAction, UserStatus, UserRole } from '@prisma/client';
+import { CacheService } from '../infrastructure/cache/cache.service';
+import { allowlistCheckKey } from '../shared/cache-keys';
+import { AuditAction, UserStatus, UserRole, type AllowListEntry, type Institute } from '@prisma/client';
 import { JwtPayload, AuthenticatedUser } from './auth.types';
+
+const ALLOWLIST_CHECK_TTL_SECONDS = 60; // 09-CACHING-STRATEGY.md §1.5
 
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   private readonly googleClient: OAuth2Client;
 
+  // 07-SECURITY-SPECIFICATION.md §7: "repeated 403s -> temporary lockout." In-memory,
+  // keyed by email — correct for a single instance; a horizontally-scaled deployment
+  // needs this moved to Redis (same caveat as ThrottlerModule's default storage).
+  private readonly failedLoginAttempts = new Map<string, { count: number; lockedUntil?: number }>();
+  private static readonly LOCKOUT_THRESHOLD = 5;
+  private static readonly LOCKOUT_WINDOW_MS = 15 * 60 * 1000;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
+    private readonly cache: CacheService,
   ) {
     this.googleClient = new OAuth2Client(
       this.config.get<string>('GOOGLE_CLIENT_ID'),
@@ -48,16 +60,27 @@ export class AuthService {
     const name = googlePayload.name ?? email;
     const avatarUrl = googlePayload.picture ?? undefined;
 
+    this.assertNotLockedOut(email);
+
     // Step 2 — Check institute allow-list
-    const allowEntry = await this.prisma.allowListEntry.findFirst({
-      where: { email: { equals: email, mode: 'insensitive' } },
-      include: { institute: true },
-    });
+    const allowlistCacheKey = allowlistCheckKey(email);
+    let allowEntry = await this.cache.get<(AllowListEntry & { institute: Institute }) | null>(allowlistCacheKey);
+    if (allowEntry === undefined) {
+      allowEntry = await this.prisma.allowListEntry.findFirst({
+        where: { email: { equals: email, mode: 'insensitive' } },
+        include: { institute: true },
+      });
+      await this.cache.set(allowlistCacheKey, allowEntry, ALLOWLIST_CHECK_TTL_SECONDS);
+    }
 
     if (!allowEntry) {
-      // Log the failed attempt (no user record exists yet, so actor is 'UNKNOWN')
+      // No real institute or user exists for this email, so there's nothing to
+      // correctly scope an AuditLog row to — a prior version of this code
+      // attached these to an arbitrary institute's audit trail, which misled
+      // that institute's admin into seeing failed logins that had nothing to
+      // do with them. The warn log is the correct, honestly-scoped record.
       this.logger.warn(`Login rejected — email not in any allow-list: ${email}`);
-      await this.writeAnonymousLoginFailedLog(email, ipAddress);
+      this.recordFailedLogin(email);
       throw new ForbiddenException(
         "This email isn't linked to an institute yet — contact your admin.",
       );
@@ -93,12 +116,27 @@ export class AuthService {
       });
     }
 
-    // Guard: suspended users cannot log in
+    // Guard: suspended users cannot log in — unlike the unrecognized-email case
+    // above, this has a real institute and user to scope the audit entry to.
     if (user.status === UserStatus.SUSPENDED) {
+      await this.prisma.auditLog.create({
+        data: {
+          instituteId: institute.id,
+          actorId: user.id,
+          action: AuditAction.LOGIN_FAILED,
+          entity: 'users',
+          entityId: user.id,
+          newValue: { reason: 'account_suspended' },
+          ipAddress,
+        },
+      });
+      this.recordFailedLogin(email);
       throw new ForbiddenException(
         'Your account has been suspended. Contact your institute admin.',
       );
     }
+
+    this.failedLoginAttempts.delete(email.toLowerCase());
 
     // Step 4 — Audit log the successful login
     await this.prisma.auditLog.create({
@@ -133,6 +171,30 @@ export class AuthService {
     };
 
     return { accessToken, user: authenticatedUser };
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Login lockout (07-SECURITY-SPECIFICATION.md §7)
+  // ──────────────────────────────────────────────────────────────────────────
+
+  private assertNotLockedOut(email: string): void {
+    const entry = this.failedLoginAttempts.get(email.toLowerCase());
+    if (entry?.lockedUntil && entry.lockedUntil > Date.now()) {
+      throw new ForbiddenException(
+        'Too many failed sign-in attempts. Try again in a few minutes.',
+      );
+    }
+  }
+
+  private recordFailedLogin(email: string): void {
+    const key = email.toLowerCase();
+    const entry = this.failedLoginAttempts.get(key) ?? { count: 0 };
+    entry.count += 1;
+    if (entry.count >= AuthService.LOCKOUT_THRESHOLD) {
+      entry.lockedUntil = Date.now() + AuthService.LOCKOUT_WINDOW_MS;
+      this.logger.warn(`Login lockout triggered for ${key} after ${entry.count} failed attempts`);
+    }
+    this.failedLoginAttempts.set(key, entry);
   }
 
   /** Validate a JWT payload — called by JwtStrategy on every protected request. */
@@ -178,45 +240,6 @@ export class AuthService {
       throw new UnauthorizedException(
         'Google sign-in failed. Please try again.',
       );
-    }
-  }
-
-  /**
-   * Write a minimal audit entry for a login attempt from an unrecognised email.
-   * We cannot link to a real actor, so we use a sentinel institute_id of 'UNKNOWN'.
-   */
-  private async writeAnonymousLoginFailedLog(
-    email: string,
-    ipAddress?: string,
-  ): Promise<void> {
-    // Silently ignore if this fails — don't let audit failure block the response
-    try {
-      // Find any institute to attach to (or skip if none exist)
-      const firstInstitute = await this.prisma.institute.findFirst({
-        select: { id: true },
-      });
-      if (!firstInstitute) return;
-
-      // Find the first founder user as a sentinel actor for logging purposes
-      const founderUser = await this.prisma.user.findFirst({
-        where: { role: UserRole.FOUNDER },
-        select: { id: true },
-      });
-      if (!founderUser) return;
-
-      await this.prisma.auditLog.create({
-        data: {
-          instituteId: firstInstitute.id,
-          actorId: founderUser.id,
-          action: AuditAction.LOGIN_FAILED,
-          entity: 'users',
-          entityId: 'unknown',
-          newValue: { email },
-          ipAddress,
-        },
-      });
-    } catch {
-      // Intentionally swallowed
     }
   }
 }

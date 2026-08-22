@@ -8,6 +8,7 @@ import {
   Req,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { Request } from 'express';
 import { AuthService } from './auth.service';
 import { GoogleLoginDto } from './dto/google-login.dto';
@@ -27,6 +28,11 @@ export class AuthController {
   @Public()
   @Post('google')
   @HttpCode(HttpStatus.OK)
+  // 07-SECURITY-SPECIFICATION.md §7: 10 req/s + 100 req/min per IP on the login
+  // endpoint specifically — pinned explicitly rather than relying on it happening
+  // to match today's global default, so a future change to the global throttler
+  // can't silently weaken this endpoint's protection.
+  @Throttle({ short: { limit: 10, ttl: 1000 }, medium: { limit: 100, ttl: 60_000 } })
   @ApiOperation({ summary: 'Sign in with Google' })
   async loginWithGoogle(
     @Body() dto: GoogleLoginDto,

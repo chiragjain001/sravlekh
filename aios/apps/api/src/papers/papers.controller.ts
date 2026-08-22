@@ -4,6 +4,7 @@ import {
   Post,
   Body,
   Param,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { PapersService } from './papers.service';
@@ -15,6 +16,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { UserRole } from '@prisma/client';
+import { InstituteBulkThrottleGuard } from '../shared/guards/institute-bulk-throttle.guard';
 
 @ApiTags('papers')
 @ApiBearerAuth()
@@ -44,8 +46,9 @@ export class PapersController {
   }
 
   @Post('papers/generate')
+  @UseGuards(InstituteBulkThrottleGuard)
   @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
-  @ApiOperation({ summary: 'Generate a paper based on a blueprint (Paper Engine)' })
+  @ApiOperation({ summary: 'Generate a paper based on a blueprint (Paper Engine, rate-limited per institute per hour)' })
   generatePaper(
     @Param('instituteId') instituteId: string,
     @Body() dto: GeneratePaperDto,
