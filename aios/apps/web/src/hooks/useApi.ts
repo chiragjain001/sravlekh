@@ -274,6 +274,40 @@ export function useUpdateRubric() {
   });
 }
 
+// ── Evaluations (25-EVALUATION-ENGINE.md, Phase 12 — manual-only) ───────────
+
+export function useEvaluationWorkItems(params?: Record<string, unknown>) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['evaluation-work-items', user?.instituteId, params],
+    queryFn: async () => {
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/evaluation-work-items`, { params });
+      return res.data;
+    },
+    enabled: !!user?.instituteId,
+  });
+}
+
+export function useDecideEvaluation() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ responseId, ...data }: { responseId: string } & Record<string, unknown>) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/evaluations/${responseId}/decide`, data);
+      return res.data;
+    },
+    onSuccess: () => {
+      toast.success('Evaluation recorded');
+      queryClient.invalidateQueries({ queryKey: ['evaluation-work-items', user?.instituteId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message : 'Failed to record evaluation';
+      toast.error(msg ?? 'Failed to record evaluation');
+    },
+  });
+}
+
 // ── Papers & Blueprints ──────────────────────────────────────────────────
 
 export function useBlueprints() {

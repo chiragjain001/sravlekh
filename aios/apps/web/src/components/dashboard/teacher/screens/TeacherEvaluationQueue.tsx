@@ -1,126 +1,100 @@
 'use client';
+// ─── Teacher Evaluation Work Queue — 25-EVALUATION-ENGINE.md §7, Phase 12 ──────
+// Cross-delivery view backing GET /evaluation-work-items — replaces the v1
+// mock (test-grouped progress cards) with a real, individual-response queue,
+// per 28-DIGITAL-COPY-UX-SPECIFICATION.md §4's "replacing the need to
+// navigate delivery-by-delivery for routine grading." Real API from day one.
 
-import { PenTool, CheckCircle2, ChevronRight, AlertCircle } from 'lucide-react';
-import { tests, batches } from '@/lib/mock-data/teacher';
-import { useDashboardStore } from '@/store/dashboard-store';
+import { useState } from 'react';
+import { ClipboardCheck, CheckCircle2, PenTool } from 'lucide-react';
+import { useEvaluationWorkItems } from '@/hooks/useApi';
+import { SkeletonTable, EmptyState } from '@/components/ui/foundation';
+import { EvaluationDecisionDialog } from './EvaluationDecisionDialog';
+
+interface WorkItem {
+  id: string;
+  studentAnswer?: string | null;
+  evidenceType?: string | null;
+  question: { id: string; content: string; marks: number; subjectId: string };
+  attempt?: { studentProfile?: { rollNumber?: string | null; user?: { name: string } }; assessmentDelivery?: { assessment?: { title: string } } };
+}
 
 export function TeacherEvaluationQueue() {
-  const { teacherCtx, setTeacherNav, setTeacherCtx } = useDashboardStore();
+  const [page, setPage] = useState(1);
+  const [scoringItem, setScoringItem] = useState<WorkItem | null>(null);
 
-  const gradingTests = tests.filter(t => t.status === 'grading');
-
-  // P0-1 fix: derive pending count from actual data, not hardcoded constant
-  const pendingCopiesCount = gradingTests.reduce(
-    (sum, t) => sum + Math.max(0, t.attempted - t.graded),
-    0
-  );
-
-  const getProgress = (graded: number, total: number) => {
-    if (total === 0) return 0;
-    return Math.round((graded / total) * 100);
-  };
-
-  const handleStartGrading = (batchId: string, testId: string) => {
-    setTeacherCtx({
-      classId: batchId.startsWith('12') ? '12' : '11',
-      subjectId: teacherCtx.subjectId || 'physics',
-      batchId,
-      testId,
-      batchTab: 'tests',
-      studentId: null,
-    });
-    setTeacherNav('classes');
-  };
+  const { data, isPending, isError } = useEvaluationWorkItems({ page, pageSize: 20 });
+  const items: WorkItem[] = data?.data ?? [];
+  const meta = data?.meta as { total: number; page: number; pageSize: number; totalPages: number } | undefined;
 
   return (
-    <div className="p-6 animate-fadein space-y-6 max-w-5xl mx-auto">
+    <div className="p-6 space-y-4 max-w-5xl mx-auto animate-fadein">
       <div>
         <h1 className="text-[22px] font-bold text-slate-800">Evaluation Queue</h1>
-        <p className="text-[13px] text-slate-500 mt-0.5">Track and manage pending copy evaluations across all your batches.</p>
+        <p className="text-[13px] text-slate-500 mt-0.5">Subjective responses across your batches awaiting a decision, oldest first.</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
-          <p className="text-[13px] font-semibold text-slate-500 mb-1">Total Pending Copies</p>
-          <p className="text-[28px] font-black text-rose-600">{pendingCopiesCount}</p>
-        </div>
-        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
-          <p className="text-[13px] font-semibold text-slate-500 mb-1">Tests in Queue</p>
-          <p className="text-[28px] font-black text-amber-600">{gradingTests.length}</p>
-        </div>
-        <div className="bg-indigo-600 border border-indigo-700 rounded-2xl p-5 shadow-sm text-white">
-          <div className="flex items-center gap-2 mb-1">
-            <AlertCircle className="w-4 h-4 text-indigo-200" />
-            <p className="text-[13px] font-semibold text-indigo-200">Next Deadline</p>
+      {isPending && <SkeletonTable rows={6} cols={3} />}
+
+      {isError && (
+        <EmptyState
+          icon={<ClipboardCheck className="w-6 h-6" />}
+          title="Couldn't load the evaluation queue"
+          description="Something went wrong fetching work items. Try refreshing the page."
+        />
+      )}
+
+      {!isPending && !isError && items.length === 0 && (
+        <div className="p-12 text-center bg-white border border-slate-200 rounded-2xl">
+          <div className="w-16 h-16 rounded-full bg-emerald-50 text-emerald-500 flex items-center justify-center mx-auto mb-4">
+            <CheckCircle2 className="w-8 h-8" />
           </div>
-          <p className="text-[22px] font-bold">{gradingTests[0]?.date ?? 'No deadline'}</p>
-          <p className="text-[12px] text-indigo-300 mt-0.5">{gradingTests[0]?.name ?? '—'}</p>
+          <h3 className="text-[16px] font-bold text-slate-800">All Caught Up!</h3>
+          <p className="text-[13px] text-slate-500 mt-1">There are no pending responses to evaluate across your batches.</p>
         </div>
-      </div>
+      )}
 
-      <div className="space-y-4">
-        <h2 className="text-[15px] font-bold text-slate-800">Active Queue</h2>
-        {gradingTests.map(t => {
-          const batch = batches.find(b => b.id === t.batchId);
-          const pct = getProgress(t.graded, t.attempted);
-          const remaining = t.attempted - t.graded;
-
-          return (
-            <div key={t.id} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-all">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div className="flex items-start gap-4">
-                  <div className="w-12 h-12 rounded-xl bg-rose-50 flex items-center justify-center text-rose-500 flex-shrink-0">
-                    <PenTool className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <h3 className="text-[16px] font-bold text-slate-800">{t.name}</h3>
-                    <p className="text-[13px] text-slate-500 mt-0.5">Batch {batch?.label || t.batchId} • Conducted {t.date}</p>
-                    
-                    <div className="flex items-center gap-4 mt-3">
-                      <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-slate-600 bg-slate-100 px-2.5 py-1 rounded-md">
-                        <span className="w-2 h-2 rounded-full bg-slate-400" /> {t.attempted} Total Copies
-                      </span>
-                      <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-md">
-                        <CheckCircle2 className="w-3.5 h-3.5" /> {t.graded} Graded
-                      </span>
-                      <span className="inline-flex items-center gap-1.5 text-[12px] font-bold text-rose-700 bg-rose-50 px-2.5 py-1 rounded-md">
-                        <AlertCircle className="w-3.5 h-3.5" /> {remaining} Pending
-                      </span>
-                    </div>
-                  </div>
+      {!isPending && !isError && items.length > 0 && (
+        <div className="bg-white rounded-xl border border-slate-100 shadow-sm divide-y divide-slate-50">
+          {items.map((item) => (
+            <div key={item.id} className="flex items-center justify-between gap-4 p-4 hover:bg-slate-50/50">
+              <div className="flex items-start gap-3 min-w-0">
+                <div className="w-9 h-9 rounded-lg bg-rose-50 flex items-center justify-center text-rose-500 flex-shrink-0">
+                  <PenTool className="w-4 h-4" />
                 </div>
-
-                <div className="flex flex-col items-end gap-3 min-w-[200px]">
-                  <div className="w-full">
-                    <div className="flex justify-between text-[11px] font-bold mb-1.5">
-                      <span className="text-slate-500">Progress</span>
-                      <span className="text-indigo-600">{pct}%</span>
-                    </div>
-                    <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-                      <div className="h-2 rounded-full bg-indigo-500 transition-all duration-500" style={{ width: `${pct}%` }} />
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => handleStartGrading(t.batchId, t.id)}
-                    className="flex items-center gap-1.5 px-5 py-2 bg-slate-900 text-white text-[12.5px] font-bold rounded-xl hover:bg-slate-800 transition-colors w-full justify-center md:w-auto"
-                  >
-                    Start Grading <ChevronRight className="w-3.5 h-3.5" />
-                  </button>
+                <div className="min-w-0">
+                  <p className="text-[13px] font-semibold text-slate-800 truncate">{item.question.content}</p>
+                  <p className="text-[11.5px] text-slate-500 mt-0.5">
+                    {item.attempt?.studentProfile?.user?.name ?? item.attempt?.studentProfile?.rollNumber ?? 'Student'}
+                    {item.attempt?.assessmentDelivery?.assessment?.title && ` · ${item.attempt.assessmentDelivery.assessment.title}`}
+                    {' · '}{item.question.marks} marks
+                  </p>
                 </div>
               </div>
+              <button
+                onClick={() => setScoringItem(item)}
+                className="flex-shrink-0 px-4 py-2 bg-slate-900 text-white text-[12px] font-bold rounded-xl hover:bg-slate-800 transition-colors"
+              >
+                Evaluate
+              </button>
             </div>
-          );
-        })}
-        {gradingTests.length === 0 && (
-          <div className="p-12 text-center bg-white border border-slate-200 rounded-2xl">
-            <div className="w-16 h-16 rounded-full bg-emerald-50 text-emerald-500 flex items-center justify-center mx-auto mb-4">
-              <CheckCircle2 className="w-8 h-8" />
+          ))}
+
+          {meta && meta.totalPages > 1 && (
+            <div className="flex items-center justify-between px-4 py-3">
+              <span className="text-[11px] text-slate-500">Page {meta.page} of {meta.totalPages} · {meta.total} items</span>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1} className="px-3 py-1.5 text-[11px] font-semibold border border-slate-200 rounded-lg disabled:opacity-40 hover:bg-slate-50">Previous</button>
+                <button onClick={() => setPage((p) => Math.min(meta.totalPages, p + 1))} disabled={page >= meta.totalPages} className="px-3 py-1.5 text-[11px] font-semibold border border-slate-200 rounded-lg disabled:opacity-40 hover:bg-slate-50">Next</button>
+              </div>
             </div>
-            <h3 className="text-[16px] font-bold text-slate-800">All Caught Up!</h3>
-            <p className="text-[13px] text-slate-500 mt-1">There are no pending copies to evaluate across your batches.</p>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
+
+      {scoringItem && (
+        <EvaluationDecisionDialog isOpen={!!scoringItem} onClose={() => setScoringItem(null)} item={scoringItem} />
+      )}
     </div>
   );
 }
