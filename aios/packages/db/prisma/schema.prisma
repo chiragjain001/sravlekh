@@ -700,10 +700,15 @@ model Response {
   // this table entirely, which this change does not do.
   attemptId        String?
   evidenceType     EvidenceType?
+  // Phase 10 addition — populated only for evidenceType=PAGE_REGION rows,
+  // pointing at the confirmed QuestionRegion (a PageRegion with questionId
+  // set) this evidence came from. Null for DIGITAL_VALUE/OMR_MARK rows.
+  questionRegionId String?
 
-  answerSheet AnswerSheet? @relation(fields: [answerSheetId], references: [id], onDelete: Cascade)
-  attempt     Attempt?     @relation(fields: [attemptId], references: [id], onDelete: Cascade)
-  question    Question     @relation(fields: [questionId], references: [id])
+  answerSheet   AnswerSheet? @relation(fields: [answerSheetId], references: [id], onDelete: Cascade)
+  attempt       Attempt?     @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  question      Question     @relation(fields: [questionId], references: [id])
+  questionRegion PageRegion? @relation(fields: [questionRegionId], references: [id])
 
   // V2 bridge (see the additive-block comment above AssessmentKind): Evaluation
   // and AIRecommendation FK into this existing v1 row as-is, ahead of the
@@ -1102,6 +1107,12 @@ enum IdentityStatus {
   MANUALLY_CONFIRMED
   MANUALLY_CORRECTED
   UNRESOLVED
+  // Phase 10 (docs/33-GAP-ANALYSIS-AND-BUILD-PLAN.md) addition — 30-IDENTITY-
+  // PAGE-MAPPING.md §5 describes "flagged CONFLICT" behavior for two Documents
+  // resolving to the same studentProfileId+delivery, but the doc's own §2
+  // entity table (and this schema, until now) never actually defined a
+  // CONFLICT status value to hold that state in.
+  CONFLICT
 }
 
 enum RubricScoringMode {
@@ -1314,6 +1325,11 @@ model PageRegion {
 
   pageImage PageImage  @relation(fields: [pageImageId], references: [id], onDelete: Cascade)
   ocrBlocks OCRBlock[]
+  // Phase 10 addition — the evidence-pointer traceability doc 04 §5's
+  // constraints summary describes ("Response.evidenceType determines which of
+  // digitalValue/questionRegionId must be non-null") but Phase 7/8 never
+  // actually added, since Phase 8 didn't yet need PAGE_REGION evidence.
+  responses Response[]
 
   @@map("page_regions")
 }

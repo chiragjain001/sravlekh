@@ -27,6 +27,8 @@ import { CaptureProvidersModule } from './capture-providers/capture-providers.mo
 import { AssessmentsModule } from './assessments/assessments.module';
 import { AttemptsModule } from './attempts/attempts.module';
 import { RubricsModule } from './rubrics/rubrics.module';
+import { DocumentsModule } from './documents/documents.module';
+import { IdentityResolutionModule } from './identity-resolution/identity-resolution.module';
 import { QueueModule } from './infrastructure/queue/queue.module';
 import { StorageModule } from './infrastructure/storage/storage.module';
 import { CacheModule } from './infrastructure/cache/cache.module';
@@ -84,6 +86,8 @@ import { RequestLoggingInterceptor } from './shared/interceptors/request-logging
     AssessmentsModule,
     AttemptsModule,
     RubricsModule,
+    DocumentsModule,
+    IdentityResolutionModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
