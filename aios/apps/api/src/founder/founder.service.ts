@@ -2,9 +2,15 @@ import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { PrismaService } from '../prisma/prisma.service';
+import { CacheService } from '../infrastructure/cache/cache.service';
 import { AuditAction, InstituteStatus } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { UpdateInstitutePlanDto, UpdateFeatureFlagDto, QueryInstitutesDto } from './dto/founder.dto';
+
+// Same key as InstitutesService — Founder actions mutate the same Institute
+// row that endpoint's cache serves (09-CACHING-STRATEGY.md §1.3: plan/flag
+// changes must invalidate immediately, not wait for TTL).
+const instituteProfileKey = (instituteId: string) => `institute-profile:${instituteId}`;
 
 @Injectable()
 export class FounderService {
@@ -13,6 +19,7 @@ export class FounderService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly cache: CacheService,
   ) {}
 
   // ── GET /founder/institutes ─────────────────────────────────────────────
@@ -34,6 +41,7 @@ export class FounderService {
 
     const updated = await this.prisma.institute.update({ where: { id: instituteId }, data: { plan: dto.plan } });
     await this.writeAudit(instituteId, actor.id, AuditAction.UPDATE, 'institutes', instituteId, { plan: institute.plan }, { plan: dto.plan });
+    await this.cache.del(instituteProfileKey(instituteId));
     return updated;
   }
 
@@ -53,6 +61,7 @@ export class FounderService {
       data: { status: InstituteStatus.ARCHIVED },
     });
     await this.writeAudit(instituteId, actor.id, AuditAction.UPDATE, 'institutes', instituteId, { status: institute.status }, { status: InstituteStatus.ARCHIVED });
+    await this.cache.del(instituteProfileKey(instituteId));
     return updated;
   }
 
@@ -70,6 +79,7 @@ export class FounderService {
       data: { featureFlags: nextFlags },
     });
     await this.writeAudit(dto.instituteId, actor.id, AuditAction.UPDATE, 'institutes', dto.instituteId, { featureFlags: existingFlags }, { featureFlags: nextFlags });
+    await this.cache.del(instituteProfileKey(dto.instituteId));
     return updated;
   }
 

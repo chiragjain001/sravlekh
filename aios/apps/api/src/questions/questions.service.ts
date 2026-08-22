@@ -5,6 +5,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { CacheService } from '../infrastructure/cache/cache.service';
 import { AuditAction, UserRole } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
 import {
@@ -13,11 +14,21 @@ import {
   QueryQuestionsDto,
 } from './dto/question.dto';
 
+// 09-CACHING-STRATEGY.md §1.2 / §3 — broad invalidation by instituteId prefix,
+// not per-filter-key precision, is explicitly acceptable given the short TTL.
+const QUESTION_BANK_TTL_SECONDS = 5 * 60;
+const questionBankPrefix = (instituteId: string) => `question-bank:${instituteId}`;
+const questionBankKey = (instituteId: string, query: QueryQuestionsDto) =>
+  `${questionBankPrefix(instituteId)}:${query.page ?? 1}:${JSON.stringify(query, Object.keys(query).sort())}`;
+
 @Injectable()
 export class QuestionsService {
   private readonly logger = new Logger(QuestionsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cache: CacheService,
+  ) {}
 
   // ── C-01: Create Question ────────────────────────────────────────────────
 
@@ -79,6 +90,7 @@ export class QuestionsService {
     });
 
     await this.writeAudit(instituteId, actor.id, AuditAction.CREATE, 'questions', question.id, null, { type: dto.type, topicId: dto.topicId });
+    await this.cache.delByPrefix(questionBankPrefix(instituteId));
 
     return question;
   }
@@ -101,6 +113,10 @@ export class QuestionsService {
     if (query.type) where['type'] = query.type;
     if (query.isApproved !== undefined) where['isApproved'] = query.isApproved;
 
+    const cacheKey = questionBankKey(instituteId, query);
+    const cached = await this.cache.get(cacheKey);
+    if (cached) return cached;
+
     const [questions, total] = await Promise.all([
       this.prisma.question.findMany({
         where,
@@ -115,10 +131,12 @@ export class QuestionsService {
       this.prisma.question.count({ where }),
     ]);
 
-    return {
+    const result = {
       data: questions,
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
+    await this.cache.set(cacheKey, result, QUESTION_BANK_TTL_SECONDS);
+    return result;
   }
 
   // ── C-01: Get Single Question ────────────────────────────────────────────
@@ -165,6 +183,7 @@ export class QuestionsService {
     });
 
     await this.writeAudit(instituteId, actor.id, AuditAction.DELETE, 'questions', questionId, question, null);
+    await this.cache.delByPrefix(questionBankPrefix(instituteId));
     return archived;
   }
 
@@ -234,6 +253,7 @@ export class QuestionsService {
     });
 
     await this.writeAudit(instituteId, actor.id, AuditAction.UPDATE, 'questions', questionId, existing, dto);
+    await this.cache.delByPrefix(questionBankPrefix(instituteId));
 
     return updated;
   }
@@ -266,6 +286,7 @@ export class QuestionsService {
     });
 
     await this.writeAudit(instituteId, actor.id, AuditAction.APPROVE, 'questions', questionId, null, { isApproved: true });
+    await this.cache.delByPrefix(questionBankPrefix(instituteId));
 
     return updated;
   }

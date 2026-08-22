@@ -6,6 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { CacheService } from '../infrastructure/cache/cache.service';
 import { AuditAction, UserRole } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
 import {
@@ -19,11 +20,18 @@ import {
   UpdateTopicDto,
 } from './dto/batch.dto';
 
+// 09-CACHING-STRATEGY.md §1.1 / §3
+const ACADEMICS_TREE_TTL_SECONDS = 30 * 60;
+const academicsTreeKey = (instituteId: string) => `academics-tree:${instituteId}`;
+
 @Injectable()
 export class BatchesService {
   private readonly logger = new Logger(BatchesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cache: CacheService,
+  ) {}
 
   // ── B-04: Batches CRUD ────────────────────────────────────────────────────
 
@@ -125,15 +133,21 @@ export class BatchesService {
     });
     if (existing) throw new ConflictException(`Subject "${dto.name}" already exists.`);
 
-    return this.prisma.subject.create({
+    const subject = await this.prisma.subject.create({
       data: { instituteId, name: dto.name, code: dto.code },
     });
+    await this.cache.del(academicsTreeKey(instituteId));
+    return subject;
   }
 
   async findAllSubjects(instituteId: string, actor: AuthenticatedUser) {
     this.assertInstituteAccess(actor, instituteId);
 
-    return this.prisma.subject.findMany({
+    const cacheKey = academicsTreeKey(instituteId);
+    const cached = await this.cache.get(cacheKey);
+    if (cached) return cached;
+
+    const tree = await this.prisma.subject.findMany({
       where: { instituteId, deletedAt: null },
       include: {
         chapters: {
@@ -144,6 +158,9 @@ export class BatchesService {
       },
       orderBy: { name: 'asc' },
     });
+
+    await this.cache.set(cacheKey, tree, ACADEMICS_TREE_TTL_SECONDS);
+    return tree;
   }
 
   async updateSubject(
@@ -173,6 +190,7 @@ export class BatchesService {
     });
 
     await this.writeAudit(instituteId, actor.id, AuditAction.UPDATE, 'subjects', subjectId, subject, dto);
+    await this.cache.del(academicsTreeKey(instituteId));
     return updated;
   }
 
@@ -188,6 +206,7 @@ export class BatchesService {
     });
 
     await this.writeAudit(instituteId, actor.id, AuditAction.DELETE, 'subjects', subjectId, subject, null);
+    await this.cache.del(academicsTreeKey(instituteId));
     return archived;
   }
 
@@ -202,9 +221,11 @@ export class BatchesService {
     this.assertAdminAccess(actor, instituteId);
     await this.assertSubjectBelongsToInstitute(subjectId, instituteId);
 
-    return this.prisma.chapter.create({
+    const chapter = await this.prisma.chapter.create({
       data: { subjectId, name: dto.name, order: dto.order ?? 0 },
     });
+    await this.cache.del(academicsTreeKey(instituteId));
+    return chapter;
   }
 
   async updateChapter(
@@ -225,6 +246,7 @@ export class BatchesService {
     });
 
     await this.writeAudit(instituteId, actor.id, AuditAction.UPDATE, 'chapters', chapterId, chapter, dto);
+    await this.cache.del(academicsTreeKey(instituteId));
     return updated;
   }
 
@@ -238,6 +260,7 @@ export class BatchesService {
     });
 
     await this.writeAudit(instituteId, actor.id, AuditAction.DELETE, 'chapters', chapterId, chapter, null);
+    await this.cache.del(academicsTreeKey(instituteId));
     return archived;
   }
 
@@ -252,9 +275,11 @@ export class BatchesService {
     this.assertAdminAccess(actor, instituteId);
     await this.assertChapterBelongsToInstitute(chapterId, instituteId);
 
-    return this.prisma.topic.create({
+    const topic = await this.prisma.topic.create({
       data: { chapterId, name: dto.name, order: dto.order ?? 0 },
     });
+    await this.cache.del(academicsTreeKey(instituteId));
+    return topic;
   }
 
   async updateTopic(
@@ -275,6 +300,7 @@ export class BatchesService {
     });
 
     await this.writeAudit(instituteId, actor.id, AuditAction.UPDATE, 'topics', topicId, topic, dto);
+    await this.cache.del(academicsTreeKey(instituteId));
     return updated;
   }
 
@@ -288,6 +314,7 @@ export class BatchesService {
     });
 
     await this.writeAudit(instituteId, actor.id, AuditAction.DELETE, 'topics', topicId, topic, null);
+    await this.cache.del(academicsTreeKey(instituteId));
     return archived;
   }
 

@@ -5,6 +5,8 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { CacheService } from '../infrastructure/cache/cache.service';
+import { allowlistCheckKey } from '../shared/cache-keys';
 import { AuditAction, UserRole } from '@prisma/client';
 import {
   CreateInstituteDto,
@@ -13,9 +15,17 @@ import {
 } from './dto/institute.dto';
 import { AuthenticatedUser } from '../auth/auth.types';
 
+// 09-CACHING-STRATEGY.md §1.3 — invalidated immediately on write, not just
+// TTL-expired, since plan/flag changes must take effect promptly.
+const INSTITUTE_PROFILE_TTL_SECONDS = 10 * 60;
+const instituteProfileKey = (instituteId: string) => `institute-profile:${instituteId}`;
+
 @Injectable()
 export class InstitutesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cache: CacheService,
+  ) {}
 
   // ── A-05: Institute CRUD ──────────────────────────────────────────────────
 
@@ -40,12 +50,17 @@ export class InstitutesService {
   async findById(instituteId: string, actor: AuthenticatedUser) {
     this.assertTenantAccess(actor, instituteId);
 
+    const cacheKey = instituteProfileKey(instituteId);
+    const cached = await this.cache.get(cacheKey);
+    if (cached) return cached;
+
     const institute = await this.prisma.institute.findUnique({
       where: { id: instituteId },
       include: { branches: true },
     });
 
     if (!institute) throw new NotFoundException('Institute not found.');
+    await this.cache.set(cacheKey, institute, INSTITUTE_PROFILE_TTL_SECONDS);
     return institute;
   }
 
@@ -82,6 +97,7 @@ export class InstitutesService {
       updated,
     );
 
+    await this.cache.del(instituteProfileKey(instituteId));
     return updated;
   }
 
@@ -124,6 +140,7 @@ export class InstitutesService {
       { email: entry.email, role: entry.role },
     );
 
+    await this.cache.del(allowlistCheckKey(entry.email));
     return entry;
   }
 
@@ -165,6 +182,7 @@ export class InstitutesService {
       null,
     );
 
+    await this.cache.del(allowlistCheckKey(entry.email));
     return { message: `${entry.email} removed from allow-list.` };
   }
 

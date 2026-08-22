@@ -3,6 +3,7 @@ import { ConflictException, ForbiddenException, NotFoundException } from '@nestj
 import { UserRole } from '@prisma/client';
 import { BatchesService } from './batches.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { CacheService } from '../infrastructure/cache/cache.service';
 import { AuthenticatedUser } from '../auth/auth.types';
 
 describe('BatchesService — curriculum (subjects/chapters/topics)', () => {
@@ -30,7 +31,11 @@ describe('BatchesService — curriculum (subjects/chapters/topics)', () => {
       auditLog: { create: jest.fn() },
     };
     const module: TestingModule = await Test.createTestingModule({
-      providers: [BatchesService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        BatchesService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: CacheService, useValue: { get: jest.fn(), set: jest.fn(), del: jest.fn(), delByPrefix: jest.fn() } },
+      ],
     }).compile();
     service = module.get(BatchesService);
   });
@@ -106,6 +111,38 @@ describe('BatchesService — curriculum (subjects/chapters/topics)', () => {
       expect(call.where).toEqual({ instituteId: 'inst-1', deletedAt: null });
       expect(call.include.chapters.where).toEqual({ deletedAt: null });
       expect(call.include.chapters.include.topics.where).toEqual({ deletedAt: null });
+    });
+  });
+
+  describe('academics-tree caching (09-CACHING-STRATEGY.md §1.1)', () => {
+    it('serves a cache hit without touching the DB', async () => {
+      const cache = (service as any).cache;
+      cache.get.mockResolvedValueOnce([{ id: 'cached-subject' }]);
+
+      const result = await service.findAllSubjects('inst-1', admin);
+
+      expect(result).toEqual([{ id: 'cached-subject' }]);
+      expect(prisma.subject.findMany).not.toHaveBeenCalled();
+    });
+
+    it('populates the cache on a miss, keyed by institute', async () => {
+      const cache = (service as any).cache;
+      cache.get.mockResolvedValueOnce(undefined);
+      prisma.subject.findMany.mockResolvedValueOnce([{ id: 'fresh-subject' }]);
+
+      await service.findAllSubjects('inst-1', admin);
+
+      expect(cache.set).toHaveBeenCalledWith('academics-tree:inst-1', [{ id: 'fresh-subject' }], 30 * 60);
+    });
+
+    it('invalidates the tree cache when a subject is created', async () => {
+      const cache = (service as any).cache;
+      prisma.subject.findUnique.mockResolvedValueOnce(null);
+      prisma.subject.create.mockResolvedValueOnce({ id: 'sub-1' });
+
+      await service.createSubject('inst-1', { name: 'Physics' }, admin);
+
+      expect(cache.del).toHaveBeenCalledWith('academics-tree:inst-1');
     });
   });
 

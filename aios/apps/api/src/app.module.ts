@@ -1,7 +1,7 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
-import { APP_FILTER } from '@nestjs/core';
+import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 import { envSchema } from './config/env.schema';
 import { AuthModule } from './auth/auth.module';
 import { InstitutesModule } from './institutes/institutes.module';
@@ -24,8 +24,10 @@ import { FounderModule } from './founder/founder.module';
 import { HealthModule } from './health/health.module';
 import { QueueModule } from './infrastructure/queue/queue.module';
 import { StorageModule } from './infrastructure/storage/storage.module';
+import { CacheModule } from './infrastructure/cache/cache.module';
 import { AllExceptionsFilter } from './shared/filters/all-exceptions.filter';
 import { RequestIdMiddleware } from './shared/middleware/request-id.middleware';
+import { RequestLoggingInterceptor } from './shared/interceptors/request-logging.interceptor';
 
 @Module({
   imports: [
@@ -53,6 +55,7 @@ import { RequestIdMiddleware } from './shared/middleware/request-id.middleware';
     PrismaModule,
     QueueModule,
     StorageModule,
+    CacheModule,
     AuthModule,
     InstitutesModule,
     UsersModule,
@@ -72,7 +75,10 @@ import { RequestIdMiddleware } from './shared/middleware/request-id.middleware';
     FounderModule,
     HealthModule,
   ],
-  providers: [{ provide: APP_FILTER, useClass: AllExceptionsFilter }],
+  providers: [
+    { provide: APP_FILTER, useClass: AllExceptionsFilter },
+    { provide: APP_INTERCEPTOR, useClass: RequestLoggingInterceptor },
+  ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {

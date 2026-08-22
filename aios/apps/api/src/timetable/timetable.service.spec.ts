@@ -3,6 +3,7 @@ import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { TimetableSlotType, UserRole } from '@prisma/client';
 import { TimetableService } from './timetable.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { CacheService } from '../infrastructure/cache/cache.service';
 import { AuthenticatedUser } from '../auth/auth.types';
 
 describe('TimetableService.createSlot — conflict checking (18-EDGE-CASES.md)', () => {
@@ -31,7 +32,11 @@ describe('TimetableService.createSlot — conflict checking (18-EDGE-CASES.md)',
       auditLog: { create: jest.fn() },
     };
     const module: TestingModule = await Test.createTestingModule({
-      providers: [TimetableService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        TimetableService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: CacheService, useValue: { get: jest.fn(), set: jest.fn(), del: jest.fn(), delByPrefix: jest.fn() } },
+      ],
     }).compile();
     service = module.get(TimetableService);
   });

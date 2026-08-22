@@ -5,6 +5,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { CacheService } from '../infrastructure/cache/cache.service';
 import { AuditAction, UserRole } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
 import {
@@ -12,11 +13,23 @@ import {
   QueryTimetableDto,
 } from './dto/timetable.dto';
 
+// 09-CACHING-STRATEGY.md §1.6. Doc's key names the scope "{batchId|teacherId}
+// :{weekStart}"; this service's actual query shape is batchId/teacherUserId +
+// dateStart/dateEnd, so the key is built from those instead of a literal
+// week-start value that doesn't exist in the current query params.
+const TIMETABLE_TTL_SECONDS = 15 * 60;
+const timetablePrefix = (instituteId: string) => `timetable:${instituteId}`;
+const timetableKey = (instituteId: string, where: Record<string, unknown>) =>
+  `${timetablePrefix(instituteId)}:${where.batchId ?? 'all'}:${where.teacherUserId ?? 'all'}:${JSON.stringify(where.startTime ?? null)}`;
+
 @Injectable()
 export class TimetableService {
   private readonly logger = new Logger(TimetableService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cache: CacheService,
+  ) {}
 
   // ── F-02: Create Timetable Slot ──────────────────────────────────────────
 
@@ -79,6 +92,7 @@ export class TimetableService {
     });
 
     await this.writeAudit(instituteId, actor.id, AuditAction.CREATE, 'timetableSlots', slot.id, null, { title: slot.title });
+    await this.cache.delByPrefix(timetablePrefix(instituteId));
 
     return slot;
   }
@@ -109,13 +123,20 @@ export class TimetableService {
       if (query.dateEnd) where.startTime.lte = new Date(query.dateEnd);
     }
 
-    return this.prisma.timetableSlot.findMany({
+    const cacheKey = timetableKey(instituteId, where);
+    const cached = await this.cache.get(cacheKey);
+    if (cached) return cached;
+
+    const slots = await this.prisma.timetableSlot.findMany({
       where,
       include: {
         batch: { select: { name: true } },
       },
       orderBy: { startTime: 'asc' },
     });
+
+    await this.cache.set(cacheKey, slots, TIMETABLE_TTL_SECONDS);
+    return slots;
   }
 
   private async writeAudit(instituteId: string, actorId: string, action: AuditAction, entity: string, entityId: string, oldValue: unknown, newValue: unknown) {

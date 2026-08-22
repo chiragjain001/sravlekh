@@ -5,6 +5,7 @@ import { InstituteStatus, UserRole } from '@prisma/client';
 import axios from 'axios';
 import { FounderService } from './founder.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { CacheService } from '../infrastructure/cache/cache.service';
 import { AuthenticatedUser } from '../auth/auth.types';
 
 jest.mock('axios');
@@ -31,6 +32,7 @@ describe('FounderService', () => {
         FounderService,
         { provide: PrismaService, useValue: prisma },
         { provide: ConfigService, useValue: { get: () => undefined } },
+        { provide: CacheService, useValue: { get: jest.fn(), set: jest.fn(), del: jest.fn(), delByPrefix: jest.fn() } },
       ],
     }).compile();
     service = module.get(FounderService);

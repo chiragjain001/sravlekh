@@ -3,6 +3,7 @@ import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { QuestionsService } from './questions.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { CacheService } from '../infrastructure/cache/cache.service';
 import { AuthenticatedUser } from '../auth/auth.types';
 
 describe('QuestionsService.archive', () => {
@@ -18,7 +19,11 @@ describe('QuestionsService.archive', () => {
       auditLog: { create: jest.fn() },
     };
     const module: TestingModule = await Test.createTestingModule({
-      providers: [QuestionsService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        QuestionsService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: CacheService, useValue: { get: jest.fn(), set: jest.fn(), del: jest.fn(), delByPrefix: jest.fn() } },
+      ],
     }).compile();
     service = module.get(QuestionsService);
   });
