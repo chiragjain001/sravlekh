@@ -54,6 +54,39 @@ jobs:
       - run: pnpm --filter @aios/web test
       - run: pnpm --filter @aios/web build
 
+  security:
+    # 07-SECURITY-SPECIFICATION.md §15 / 14-DEPLOYMENT-ARCHITECTURE.md §5 step 5:
+    # dependency-vulnerability scanning on every PR. High/critical only (not
+    # every moderate advisory) so this is a real gate, not noisy enough to get
+    # reflexively ignored.
+    #
+    # continue-on-error: this repo has 18 pre-existing high-severity findings
+    # as of this job's introduction (mostly transitive: postcss/nanoid/js-yaml/
+    # lodash/multer via build tooling and Next.js's own dependency tree, not
+    # directly-controlled versions) — see docs/33-GAP-ANALYSIS-AND-BUILD-PLAN.md's
+    # Phase 6.5 section. The one critical finding (Next.js middleware auth
+    # bypass) was fixed in the same change that added this job. Remediating the
+    # rest needs case-by-case major-version-bump testing, not a blanket CI
+    # block that would fail on day one and train everyone to ignore it. Flip
+    # this to blocking once that backlog is cleared.
+    name: Dependency vulnerability scan
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --audit-level=high
+      - run: pip install pip-audit
+      - run: pip-audit -r apps/api-python/requirements.txt
+
   api-python:
     name: apps/api-python (FastAPI)
     runs-on: ubuntu-latest
