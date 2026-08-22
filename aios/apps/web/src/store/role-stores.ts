@@ -47,7 +47,8 @@ export type AdminNav =
   | 'Attendance'
   | 'Communication'
   | 'System Settings'
-  | 'Audit Logs';
+  | 'Audit Logs'
+  | 'Evaluation Quality';
 
 interface AdminUIStore {
   adminNav: AdminNav;

@@ -477,6 +477,17 @@ export function useBatchHeatmap(batchId: string | undefined) {
   });
 }
 
+// 31-EVALUATION-AUDIT-VERSIONING.md §3 / 05-API-SPECIFICATION.md (V2 section) §9, Phase 14.
+export function useEvaluationQuality(params?: Record<string, unknown>) {
+  return useQuery({
+    queryKey: ['analytics', 'evaluation-quality', params],
+    queryFn: async () => {
+      const res = await aiClient.get('/analytics/evaluation-quality', { params });
+      return res.data;
+    },
+  });
+}
+
 // ── Doubts ───────────────────────────────────────────────────────────────
 
 export function useDoubts(params?: Record<string, unknown>) {

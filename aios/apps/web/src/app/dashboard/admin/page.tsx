@@ -29,6 +29,7 @@ import { AdminReports }       from '@/components/dashboard/admin/screens/AdminRe
 import { AdminSystemSettings }from '@/components/dashboard/admin/screens/AdminSystemSettings';
 import { AdminAuditLogs }     from '@/components/dashboard/admin/screens/AdminAuditLogs';
 import { AdminAnalytics }     from '@/components/dashboard/admin/screens/AdminAnalytics';
+import { AdminEvaluationQualityDashboard } from '@/components/dashboard/admin/screens/AdminEvaluationQualityDashboard';
 
 import { ChevronDown, MapPin, CalendarDays } from 'lucide-react';
 
@@ -58,6 +59,7 @@ function AdminDashboardInner() {
       case 'Settings':        return <AdminSystemSettings />;
       case 'Audit Logs':      return <AdminAuditLogs />;
       case 'Analytics':       return <AdminAnalytics />;
+      case 'Evaluation Quality': return <AdminEvaluationQualityDashboard />;
       default:
         return (
           <div className="flex items-center justify-center h-[50vh] text-slate-400 animate-fadein">

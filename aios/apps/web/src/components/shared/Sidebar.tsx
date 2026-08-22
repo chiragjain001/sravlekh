@@ -8,7 +8,7 @@ import {
   GraduationCap, Shield, Crown, Layers, ClipboardList, Clock,
   AlertCircle, DollarSign, Zap, Building, Globe, Activity, Ticket,
   MessageSquare, Clipboard, Star, ChevronLeft, ChevronRight, List,
-  Briefcase, Target, Video,
+  Briefcase, Target, Video, Sparkles,
 } from 'lucide-react';
 import { useDashboardStore } from '@/store/dashboard-store';
 import type { UserRole } from '@/types/db.types';
@@ -49,6 +49,7 @@ const ICON_MAP: Record<string, React.ElementType> = {
   'Communication':         MessageSquare,
   'System Settings':       Settings,
   'Audit Logs':            List,
+  'Evaluation Quality':    Sparkles,
   'Institutes':            Building,
   'Users':                 Users,
   'Subscriptions':         DollarSign,
