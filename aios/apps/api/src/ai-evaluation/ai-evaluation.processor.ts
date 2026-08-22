@@ -3,6 +3,7 @@ import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { AiEvaluationService } from './ai-evaluation.service';
 import { AI_EVALUATION_QUEUE, AiEvaluationJobData } from './ai-evaluation.constants';
+import { reportDeadLetter } from '../shared/logging/dead-letter';
 
 @Processor(AI_EVALUATION_QUEUE)
 export class AiEvaluationProcessor extends WorkerHost {
@@ -22,13 +23,7 @@ export class AiEvaluationProcessor extends WorkerHost {
 
   @OnWorkerEvent('failed')
   onFailed(job: Job<AiEvaluationJobData> | undefined, err: Error) {
-    if (!job) return;
-    const exhausted = job.attemptsMade >= (job.opts.attempts ?? 1);
-    const target = job.data.type === 'single' ? `response ${job.data.responseId}` : `delivery ${job.data.assessmentDeliveryId}`;
-    if (exhausted) {
-      this.logger.error(`ai-evaluation job ${job.id} exhausted all retries for ${target} — dead-lettered`, err.stack);
-    } else {
-      this.logger.warn(`ai-evaluation job ${job.id} failed (attempt ${job.attemptsMade}) for ${target}, will retry: ${err.message}`);
-    }
+    const target = job && (job.data.type === 'single' ? { responseId: job.data.responseId } : { assessmentDeliveryId: job.data.assessmentDeliveryId });
+    reportDeadLetter('ai-evaluation', job, err, this.logger, target ?? {});
   }
 }

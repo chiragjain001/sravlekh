@@ -3,6 +3,7 @@ import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { ScoreAggregationService } from './score-aggregation.service';
 import { SCORE_AGGREGATION_QUEUE, ScoreAggregationJobData } from './score-aggregation.constants';
+import { reportDeadLetter } from '../shared/logging/dead-letter';
 
 /**
  * Consumes score-aggregation jobs enqueued on every EvaluationVersion write
@@ -22,15 +23,6 @@ export class ScoreAggregationProcessor extends WorkerHost {
 
   @OnWorkerEvent('failed')
   onFailed(job: Job<ScoreAggregationJobData> | undefined, err: Error) {
-    if (!job) return;
-    const exhausted = job.attemptsMade >= (job.opts.attempts ?? 1);
-    if (exhausted) {
-      this.logger.error(
-        `score-aggregation job ${job.id} exhausted all retries for attempt ${job.data.attemptId} — dead-lettered`,
-        err.stack,
-      );
-    } else {
-      this.logger.warn(`score-aggregation job ${job.id} failed (attempt ${job.attemptsMade}), will retry: ${err.message}`);
-    }
+    reportDeadLetter('score-aggregation', job, err, this.logger, { attemptId: job?.data.attemptId });
   }
 }

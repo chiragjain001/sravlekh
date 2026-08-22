@@ -3,6 +3,7 @@ import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { AnalyticsService } from './analytics.service';
 import { MASTERY_RECALC_QUEUE, MasteryRecalcJobData } from './mastery-recalc.constants';
+import { reportDeadLetter } from '../shared/logging/dead-letter';
 
 /**
  * Consumes mastery-recalc jobs enqueued on marks-capture commit (11-PERFORMANCE-
@@ -29,15 +30,6 @@ export class MasteryRecalcProcessor extends WorkerHost {
 
   @OnWorkerEvent('failed')
   onFailed(job: Job<MasteryRecalcJobData> | undefined, err: Error) {
-    if (!job) return;
-    const exhausted = job.attemptsMade >= (job.opts.attempts ?? 1);
-    if (exhausted) {
-      this.logger.error(
-        `mastery-recalc job ${job.id} exhausted all retries for student ${job.data.studentProfileId} — dead-lettered`,
-        err.stack,
-      );
-    } else {
-      this.logger.warn(`mastery-recalc job ${job.id} failed (attempt ${job.attemptsMade}), will retry: ${err.message}`);
-    }
+    reportDeadLetter('mastery-recalc', job, err, this.logger, { studentProfileId: job?.data.studentProfileId });
   }
 }

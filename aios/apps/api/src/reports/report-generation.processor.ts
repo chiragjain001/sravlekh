@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../infrastructure/storage/storage.service';
 import { ReportStatus } from '@prisma/client';
 import { REPORT_GENERATION_QUEUE, ReportGenerationJobData } from './report-generation.constants';
+import { reportDeadLetter } from '../shared/logging/dead-letter';
 
 interface ReportScope {
   studentId?: string;
@@ -58,8 +59,7 @@ export class ReportGenerationProcessor extends WorkerHost {
 
   @OnWorkerEvent('failed')
   onFailed(job: Job<ReportGenerationJobData> | undefined, err: Error) {
-    if (!job) return;
-    this.logger.warn(`report-generation job ${job.id} failed for report ${job.data.reportId}: ${err.message}`);
+    reportDeadLetter('report-generation', job, err, this.logger, { reportId: job?.data.reportId });
   }
 
   private async buildPayload(instituteId: string, type: string, scope: ReportScope) {

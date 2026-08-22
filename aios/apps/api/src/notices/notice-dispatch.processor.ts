@@ -4,6 +4,7 @@ import { Job } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { DeliveryStatus, NoticeChannel } from '@prisma/client';
 import { NOTICE_DISPATCH_QUEUE, NoticeDispatchJobData } from './notice-dispatch.constants';
+import { reportDeadLetter } from '../shared/logging/dead-letter';
 
 /**
  * Picks up a notice's QUEUED EMAIL/SMS/WHATSAPP deliveries. No real
@@ -34,7 +35,6 @@ export class NoticeDispatchProcessor extends WorkerHost {
 
   @OnWorkerEvent('failed')
   onFailed(job: Job<NoticeDispatchJobData> | undefined, err: Error) {
-    if (!job) return;
-    this.logger.warn(`notice-dispatch job ${job.id} failed for notice ${job.data.noticeId}: ${err.message}`);
+    reportDeadLetter('notice-dispatch', job, err, this.logger, { noticeId: job?.data.noticeId });
   }
 }
