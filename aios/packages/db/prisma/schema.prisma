@@ -207,6 +207,14 @@ model Institute {
   interventions   Intervention[]
   allowListEntries AllowListEntry[]
 
+  // 21-DOMAIN-MODEL-V2.md / 04-DATABASE-SCHEMA.md (V2 section) — additive only,
+  // Phase 7 (docs/33-GAP-ANALYSIS-AND-BUILD-PLAN.md): net-new tables, no v1
+  // table touched.
+  assessments        Assessment[]
+  captureProviders   CaptureProvider[]
+  rubrics            Rubric[]
+  evaluationPolicies EvaluationPolicy[]
+
   @@map("institutes")
 }
 
@@ -296,6 +304,7 @@ model StudentProfile {
   answerSheets    AnswerSheet[]
   interventions   Intervention[]   @relation("StudentInterventions")
   profileHistory  StudentHistory[]
+  attempts        Attempt[]
 
   @@index([batchId])
   @@map("student_profiles")
@@ -359,6 +368,7 @@ model Batch {
   exams       Exam[]
   timetableSlots TimetableSlot[]
   assignments Assignment[]
+  assessmentDeliveries AssessmentDelivery[]
 
   @@index([instituteId])
   @@map("batches")
@@ -462,6 +472,10 @@ model Question {
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
   deletedAt       DateTime?
+  // 04-DATABASE-SCHEMA.md (V2 section) §3.2 — additive, nullable, no migration
+  // impact on existing rows. Denormalized convenience pointer; Rubric.questionId
+  // (below) is the enforced ownership FK.
+  rubricId        String?
 
   institute    Institute         @relation(fields: [instituteId], references: [id], onDelete: Cascade)
   subject      Subject           @relation(fields: [subjectId], references: [id])
@@ -470,6 +484,7 @@ model Question {
   versions     QuestionVersion[]
   paperItems   PaperItem[]
   responses    Response[]
+  rubric       Rubric?
 
   @@index([instituteId, subjectId, topicId, difficulty])
   @@index([isApproved])
@@ -488,6 +503,7 @@ model QuestionVersion {
   createdAt  DateTime @default(now())
 
   question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  aiRecommendations AIRecommendation[]
 
   @@unique([questionId, versionNo])
   @@map("question_versions")
@@ -540,6 +556,7 @@ model Paper {
   exam       Exam?          @relation(fields: [examId], references: [id])
   items      PaperItem[]
   versions   PaperVersion[]
+  assessments Assessment[]
 
   @@index([instituteId, status])
   @@map("papers")
@@ -674,6 +691,12 @@ model Response {
 
   answerSheet AnswerSheet @relation(fields: [answerSheetId], references: [id], onDelete: Cascade)
   question    Question    @relation(fields: [questionId], references: [id])
+
+  // V2 bridge (see the additive-block comment above AssessmentKind): Evaluation
+  // and AIRecommendation FK into this existing v1 row as-is, ahead of the
+  // Response redefinition migration (packages/db/manual-sql/response_v2_migration.sql).
+  evaluation        Evaluation?
+  aiRecommendations AIRecommendation[]
 
   @@unique([answerSheetId, questionId])
   @@map("responses")
@@ -904,4 +927,661 @@ model AuditLog {
   @@index([actorId])
   @@index([entity, entityId])
   @@map("audit_logs")
+}
+
+// =============================================================================
+// V2 DOMAIN MODEL — 21-DOMAIN-MODEL-V2.md / 04-DATABASE-SCHEMA.md (V2 section)
+// =============================================================================
+// Phase 7 (docs/33-GAP-ANALYSIS-AND-BUILD-PLAN.md): additive only. Every model
+// below is net-new — no v1 table above this line is modified except for the
+// safe, non-breaking additions already made in place (Institute/Question/Batch/
+// StudentProfile/Paper back-relations; Question.rubricId).
+//
+// Deliberately NOT done here: the v1 Response "redefinition" (04-DATABASE-
+// SCHEMA.md V2 §3.1) — moving marksAwarded/mistakeTagType/teacherComment/
+// gradedByUserId/gradedAt off Response and onto EvaluationVersion, ultimately
+// dropping those columns. That migration requires a real database to run
+// against and verify row-count parity on before any DROP COLUMN, which this
+// environment has never had (no prisma/migrations/ history exists at all).
+// Doing it without that verification would both risk real data loss on a
+// future real deployment and immediately break already-working v1 grading/
+// mastery code with nothing tested behind it. The script is written, not
+// executed: packages/db/manual-sql/response_v2_migration.sql.
+//
+// Bridging decision (not verbatim from the doc, flagged here): Evaluation and
+// AIRecommendation both need a responseId to attach to. Since the v1 Response
+// table's shape isn't changing yet, they FK into the EXISTING v1 Response.id
+// as-is. This is a deliberate, temporary bridge so Rubric/Evaluation-adjacent
+// work in later phases has something real to attach to without waiting on the
+// Response migration — not a literal transcription of the doc's "Response
+// (redefined)" wiring, which assumes the migration has already happened.
+//
+// Also deliberately NOT done: the AnswerSheet.isActiveAttempt addition doc 04
+// V2's "New Indexes" table bundles in alongside Attempt (fix #2). Adding the
+// column alone is safe, but changing AnswerSheet's unique constraint to
+// [examId, studentProfileId, isActiveAttempt] changes an existing v1 table's
+// duplicate-prevention guarantee, and no v1 code (ExamsService.createAnswerSheet)
+// understands the new semantics yet — left untouched until that application
+// code is written alongside it, not as a bare schema change.
+
+enum AssessmentKind {
+  COACHING_TEST
+  SCHOOL_THEORY_EXAM
+  PRACTICE_TEST
+  DIAGNOSTIC
+  HOMEWORK_GRADED
+}
+
+enum StakesLevel {
+  GRADED
+  PRACTICE
+  DIAGNOSTIC_ONLY
+}
+
+enum EvaluationPolicyMode {
+  AUTOMATIC
+  MANUAL_ONLY
+  AI_ASSIST_MANDATORY_REVIEW
+  AI_FINAL_LOW_STAKES
+}
+
+enum EvidenceType {
+  DIGITAL_VALUE
+  OMR_MARK
+  PAGE_REGION
+}
+
+enum CaptureProviderType {
+  OMR
+  MANUAL_GRID
+  CSV_IMPORT
+  PHOTO_CAPTURE_OBJECTIVE
+  PHOTO_CAPTURE_SUBJECTIVE
+}
+
+enum DocumentBundleStatus {
+  UPLOADING
+  PROCESSING
+  PARTIALLY_RESOLVED
+  COMPLETE
+  FAILED
+}
+
+enum DocumentStatus {
+  UPLOADED
+  PAGE_PROCESSING
+  IDENTITY_PENDING
+  REGION_MAPPING
+  READY_FOR_EVALUATION
+  FAILED
+}
+
+enum DocumentLayoutType {
+  TEMPLATE_KNOWN
+  FREE_FORM
+}
+
+enum PageStatus {
+  PENDING
+  PROCESSED
+  FLAGGED
+}
+
+enum RegionType {
+  QUESTION_ANSWER
+  HEADER
+  MARGIN
+  ROLL_NUMBER_FIELD
+  SIGNATURE
+  UNCLASSIFIED
+}
+
+enum DetectionMethod {
+  AUTO_LAYOUT_DETECTION
+  MANUAL_TEACHER_MARKUP
+  TEMPLATE_MATCHED
+}
+
+enum OCRBlockType {
+  PRINTED_TEXT
+  HANDWRITTEN_TEXT
+  MATHEMATICAL_EXPRESSION
+  DIAGRAM_SKETCH
+  TABLE
+}
+
+enum ProcessingStage {
+  VALIDATE
+  DESKEW
+  PAGE_ORDER
+  IDENTITY_RESOLVE
+  REGION_DETECT
+  LAYOUT_ANALYSIS
+  OCR
+  QUESTION_MAP
+}
+
+enum ProcessingJobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+enum AnnotationType {
+  CIRCLE
+  TICK
+  CROSS
+  COMMENT
+}
+
+enum IdentityMethod {
+  BARCODE
+  ROLL_NUMBER_OCR
+  QR_CODE
+  MANUAL_ADMIN_MATCH
+}
+
+enum IdentityStatus {
+  PENDING
+  AUTO_RESOLVED
+  MANUALLY_CONFIRMED
+  MANUALLY_CORRECTED
+  UNRESOLVED
+}
+
+enum RubricScoringMode {
+  CRITERION_ADDITIVE
+  STEP_WISE
+  HOLISTIC_WITH_GUIDANCE
+}
+
+enum EvaluationStatus {
+  PENDING
+  AI_SUGGESTED
+  TEACHER_REVIEWED
+  REVIEWER_FINALIZED
+}
+
+enum EvaluationSource {
+  AI
+  TEACHER
+  REVIEWER
+}
+
+enum AttemptStatus {
+  IN_PROGRESS
+  SUBMITTED
+  DUPLICATE
+  UNDER_EVALUATION
+  FINALIZED
+}
+
+enum AIModelPurpose {
+  EVALUATION
+  OCR
+  HANDWRITING
+}
+
+// ---------------------------------------------------------------------------
+// V2: ASSESSMENT ENGINE
+// ---------------------------------------------------------------------------
+
+model Assessment {
+  id              String         @id @default(cuid())
+  instituteId     String
+  title           String
+  assessmentKind  AssessmentKind
+  stakesLevel     StakesLevel
+  subjectIds      String[]
+  paperId         String?
+  totalMarks      Float
+  gradeLevel      String?
+  createdByUserId String
+  createdAt       DateTime       @default(now())
+
+  institute  Institute            @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  paper      Paper?               @relation(fields: [paperId], references: [id])
+  deliveries AssessmentDelivery[]
+
+  @@index([instituteId])
+  @@map("assessments")
+}
+
+model EvaluationPolicy {
+  id                  String               @id @default(cuid())
+  instituteId         String
+  name                String
+  mode                EvaluationPolicyMode
+  requiresHumanReview Boolean
+  createdAt           DateTime             @default(now())
+
+  institute  Institute            @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  deliveries AssessmentDelivery[]
+
+  @@map("evaluation_policies")
+}
+
+model AssessmentDelivery {
+  id                 String      @id @default(cuid())
+  assessmentId       String
+  batchId            String
+  status             ExamStatus  @default(DRAFT) // unchanged 7-state values from v1 Exam.status, per doc
+  version             Int        @default(0)
+  scheduledStart     DateTime?
+  scheduledEnd       DateTime?
+  captureProviderId  String
+  evaluationPolicyId String
+  unlockReason       String?
+  createdByUserId    String
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  assessment       Assessment       @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  batch            Batch            @relation(fields: [batchId], references: [id])
+  captureProvider  CaptureProvider  @relation(fields: [captureProviderId], references: [id])
+  evaluationPolicy EvaluationPolicy @relation(fields: [evaluationPolicyId], references: [id])
+  attempts         Attempt[]
+  documentBundles  DocumentBundle[]
+
+  @@index([status])
+  @@map("assessment_deliveries")
+}
+
+model Attempt {
+  id                   String       @id @default(cuid())
+  assessmentDeliveryId String
+  studentProfileId     String
+  status               AttemptStatus @default(IN_PROGRESS)
+  isActiveAttempt      Boolean      @default(true)
+  submittedAt          DateTime?
+  createdAt            DateTime     @default(now())
+
+  assessmentDelivery AssessmentDelivery @relation(fields: [assessmentDeliveryId], references: [id], onDelete: Cascade)
+  studentProfile     StudentProfile     @relation(fields: [studentProfileId], references: [id])
+  documents          Document[]
+
+  @@unique([assessmentDeliveryId, studentProfileId, isActiveAttempt])
+  @@index([assessmentDeliveryId, studentProfileId])
+  @@map("attempts")
+}
+
+model CaptureProvider {
+  id          String              @id @default(cuid())
+  instituteId String
+  type        CaptureProviderType
+  config      Json
+  createdAt   DateTime            @default(now())
+
+  institute  Institute            @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  deliveries AssessmentDelivery[]
+
+  @@map("capture_providers")
+}
+
+// ---------------------------------------------------------------------------
+// V2: DOCUMENT PROCESSING PIPELINE
+// ---------------------------------------------------------------------------
+
+model DocumentBundle {
+  id                     String               @id @default(cuid())
+  assessmentDeliveryId   String
+  uploadedByUserId       String
+  expectedDocumentCount  Int?
+  status                 DocumentBundleStatus @default(UPLOADING)
+  createdAt              DateTime             @default(now())
+
+  assessmentDelivery AssessmentDelivery @relation(fields: [assessmentDeliveryId], references: [id], onDelete: Cascade)
+  documents          Document[]
+
+  @@map("document_bundles")
+}
+
+model Document {
+  id                String             @id @default(cuid())
+  documentBundleId  String?
+  attemptId         String?            // populated only once IdentityResolution confirms/creates the link — see fix #7 note above
+  expectedPageCount Int?
+  layoutType        DocumentLayoutType @default(TEMPLATE_KNOWN)
+  status            DocumentStatus     @default(UPLOADED)
+  createdAt         DateTime           @default(now())
+
+  documentBundle    DocumentBundle?    @relation(fields: [documentBundleId], references: [id])
+  attempt           Attempt?           @relation(fields: [attemptId], references: [id])
+  pages             Page[]
+  processingJobs    ProcessingJob[]
+  identityResolution IdentityResolution?
+
+  @@index([documentBundleId, status])
+  @@index([attemptId])
+  @@map("documents")
+}
+
+model Page {
+  id         String     @id @default(cuid())
+  documentId String
+  pageNumber Int
+  status     PageStatus @default(PENDING)
+
+  document Document    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  images   PageImage[]
+
+  @@unique([documentId, pageNumber])
+  @@map("pages")
+}
+
+model PageImage {
+  id                String   @id @default(cuid())
+  pageId            String
+  rawImageUrl       String
+  processedImageUrl String?
+  deskewAngle       Float?
+  qualityScore      Float?
+  createdAt         DateTime @default(now())
+
+  page        Page         @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  regions     PageRegion[]
+  annotations Annotation[]
+
+  @@map("page_images")
+}
+
+/// Also serves as "QuestionRegion" when questionId is non-null (23-DOCUMENT-PROCESSING-ARCHITECTURE.md).
+model PageRegion {
+  id                  String         @id @default(cuid())
+  pageImageId         String
+  boundingBox         Json
+  regionType          RegionType
+  questionId          String?
+  detectionMethod     DetectionMethod
+  detectionConfidence Float?
+  createdAt           DateTime       @default(now())
+
+  pageImage PageImage  @relation(fields: [pageImageId], references: [id], onDelete: Cascade)
+  ocrBlocks OCRBlock[]
+
+  @@map("page_regions")
+}
+
+model OCRBlock {
+  id               String       @id @default(cuid())
+  questionRegionId String
+  blockType        OCRBlockType
+  boundingBox      Json
+
+  questionRegion PageRegion @relation(fields: [questionRegionId], references: [id], onDelete: Cascade)
+  results        OCRResult[]
+
+  @@map("ocr_blocks")
+}
+
+model OCRResult {
+  id                  String    @id @default(cuid())
+  ocrBlockId          String
+  extractedText       String?
+  confidence          Float
+  alternativeReadings Json?
+  aiModelVersionId    String
+  processedAt         DateTime  @default(now())
+
+  ocrBlock      OCRBlock      @relation(fields: [ocrBlockId], references: [id], onDelete: Cascade)
+  aiModelVersion AIModelVersion @relation(fields: [aiModelVersionId], references: [id])
+
+  @@map("ocr_results")
+}
+
+model ProcessingJob {
+  id          String              @id @default(cuid())
+  documentId  String
+  stage       ProcessingStage
+  status      ProcessingJobStatus @default(QUEUED)
+  attemptCount Int                @default(0)
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  document  Document             @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  artifacts ProcessingArtifact[]
+
+  @@index([documentId, stage, status])
+  @@map("processing_jobs")
+}
+
+model ProcessingArtifact {
+  id              String   @id @default(cuid())
+  processingJobId String
+  artifactType    String
+  data            Json
+  createdAt       DateTime @default(now())
+
+  processingJob ProcessingJob @relation(fields: [processingJobId], references: [id], onDelete: Cascade)
+
+  @@map("processing_artifacts")
+}
+
+model Annotation {
+  id             String         @id @default(cuid())
+  pageImageId    String
+  authorUserId   String
+  boundingBox    Json?
+  annotationType AnnotationType
+  text           String?
+  createdAt      DateTime       @default(now())
+
+  pageImage PageImage @relation(fields: [pageImageId], references: [id], onDelete: Cascade)
+
+  @@map("annotations")
+}
+
+model IdentityResolution {
+  id                        String         @id @default(cuid())
+  documentId                String         @unique
+  method                    IdentityMethod
+  candidateStudentProfileId String?
+  confidence                Float
+  resolvedStudentProfileId  String?
+  resolvedByUserId          String?
+  status                    IdentityStatus @default(PENDING)
+  createdAt                 DateTime       @default(now())
+  resolvedAt                DateTime?
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@map("identity_resolutions")
+}
+
+// ---------------------------------------------------------------------------
+// V2: RUBRIC ENGINE
+// ---------------------------------------------------------------------------
+
+model Rubric {
+  id              String            @id @default(cuid())
+  instituteId     String
+  questionId      String            @unique
+  name            String
+  maxMarks        Float
+  scoringMode     RubricScoringMode
+  createdByUserId String
+  createdAt       DateTime          @default(now())
+
+  institute Institute      @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  question  Question       @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  versions  RubricVersion[]
+
+  @@map("rubrics")
+}
+
+model RubricVersion {
+  id              String   @id @default(cuid())
+  rubricId        String
+  versionNumber   Int
+  criteriaSnapshot Json
+  editedByUserId  String
+  createdAt       DateTime @default(now())
+
+  rubric     Rubric             @relation(fields: [rubricId], references: [id], onDelete: Cascade)
+  criteria   RubricCriterion[]
+
+  @@unique([rubricId, versionNumber])
+  @@map("rubric_versions")
+}
+
+model RubricCriterion {
+  id                   String   @id @default(cuid())
+  rubricVersionId      String
+  order                Int
+  description          String
+  maxMarks             Float
+  keywordHints         String[]
+  dependsOnCriterionId String?
+
+  rubricVersion RubricVersion     @relation(fields: [rubricVersionId], references: [id], onDelete: Cascade)
+  dependsOn     RubricCriterion?  @relation("CriterionDependency", fields: [dependsOnCriterionId], references: [id])
+  dependents    RubricCriterion[] @relation("CriterionDependency")
+  criterionScores EvaluationCriterionScore[]
+
+  @@map("rubric_criteria")
+}
+
+// ---------------------------------------------------------------------------
+// V2: EVALUATION ENGINE
+// ---------------------------------------------------------------------------
+// responseId below FKs into the existing v1 Response table — see the bridging
+// decision noted at the top of this V2 block.
+
+model Evaluation {
+  id                        String           @id @default(cuid())
+  responseId                String           @unique
+  currentEvaluationVersionId String?         @unique
+  status                    EvaluationStatus @default(PENDING)
+
+  response       Response          @relation(fields: [responseId], references: [id], onDelete: Cascade)
+  currentVersion EvaluationVersion? @relation("CurrentEvaluationVersion", fields: [currentEvaluationVersionId], references: [id])
+  versions       EvaluationVersion[] @relation("EvaluationVersions")
+
+  @@map("evaluations")
+}
+
+model EvaluationVersion {
+  id                 String           @id @default(cuid())
+  evaluationId       String
+  previousVersionId  String?
+  source             EvaluationSource
+  authorUserId       String?
+  marksAwarded       Float
+  mistakeTagType     MistakeTagType?
+  teacherComment     String?
+  aiRecommendationId String?
+  disputeReason      String?
+  createdAt          DateTime         @default(now())
+
+  evaluation      Evaluation                 @relation("EvaluationVersions", fields: [evaluationId], references: [id], onDelete: Cascade)
+  previousVersion EvaluationVersion?         @relation("EvaluationVersionChain", fields: [previousVersionId], references: [id])
+  nextVersions    EvaluationVersion[]        @relation("EvaluationVersionChain")
+  currentOfEvaluation Evaluation?            @relation("CurrentEvaluationVersion")
+  criterionScores EvaluationCriterionScore[]
+
+  @@index([evaluationId, createdAt])
+  @@map("evaluation_versions")
+}
+
+model EvaluationCriterionScore {
+  id                  String  @id @default(cuid())
+  evaluationVersionId String
+  rubricCriterionId   String
+  marksAwarded        Float
+  note                String?
+
+  evaluationVersion EvaluationVersion @relation(fields: [evaluationVersionId], references: [id], onDelete: Cascade)
+  rubricCriterion   RubricCriterion   @relation(fields: [rubricCriterionId], references: [id])
+
+  @@map("evaluation_criterion_scores")
+}
+
+model AIRecommendation {
+  id                  String   @id @default(cuid())
+  responseId          String
+  questionVersionId   String
+  rubricVersionId     String?
+  evidenceRef         Json
+  ocrResultId         String?
+  evaluationPolicyId  String
+  aiModelVersionId    String
+  promptVersionId     String
+  modelParameters     Json
+  inputArtifactHash   String
+  suggestedMarks      Float
+  suggestedCriterionScores Json?
+  confidence          Float
+  flags               String[]
+  createdAt           DateTime @default(now())
+
+  response        Response        @relation(fields: [responseId], references: [id], onDelete: Cascade)
+  questionVersion QuestionVersion @relation(fields: [questionVersionId], references: [id])
+  aiModelVersion  AIModelVersion  @relation(fields: [aiModelVersionId], references: [id])
+  promptVersion   PromptVersion   @relation(fields: [promptVersionId], references: [id])
+
+  @@index([responseId, createdAt])
+  @@index([aiModelVersionId])
+  @@index([promptVersionId])
+  @@map("ai_recommendations")
+}
+
+// ---------------------------------------------------------------------------
+// V2: AI MODEL REGISTRY (fix #6 — no evaluation-domain code may hardcode a
+// vendor SDK call; every AI invocation resolves through these tables)
+// ---------------------------------------------------------------------------
+
+model AIProvider {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+
+  aiModels AIModel[]
+
+  @@map("ai_providers")
+}
+
+model AIModel {
+  id           String          @id @default(cuid())
+  aiProviderId String
+  name         String
+  purpose      AIModelPurpose
+  createdAt    DateTime        @default(now())
+
+  provider AIProvider      @relation(fields: [aiProviderId], references: [id], onDelete: Cascade)
+  versions AIModelVersion[]
+  prompts  PromptVersion[]
+
+  @@map("ai_models")
+}
+
+model AIModelVersion {
+  id            String    @id @default(cuid())
+  aiModelId     String
+  versionLabel  String
+  isActive      Boolean   @default(true)
+  deprecatedAt  DateTime?
+  createdAt     DateTime  @default(now())
+
+  model             AIModel            @relation(fields: [aiModelId], references: [id], onDelete: Cascade)
+  ocrResults        OCRResult[]
+  aiRecommendations AIRecommendation[]
+
+  @@index([aiModelId, isActive])
+  @@map("ai_model_versions")
+}
+
+model PromptVersion {
+  id              String   @id @default(cuid())
+  aiModelId       String
+  versionLabel    String
+  promptTemplate  String
+  createdByUserId String
+  createdAt       DateTime @default(now())
+
+  model             AIModel            @relation(fields: [aiModelId], references: [id], onDelete: Cascade)
+  aiRecommendations AIRecommendation[]
+
+  @@map("prompt_versions")
 }
