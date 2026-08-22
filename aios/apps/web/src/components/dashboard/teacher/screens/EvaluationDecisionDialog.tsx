@@ -1,14 +1,17 @@
 'use client';
-// ─── Evaluation Decision Dialog — 25-EVALUATION-ENGINE.md, Phase 12 (manual-only) ──
-// Records a TEACHER EvaluationVersion for one Response. No AI suggestion panel
-// yet (28-DIGITAL-COPY-UX-SPECIFICATION.md §2's "no AI suggestion panel yet"
-// framing for this phase) — decision is always ADJUST here, since ACCEPT_AI/
-// REJECT_RESCORE only make sense once an AI version exists (Phase 13).
-// The source-image/OCR-transcript viewer (doc 28 §2's left pane) is
-// deliberately not built — see docs/33 Phase 12 write-up for why.
+// ─── Evaluation Decision Dialog — 25-EVALUATION-ENGINE.md / 27-AI-EVALUATION-
+// ARCHITECTURE.md, Phase 12 (manual-only) + Phase 13 (AI suggestion panel) ──
+// Records a TEACHER (or TEACHER-endorsed-AI) EvaluationVersion for one
+// Response. When an AI recommendation exists, shows it per doc 28 §2 ("AI
+// suggestion... visually distinct from a human-entered score, confidence/
+// flags always visible") with a real Accept action (ACCEPT_AI — still a real,
+// distinct EvaluationVersion, never a no-op per 25 §4.2) alongside the manual
+// Adjust form, prefilled from the AI's numbers. The source-image/OCR-
+// transcript viewer (doc 28 §2's left pane) is still deliberately not built
+// — see docs/33 Phase 10/12 write-up for why.
 
 import { useEffect, useState } from 'react';
-import { X, ClipboardCheck, Loader2 } from 'lucide-react';
+import { X, ClipboardCheck, Loader2, Sparkles } from 'lucide-react';
 import { useRubric, useDecideEvaluation } from '@/hooks/useApi';
 
 const MISTAKE_TAGS = [
@@ -22,13 +25,28 @@ const MISTAKE_TAGS = [
 ];
 
 interface RubricCriterion { id: string; description: string; maxMarks: number }
+interface AiRecommendation {
+  suggestedMarks: number;
+  suggestedCriterionScores?: { rubricCriterionId: string; marksAwarded: number; note?: string }[] | null;
+  confidence: number;
+  flags: string[];
+}
 interface WorkItem {
   id: string;
   studentAnswer?: string | null;
   evidenceType?: string | null;
   question: { id: string; content: string; marks: number };
   attempt?: { studentProfile?: { rollNumber?: string | null; user?: { name: string } } };
+  evaluation?: { status: string; currentVersion?: { marksAwarded: number; aiRecommendation?: AiRecommendation | null } | null } | null;
 }
+
+const FLAG_LABELS: Record<string, string> = {
+  low_confidence: 'Low confidence',
+  ocr_low_confidence: 'Low OCR confidence',
+  off_topic_suspected: 'Possibly off-topic',
+  answer_exceeds_expected_length: 'Unusually long answer',
+  none: '',
+};
 
 interface EvaluationDecisionDialogProps {
   isOpen: boolean;
@@ -47,14 +65,26 @@ export function EvaluationDecisionDialog({ isOpen, onClose, item }: EvaluationDe
 
   const usesCriteria = rubric && ['CRITERION_ADDITIVE', 'STEP_WISE'].includes(rubric.scoringMode);
   const criteria: RubricCriterion[] = rubric?.versions?.[0]?.criteria ?? [];
+  const aiRecommendation = item.evaluation?.status === 'AI_SUGGESTED' ? item.evaluation.currentVersion?.aiRecommendation : null;
 
   useEffect(() => {
     if (!isOpen) return;
-    setMarksAwarded(0);
-    setCriterionMarks({});
+    // Pre-fill from the AI's numbers when one exists — a teacher adjusting an
+    // AI suggestion starts from its score, not from zero.
+    setMarksAwarded(aiRecommendation?.suggestedMarks ?? 0);
+    setCriterionMarks(
+      aiRecommendation?.suggestedCriterionScores
+        ? Object.fromEntries(aiRecommendation.suggestedCriterionScores.map((c) => [c.rubricCriterionId, c.marksAwarded]))
+        : {},
+    );
     setMistakeTagType('');
     setTeacherComment('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, item.id]);
+
+  function handleAcceptAi() {
+    decideEvaluation.mutate({ responseId: item.id, decision: 'ACCEPT_AI' }, { onSuccess: onClose });
+  }
 
   if (!isOpen) return null;
 
@@ -126,6 +156,37 @@ export function EvaluationDecisionDialog({ isOpen, onClose, item }: EvaluationDe
                 )}
               </div>
 
+              {aiRecommendation && (
+                <div className="border-2 border-violet-200 bg-violet-50/60 rounded-xl p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-violet-700">
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <p className="text-[11px] font-bold uppercase tracking-wide">AI Suggestion</p>
+                    </div>
+                    <span className="text-[11px] font-bold text-violet-700">
+                      {aiRecommendation.suggestedMarks} / {item.question.marks} · {Math.round(aiRecommendation.confidence * 100)}% confidence
+                    </span>
+                  </div>
+                  {aiRecommendation.flags.filter((f) => f !== 'none').length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {aiRecommendation.flags.filter((f) => f !== 'none').map((f) => (
+                        <span key={f} className="text-[10px] font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md">{FLAG_LABELS[f] ?? f}</span>
+                      ))}
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleAcceptAi}
+                    disabled={decideEvaluation.isPending}
+                    className="mt-2.5 flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 text-white text-[11.5px] font-bold rounded-lg hover:bg-violet-700 disabled:opacity-40"
+                  >
+                    {decideEvaluation.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
+                    Accept AI Score
+                  </button>
+                  <p className="mt-1.5 text-[10.5px] text-violet-600">Accepting still records your review as a distinct decision — not a silent default.</p>
+                </div>
+              )}
+
               {usesCriteria ? (
                 <div>
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Rubric Criteria</p>
@@ -191,7 +252,7 @@ export function EvaluationDecisionDialog({ isOpen, onClose, item }: EvaluationDe
                 className="flex items-center gap-2 px-5 py-2 bg-indigo-600 text-white text-[13px] font-bold rounded-xl hover:bg-indigo-700 disabled:opacity-40"
               >
                 {decideEvaluation.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                Submit Evaluation
+                {aiRecommendation ? 'Adjust & Submit' : 'Submit Evaluation'}
               </button>
             </div>
           </form>

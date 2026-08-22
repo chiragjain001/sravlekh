@@ -4,9 +4,11 @@
 // mock (test-grouped progress cards) with a real, individual-response queue,
 // per 28-DIGITAL-COPY-UX-SPECIFICATION.md §4's "replacing the need to
 // navigate delivery-by-delivery for routine grading." Real API from day one.
+// Phase 13: items with an AI suggestion are visually marked (doc 28 §2 —
+// "visually distinct from a human-entered score").
 
 import { useState } from 'react';
-import { ClipboardCheck, CheckCircle2, PenTool } from 'lucide-react';
+import { ClipboardCheck, CheckCircle2, PenTool, Sparkles } from 'lucide-react';
 import { useEvaluationWorkItems } from '@/hooks/useApi';
 import { SkeletonTable, EmptyState } from '@/components/ui/foundation';
 import { EvaluationDecisionDialog } from './EvaluationDecisionDialog';
@@ -17,6 +19,7 @@ interface WorkItem {
   evidenceType?: string | null;
   question: { id: string; content: string; marks: number; subjectId: string };
   attempt?: { studentProfile?: { rollNumber?: string | null; user?: { name: string } }; assessmentDelivery?: { assessment?: { title: string } } };
+  evaluation?: { status: string; currentVersion?: { marksAwarded: number; aiRecommendation?: { suggestedMarks: number; confidence: number; flags: string[] } | null } | null } | null;
 }
 
 export function TeacherEvaluationQueue() {
@@ -63,7 +66,14 @@ export function TeacherEvaluationQueue() {
                   <PenTool className="w-4 h-4" />
                 </div>
                 <div className="min-w-0">
-                  <p className="text-[13px] font-semibold text-slate-800 truncate">{item.question.content}</p>
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-[13px] font-semibold text-slate-800 truncate">{item.question.content}</p>
+                    {item.evaluation?.status === 'AI_SUGGESTED' && (
+                      <span className="flex-shrink-0 inline-flex items-center gap-1 text-[10px] font-bold text-violet-700 bg-violet-100 px-1.5 py-0.5 rounded-md">
+                        <Sparkles className="w-2.5 h-2.5" /> AI suggested
+                      </span>
+                    )}
+                  </div>
                   <p className="text-[11.5px] text-slate-500 mt-0.5">
                     {item.attempt?.studentProfile?.user?.name ?? item.attempt?.studentProfile?.rollNumber ?? 'Student'}
                     {item.attempt?.assessmentDelivery?.assessment?.title && ` · ${item.attempt.assessmentDelivery.assessment.title}`}
