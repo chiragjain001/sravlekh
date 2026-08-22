@@ -2,6 +2,7 @@ import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from src.analytics.evaluation_quality import compute_evaluation_quality
 from src.analytics.mastery_engine import recalculate_mastery
 from src.auth import get_current_user, verify_internal_token
 from src.database import db
@@ -93,3 +94,31 @@ async def get_batch_heatmap(batch_id: str, current_user = Depends(get_current_us
         "success": True,
         "data": heatmap_data
     }
+
+
+@router.get("/evaluation-quality")
+async def get_evaluation_quality(
+    instituteId: str | None = None,
+    modelVersion: str | None = None,
+    dateFrom: str | None = None,
+    dateTo: str | None = None,
+    segmentBy: str | None = None,
+    current_user=Depends(get_current_user),
+):
+    """05-API-SPECIFICATION.md (V2 section) §9 / 31 §3, backing
+    AdminEvaluationQualityDashboard. instituteId is only honored for FOUNDER
+    (cross-tenant) — an ADMIN always sees their own institute regardless of
+    what they pass. segmentBy (32-AI-GOVERNANCE-POLICY.md §4's opt-in,
+    privacy-sensitive per-subgroup breakdown) is accepted but not implemented
+    — real consent-gating infrastructure per institute would be needed first,
+    flagged rather than faked with an unguarded breakdown."""
+    if current_user.role not in ["ADMIN", "FOUNDER"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    institute_id = instituteId if (current_user.role == "FOUNDER" and instituteId) else current_user.instituteId
+
+    data = await compute_evaluation_quality(institute_id, modelVersion, dateFrom, dateTo)
+    if segmentBy:
+        data["segmentation"] = {"requested": segmentBy, "note": "not yet implemented — requires per-institute opt-in consent infrastructure (32 §4)"}
+
+    return {"success": True, "data": data}
