@@ -11,6 +11,7 @@ import { AuditAction, UserRole, ExamStatus, EvaluationPolicyMode, StakesLevel, Q
 import { AuthenticatedUser } from '../auth/auth.types';
 import { AiEvaluationService } from '../ai-evaluation/ai-evaluation.service';
 import { EXAM_STATUS_TRANSITIONS as NEXT_STATUS } from '../shared/exam-status-transitions';
+import { withVersionGuard } from '../shared/version-guard';
 
 /**
  * 32-AI-GOVERNANCE-POLICY.md §2 / 27-AI-EVALUATION-ARCHITECTURE.md §7, fix #3:
@@ -180,19 +181,25 @@ export class AssessmentsService {
     // Same discipline as ExamsService.updateStatus: LOCK is atomic with its
     // audit entry (08-ERROR-HANDLING.md), every other transition is fire-and-forget.
     if (auditAction === AuditAction.LOCK) {
-      const [updated] = await this.prisma.$transaction([
-        this.prisma.assessmentDelivery.update({ where: { id: deliveryId }, data }),
-        this.prisma.auditLog.create({
-          data: {
-            instituteId, actorId: actor.id, action: auditAction, entity: 'assessment_deliveries', entityId: deliveryId,
-            oldValue: { status: delivery.status } as any, newValue: { status: dto.status } as any,
-          },
-        }),
-      ]);
+      const [updated] = await withVersionGuard(
+        this.prisma.$transaction([
+          this.prisma.assessmentDelivery.update({ where: { id: deliveryId, version: delivery.version }, data }),
+          this.prisma.auditLog.create({
+            data: {
+              instituteId, actorId: actor.id, action: auditAction, entity: 'assessment_deliveries', entityId: deliveryId,
+              oldValue: { status: delivery.status } as any, newValue: { status: dto.status } as any,
+            },
+          }),
+        ]),
+        'assessment delivery',
+      );
       return updated;
     }
 
-    const updated = await this.prisma.assessmentDelivery.update({ where: { id: deliveryId }, data });
+    const updated = await withVersionGuard(
+      this.prisma.assessmentDelivery.update({ where: { id: deliveryId, version: delivery.version }, data }),
+      'assessment delivery',
+    );
     await this.writeAudit(instituteId, actor.id, auditAction, 'assessment_deliveries', deliveryId, { status: delivery.status }, { status: dto.status });
 
     // 25-EVALUATION-ENGINE.md §4.1: AI first-pass is triggered when a
@@ -225,19 +232,22 @@ export class AssessmentsService {
       });
     }
 
-    const [updated] = await this.prisma.$transaction([
-      this.prisma.assessmentDelivery.update({
-        where: { id: deliveryId },
-        data: { status: ExamStatus.EVALUATING, unlockReason: dto.reason, version: { increment: 1 } },
-      }),
-      this.prisma.auditLog.create({
-        data: {
-          instituteId, actorId: actor.id, action: AuditAction.UNLOCK, entity: 'assessment_deliveries', entityId: deliveryId,
-          oldValue: { status: ExamStatus.LOCKED } as any,
-          newValue: { status: ExamStatus.EVALUATING, reason: dto.reason } as any,
-        },
-      }),
-    ]);
+    const [updated] = await withVersionGuard(
+      this.prisma.$transaction([
+        this.prisma.assessmentDelivery.update({
+          where: { id: deliveryId, version: delivery.version },
+          data: { status: ExamStatus.EVALUATING, unlockReason: dto.reason, version: { increment: 1 } },
+        }),
+        this.prisma.auditLog.create({
+          data: {
+            instituteId, actorId: actor.id, action: AuditAction.UNLOCK, entity: 'assessment_deliveries', entityId: deliveryId,
+            oldValue: { status: ExamStatus.LOCKED } as any,
+            newValue: { status: ExamStatus.EVALUATING, reason: dto.reason } as any,
+          },
+        }),
+      ]),
+      'assessment delivery',
+    );
 
     return updated;
   }

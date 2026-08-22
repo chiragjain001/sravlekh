@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConflictException, ForbiddenException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
-import { UserRole, ExamStatus, EvaluationPolicyMode, StakesLevel, AssessmentKind } from '@prisma/client';
+import { UserRole, ExamStatus, EvaluationPolicyMode, StakesLevel, AssessmentKind, Prisma } from '@prisma/client';
 import { AssessmentsService } from './assessments.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiEvaluationService } from '../ai-evaluation/ai-evaluation.service';
@@ -175,6 +175,21 @@ describe('AssessmentsService', () => {
       await service.updateDeliveryStatus('inst-1', 'd1', { status: ExamStatus.LOCKED, version: 0 }, admin);
       expect(prisma.$transaction).toHaveBeenCalled();
     });
+
+    // Phase 15 hardening (20 §Phase-15's "race conditions (concurrent lock
+    // attempts)" audit): the read-check above only proves this one call's
+    // write is version-gated. A concurrent second write that already moved
+    // the version must fail atomically at the write itself (Prisma P2025),
+    // not silently succeed — see shared/version-guard.ts.
+    it('turns a concurrent-write conflict (Prisma P2025) into STALE_VERSION, not a raw 500', async () => {
+      mockDelivery(ExamStatus.DRAFT, 0);
+      prisma.assessmentDelivery.update.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('No record found for update.', { code: 'P2025', clientVersion: '5.17.0' }),
+      );
+      await expect(
+        service.updateDeliveryStatus('inst-1', 'd1', { status: ExamStatus.REVIEW, version: 0 }, teacher),
+      ).rejects.toMatchObject({ response: expect.objectContaining({ code: 'STALE_VERSION' }) });
+    });
   });
 
   describe('LOCK governance gate — 32-AI-GOVERNANCE-POLICY.md §2 / 27 §7 (adversarial, unbypassable-by-construction)', () => {
@@ -246,6 +261,50 @@ describe('AssessmentsService', () => {
           }),
         }),
       );
+    });
+
+    // Phase 15 compliance audit (20 §Phase-15 / 13-TESTING-STRATEGY.md v2
+    // addendum's "governance-gate bypass attempts, concurrent lock + evaluation-
+    // decide race") — the gate must hold even when two LOCK attempts race each
+    // other, and it must never trust a cached/stale unevaluated-count: each
+    // call re-reads fresh.
+    it('never lets two concurrent LOCK attempts both slip past the gate on a delivery with an unevaluated response', async () => {
+      mockGradedDelivery(ExamStatus.EVALUATING, StakesLevel.GRADED);
+      mockGradedDelivery(ExamStatus.EVALUATING, StakesLevel.GRADED);
+      prisma.response.count.mockResolvedValueOnce(1).mockResolvedValueOnce(1);
+
+      const [first, second] = await Promise.allSettled([
+        service.updateDeliveryStatus('inst-1', 'd1', { status: ExamStatus.LOCKED, version: 0 }, admin),
+        service.updateDeliveryStatus('inst-1', 'd1', { status: ExamStatus.LOCKED, version: 0 }, admin),
+      ]);
+
+      for (const outcome of [first, second]) {
+        expect(outcome.status).toBe('rejected');
+        expect((outcome as PromiseRejectedResult).reason).toMatchObject({
+          response: expect.objectContaining({ code: 'SCHOOL_EXAM_LOCK_BLOCKED_UNEVALUATED' }),
+        });
+      }
+      expect(prisma.assessmentDelivery.update).not.toHaveBeenCalled();
+    });
+
+    it("re-checks the unevaluated count fresh per call — a concurrent LOCK racing a decide() that just cleared the last response is correctly allowed through, never blocked by the other call's stale read", async () => {
+      mockGradedDelivery(ExamStatus.EVALUATING, StakesLevel.GRADED);
+      mockGradedDelivery(ExamStatus.EVALUATING, StakesLevel.GRADED);
+      // First LOCK attempt's count-check runs before decide() commits (1 left);
+      // the second's runs after (0 left) — each call sees its own true state.
+      prisma.response.count.mockResolvedValueOnce(1).mockResolvedValueOnce(0);
+      prisma.assessmentDelivery.update.mockResolvedValueOnce({ id: 'd1', status: ExamStatus.LOCKED });
+
+      const [first, second] = await Promise.allSettled([
+        service.updateDeliveryStatus('inst-1', 'd1', { status: ExamStatus.LOCKED, version: 0 }, admin),
+        service.updateDeliveryStatus('inst-1', 'd1', { status: ExamStatus.LOCKED, version: 0 }, admin),
+      ]);
+
+      expect(first.status).toBe('rejected');
+      expect((first as PromiseRejectedResult).reason).toMatchObject({
+        response: expect.objectContaining({ code: 'SCHOOL_EXAM_LOCK_BLOCKED_UNEVALUATED' }),
+      });
+      expect(second.status).toBe('fulfilled');
     });
   });
 

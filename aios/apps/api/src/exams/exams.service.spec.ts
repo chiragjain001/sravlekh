@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConflictException, ForbiddenException } from '@nestjs/common';
-import { ExamStatus, UserRole } from '@prisma/client';
+import { ExamStatus, UserRole, Prisma } from '@prisma/client';
 import { ExamsService } from './exams.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AnalyticsService } from '../analytics/analytics.service';
@@ -120,6 +120,44 @@ describe('ExamsService — state machine', () => {
         expect.objectContaining({ data: expect.objectContaining({ version: { increment: 1 } }) }),
       );
     });
+
+    // Phase 15 hardening (20 §Phase-15's "race conditions (concurrent lock
+    // attempts)" audit): the read-check-then-write pattern above only proves
+    // *this* call's write is version-gated. These prove two concurrent calls
+    // starting from the identical version can't both silently succeed — the
+    // write itself is the compare-and-swap, not just the earlier read-check.
+    it('turns a concurrent-write conflict (Prisma P2025) into STALE_VERSION, not a raw 500', async () => {
+      mockExam(ExamStatus.LOCKED, 7);
+      // Simulates a second concurrent unlock() having already won the CAS —
+      // this caller's update() finds no row matching { id, version: 7 } left.
+      prisma.exam.update.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('No record found for update.', { code: 'P2025', clientVersion: '5.17.0' }),
+      );
+
+      await expect(
+        service.unlock('inst-1', 'exam-1', { reason: 'Score dispute raised by parent', version: 7 }, admin),
+      ).rejects.toMatchObject({ response: expect.objectContaining({ code: 'STALE_VERSION' }) });
+    });
+
+    it('never lets two concurrent LOCK attempts both succeed from the same version', async () => {
+      mockExam(ExamStatus.EVALUATING, 3);
+      mockExam(ExamStatus.EVALUATING, 3);
+      prisma.exam.update
+        .mockResolvedValueOnce({ id: 'exam-1', status: ExamStatus.LOCKED, version: 4 })
+        .mockRejectedValueOnce(
+          new Prisma.PrismaClientKnownRequestError('No record found for update.', { code: 'P2025', clientVersion: '5.17.0' }),
+        );
+
+      const [first, second] = await Promise.allSettled([
+        service.updateStatus('inst-1', 'exam-1', { status: ExamStatus.LOCKED, version: 3 }, admin),
+        service.updateStatus('inst-1', 'exam-1', { status: ExamStatus.LOCKED, version: 3 }, admin),
+      ]);
+
+      const outcomes = [first, second];
+      expect(outcomes.filter((o) => o.status === 'fulfilled')).toHaveLength(1);
+      const rejected = outcomes.find((o) => o.status === 'rejected') as PromiseRejectedResult;
+      expect(rejected.reason).toMatchObject({ response: { code: 'STALE_VERSION' } });
+    });
   });
 
   describe('unlock (the one backward transition)', () => {
@@ -144,7 +182,7 @@ describe('ExamsService — state machine', () => {
       await service.unlock('inst-1', 'exam-1', { reason: 'Score dispute raised by parent', version: 7 }, admin);
 
       expect(prisma.exam.update).toHaveBeenCalledWith({
-        where: { id: 'exam-1' },
+        where: { id: 'exam-1', version: 7 },
         data: { status: ExamStatus.EVALUATING, unlockReason: 'Score dispute raised by parent', version: { increment: 1 } },
       });
       expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);

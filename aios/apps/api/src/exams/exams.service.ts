@@ -11,6 +11,7 @@ import { AnalyticsService } from '../analytics/analytics.service';
 import { AuditAction, UserRole, ExamStatus, PaperStatus } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { EXAM_STATUS_TRANSITIONS as NEXT_STATUS } from '../shared/exam-status-transitions';
+import { withVersionGuard } from '../shared/version-guard';
 import {
   CreateExamDto,
   GradeAnswerSheetDto,
@@ -150,19 +151,25 @@ export class ExamsService {
     // roll back the lock, not silently succeed with no trail. Every other transition
     // keeps the existing fire-and-forget writeAudit (audit failures never block those).
     if (auditAction === AuditAction.LOCK) {
-      const [updated] = await this.prisma.$transaction([
-        this.prisma.exam.update({ where: { id: examId }, data }),
-        this.prisma.auditLog.create({
-          data: {
-            instituteId, actorId: actor.id, action: auditAction, entity: 'exams', entityId: examId,
-            oldValue: { status: exam.status } as any, newValue: { status: dto.status } as any,
-          },
-        }),
-      ]);
+      const [updated] = await withVersionGuard(
+        this.prisma.$transaction([
+          this.prisma.exam.update({ where: { id: examId, version: exam.version }, data }),
+          this.prisma.auditLog.create({
+            data: {
+              instituteId, actorId: actor.id, action: auditAction, entity: 'exams', entityId: examId,
+              oldValue: { status: exam.status } as any, newValue: { status: dto.status } as any,
+            },
+          }),
+        ]),
+        'exam',
+      );
       return updated;
     }
 
-    const updated = await this.prisma.exam.update({ where: { id: examId }, data });
+    const updated = await withVersionGuard(
+      this.prisma.exam.update({ where: { id: examId, version: exam.version }, data }),
+      'exam',
+    );
     await this.writeAudit(instituteId, actor.id, auditAction, 'exams', examId, { status: exam.status }, { status: dto.status });
     return updated;
   }
@@ -192,19 +199,22 @@ export class ExamsService {
     }
 
     // Atomic with its audit entry, same rationale as LOCK in updateStatus() above.
-    const [updated] = await this.prisma.$transaction([
-      this.prisma.exam.update({
-        where: { id: examId },
-        data: { status: ExamStatus.EVALUATING, unlockReason: dto.reason, version: { increment: 1 } },
-      }),
-      this.prisma.auditLog.create({
-        data: {
-          instituteId, actorId: actor.id, action: AuditAction.UNLOCK, entity: 'exams', entityId: examId,
-          oldValue: { status: ExamStatus.LOCKED } as any,
-          newValue: { status: ExamStatus.EVALUATING, reason: dto.reason } as any,
-        },
-      }),
-    ]);
+    const [updated] = await withVersionGuard(
+      this.prisma.$transaction([
+        this.prisma.exam.update({
+          where: { id: examId, version: exam.version },
+          data: { status: ExamStatus.EVALUATING, unlockReason: dto.reason, version: { increment: 1 } },
+        }),
+        this.prisma.auditLog.create({
+          data: {
+            instituteId, actorId: actor.id, action: AuditAction.UNLOCK, entity: 'exams', entityId: examId,
+            oldValue: { status: ExamStatus.LOCKED } as any,
+            newValue: { status: ExamStatus.EVALUATING, reason: dto.reason } as any,
+          },
+        }),
+      ]),
+      'exam',
+    );
 
     return updated;
   }
