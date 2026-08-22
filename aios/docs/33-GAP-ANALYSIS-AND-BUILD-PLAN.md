@@ -287,10 +287,13 @@ modules, same pattern and same user decision as Phases 4–5's AdminExams/AdminT
 found and fixed three real doc-vs-schema gaps and one correctness gap in already-shipped Phase 4 code — see §5
 "Phase 6" for detail.
 
-**Phase 6.5 — v1 Hardening (was v1 Phase 6 in `20`).** Full security test suite, load testing against
-`10-SCALABILITY-STRATEGY.md` targets, monitoring/alerting, RLS evaluation — now feasible once auth/tests/CI
-exist. **This is the true exit gate before starting the v2 domain refactor** — `20`'s own Sequencing Rationale
-requires the v1 baseline to be regression-testable before Phase 7 touches the schema.
+**Phase 6.5 — v1 Hardening (was v1 Phase 6 in `20`) — COMPLETE, with honest limits documented.** Rate limiting,
+caching, monitoring, and the security test suite are real, tested code. Load-test execution and the AuditLog
+DB-role grant are not — this sandbox has no live Postgres/Redis to run them against, so those are scripts and
+SQL ready to run, not results. RLS: evaluated and explicitly deferred, per doc 07 §16's own framing. Two real
+bugs and one severe latent bug were found in the process — see §5 "Phase 6.5" for all of it. **This is the true
+exit gate before starting the v2 domain refactor** — `20`'s own Sequencing Rationale requires the v1 baseline
+to be regression-testable before Phase 7 touches the schema.
 
 **Phases 7–15 — v2 (Domain Refactor → Assessment Engine → Rubric Engine → Document Processing → OCR →
 Evaluation Engine [manual-only] → AI Evaluation → Reviewer Layer → v2 Hardening).** Unchanged from
@@ -857,6 +860,171 @@ pattern to two already-verified screens (`AdminAuditLogs` and `FounderHealth`) a
 login session hit its own pre-existing, unrelated sandbox limitation not worth chasing further here. Full
 `pnpm typecheck`/`lint`/`build` clean on `apps/web`; full `typecheck`/`lint`/`test`/`build` clean on `apps/api`
 (113/113 tests).
+
+### Phase 6.5: v1 Hardening (this session)
+
+Scoped honestly before building, given a hard constraint the prior six phases didn't have: this sandbox has no
+live Postgres, Redis, or monitoring backend. Presented that constraint plus a concrete "what's genuinely
+buildable vs. infra-blocked" breakdown to the user before starting; user chose the full buildable scope —
+build everything real, and clearly document what can only be prepared, not executed, rather than skipping it
+or quietly claiming more than was done.
+
+**A real, severe cross-tenant vulnerability found and fixed**: `AssignmentsService` — pre-existing code, not
+from this session — took `instituteId` as a parameter on every method but never once used it to scope a query.
+`findAll` had no institute filter in its `where` clause at all beyond the student-self-narrowing case, so any
+authenticated ADMIN or TEACHER calling `GET .../assignments` got back assignments from *every* institute in
+the database. `gradeAssignment` and `submitAssignment` fetched the target assignment by ID with zero tenant
+check, so any teacher/admin who obtained or guessed an assignment ID from a different institute could grade or
+submit against it. Every sibling service (`PapersService`, `StudentsService`, `TeachersService`, `UsersService`,
+`InstitutesService`) was read carefully as part of this pass and all correctly scope every query — this was an
+isolated gap in one module, not a systemic pattern. Fixed: `findAll` now scopes via `OR: [{batch:
+{instituteId}}, {studentProfile: {user: {instituteId}}}]` (Assignment has no direct `instituteId`, only via
+its batch/student relation); `createAssignment` validates the given `batchId`/`studentProfileId` belong to the
+institute before writing; `gradeAssignment`/`submitAssignment` now go through a `getAssignmentWithTenantCheck`
+helper. Regression-tested (`assignments.service.spec.ts`, new) including the exact vulnerability scenario:
+grading an assignment whose batch or student belongs to a different institute now 403s.
+
+**A real audit-log integrity bug found and fixed**: `AuthService`'s handling of a login attempt from an email
+not on *any* institute's allow-list had no real institute or user to attach an audit entry to — so it picked
+an arbitrary institute (`institute.findFirst()`) and an arbitrary founder user (`user.findFirst({role:
+FOUNDER})`) as sentinels and wrote a `LOGIN_FAILED` row against them. That institute's admin would then see
+failed-login audit entries attributed (via `actorId`) to their own founder, for logins that had nothing to do
+with their institute at all — a real, if narrow, audit-trail-misleads-the-reader bug (07-SECURITY-
+SPECIFICATION.md's whole point for this table). Root cause: `AuditLog.instituteId` was non-nullable in the
+schema, despite `04-DATABASE-SCHEMA.md` explicitly specifying it as "nullable for FOUNDER-global actions" —
+there was no honest way to record "this happened, but not against any real institute" without inventing a
+fake one. Fixed: made `instituteId` nullable (schema-only, safe — nothing sets it to null today, so nothing
+existing breaks); removed the sentinel-attachment entirely in favor of the `logger.warn()` call that was
+already firing alongside it (a correctly-scoped, honest record beats a misattributed one); and — the other
+half of the same code path that had the *opposite* problem — added a real, correctly-scoped `LOGIN_FAILED`
+audit entry for the suspended-user rejection case, which does have a genuine institute/user to attach to and
+previously wrote nothing at all.
+
+**Security test suite (13-TESTING-STRATEGY.md §7)** — coverage audit found 7 of ~19 service modules with zero
+test file: `assignments` (now covered above), `institutes`, `papers`, `students`, `teachers`, `users`, and
+`auth.service` itself (only `auth.module.spec.ts` existed, testing guard *wiring*, not `auth.service`'s
+actual logic). Added all six remaining spec files, each covering the two categories doc 13 §7 asks for first:
+cross-tenant isolation (an actor from institute A can't read/write institute B's resource, even with a correct
+ID) and RBAC boundary rejection (wrong role → 403). `auth.service.spec.ts` additionally covers the login-
+lockout and audit-fix behavior below. Two categories from doc 13 §7 are **not** meaningfully coverable here:
+injection-payload fuzzing needs a real DB to prove anything beyond "Prisma parameterizes queries" (which unit
+tests already implicitly rely on), and the AuditLog DB-role-grant immutability test is explicitly a Postgres-
+role-level check — see the SQL file below, not a Jest test, since a mocked Prisma client will "succeed" at
+any operation you tell it to. 113 → 167 backend tests from this sub-item alone.
+
+**Rate limiting (07-SECURITY-SPECIFICATION.md §7)** — the most surprising finding of this whole phase:
+`ThrottlerModule.forRoot([...])` was registered in `app.module.ts` with the exact right limits (10 req/s +
+100 req/min), but **`ThrottlerGuard` itself was never registered anywhere** — `grep -rn "ThrottlerGuard"
+apps/api/src` returned zero matches before this session. Rate limiting was fully configured and completely
+unenforced, the same class of bug as Phase 1's JwtAuthGuard/RolesGuard-configured-but-never-wired finding (that
+fix's own regression test, `auth.module.spec.ts`, is extended here to cover this too, so it can't happen a
+third time silently). Fixed:
+- Added `UserThrottlerGuard` (keys by `req.user.id` once authenticated, falls back to IP for the `@Public()`
+  login route — doc 07 wants "per authenticated user" for protected routes and "per IP" specifically for
+  login) as the third global `APP_GUARD`, deliberately ordered *after* `RolesGuard` so `req.user` is already
+  populated when it runs.
+- Pinned an explicit `@Throttle()` override on `POST /auth/google` matching doc 07's numbers exactly, so a
+  future change to the global default can't silently weaken login's protection by coincidence.
+- Added `AuthService` login lockout: 5 consecutive failures for the same email → locked out for 15 minutes,
+  checked before any DB work. In-memory (documented caveat: needs Redis-backed storage for a horizontally-
+  scaled deployment, same as the throttler's own default storage).
+- Added `InstituteBulkThrottleGuard` (self-contained, 50/hour per institute — doc 07 names no exact figure,
+  flagged as a placeholder pending a real product decision) on `POST /reports` and `POST /papers/generate`,
+  the two closest matches to doc 07's "bulk endpoints (CSV import, blueprint generation)."
+
+**Caching layer (09-CACHING-STRATEGY.md)** — none of it existed; Redis was used only for the BullMQ queue
+connection. Built a generic `CacheService` (fail-open by design: every method catches and logs rather than
+throwing, so Redis unavailability degrades to direct-DB reads per doc 09 §5) and wired all 6 named caches from
+doc 09 §1 that map to an endpoint that actually exists today: academics-tree (`BatchesService`, 30 min, 8 write
+methods invalidate it), question-bank listing (`QuestionsService`, 5 min, broad prefix-invalidation per doc's
+own "acceptable given short TTL" note), institute-profile (`InstitutesService` + `FounderService`'s three
+mutating actions, 10 min, invalidated immediately on write not just TTL), allowlist-check (`AuthService`, 60s,
+keyed by email-hash since the institute isn't known yet at that point in the login flow — doc's literal key
+format assumes it is), and timetable weekly view (`TimetableService`, 15 min). **Deferred**: mastery-summary
+(doc 09 §1.4) — that data lives entirely behind the Python service's heatmap endpoint; there is no NestJS-side
+route to attach a cache to without inventing a new endpoint, which is scope beyond "add caching to what
+exists." `tokenVersion`/force-logout (doc 09 §6) — investigated; `validateJwtPayload` already re-fetches the
+user fresh on every single request (confirmed: it discards the JWT payload's role/instituteId claims entirely
+and rebuilds from a live DB row), which already closes the main risk this would address, so building a whole
+new revocation feature under the "caching" heading felt like scope creep — flagged, not built.
+
+**A severe, latent bug found only because caching got wired into real endpoints and verified live** (unit
+tests with mocked Redis couldn't have caught this): ioredis's default `enableOfflineQueue: true` queues
+commands issued while disconnected instead of rejecting them. Against this sandbox's always-unreachable Redis,
+every `cache.get()`/`cache.set()` call would hang forever waiting on a connection that will never complete —
+the try/catch fail-open logic never gets a chance to fire, because nothing ever rejects. Confirmed by hand: the
+API booted fine (thanks to the Phase 6 PrismaService fix) but then hung on every single request, including
+login (which now went through the new allowlist-check cache). Fixed with one flag, `enableOfflineQueue:
+false`, which makes ioredis reject immediately instead of queueing — confirmed fixed by restarting the API
+against this same unreachable Redis and observing a prompt real response (401, not a hang) on a cached
+endpoint. Added a regression test asserting the flag is set, since this is exactly the kind of one-line config
+detail that silently regresses. This is the second time this phase that live verification — not unit tests —
+caught something unit tests structurally could not: a mocked Redis client can't hang, only a real network
+connection attempt can. Both this and the Phase 6 PrismaService crash reinforce the same lesson: config that
+only manifests against genuinely-unreachable infrastructure needs to actually be run against genuinely-
+unreachable infrastructure at least once, not just unit-tested.
+
+**Monitoring (12-LOGGING-MONITORING.md)** — added `@sentry/node`, initialized in `main.ts` before
+`NestFactory.create()` (so it can capture bootstrap-time errors too), gated on `SENTRY_DSN` being set (already
+present as an optional env var in `env.schema.ts` — nobody had wired anything to read it yet), same
+"optional, warn, degrade" pattern as Redis/S3 elsewhere. `AllExceptionsFilter` forwards every 5xx to Sentry
+with `requestId`/`route`/`errorCode` tags and `userId`/`instituteId` only (never PII, per doc 12 §3). Added
+`RequestLoggingInterceptor` (global) + a `logStructured()` helper writing doc 12 §2's exact JSON schema
+straight to console (deliberately bypassing Nest's default `Logger`, which decorates lines with bracketed
+timestamps that aren't machine-parseable) for every mutating request's success path; `AllExceptionsFilter`
+emits the same shape for the failure path, so together every mutating request is covered exactly as doc 12 §4
+asks. **Not done**: apps/web's own Sentry wiring, and the doc 12 §7 alert table (needs a real PagerDuty/on-
+call routing target this sandbox has none of) — both require live infra to mean anything, flagged rather than
+faked.
+
+**Dependency vulnerability scanning (07-SECURITY-SPECIFICATION.md §15 / 14-DEPLOYMENT-ARCHITECTURE.md §5)** —
+`.github/workflows/ci.yml` had no scan step at all. Added one (`pnpm audit` + `pip-audit`) — but running it
+locally first surfaced 56 pre-existing production-dependency findings (1 critical, 22 high), which would have
+made this new gate fail on day one if added as blocking. Fixed the critical one directly, since it was a
+genuine, easily-fixable, high-value finding: Next.js `<14.2.25` has an authorization-bypass vulnerability in
+middleware (GHSA-f82v-jwr5-mffw); bumped 14.2.4 → 14.2.35 (latest same-minor-line patch, low regression risk).
+That bump itself broke the production build — 14.2.25+ enforces `useSearchParams()` needing a Suspense
+boundary more strictly than 14.2.4 did, and `/login` didn't have one; fixed by wrapping it, a real if unrelated
+fix required to land the security patch at all. Confirmed clean typecheck/build after. The CI job itself is
+`continue-on-error: true` for now — 18 high-severity findings remain (mostly transitive: postcss/nanoid/
+js-yaml/lodash/multer via build tooling and Next's own dependency tree), each needing its own regression-tested
+version-bump pass, which is a separate, larger effort than this one session should attempt reflexively. A
+hard-blocking gate that's red from the day it's introduced trains people to ignore it — flip it to blocking
+once that backlog is cleared. `pip-audit` found one unfixed finding (`ecdsa`, PYSEC-2026-1325, no patch version
+exists) — noted, not actionable via a version bump.
+
+**Row-Level Security (07-SECURITY-SPECIFICATION.md §16) — decision: defer to Phase 2, as the doc's own default
+framing already suggests.** Doc 07 genuinely leaves this open ("may be enabled... tracked as a Phase 2
+hardening item, not assumed present by default in Phase 1 unless explicitly enabled per table") rather than
+mandating it — Phase 6.5's job was to make and record the decision, not necessarily implement it. Reasoning for
+deferring now specifically: (1) app-layer tenant isolation just got a fresh, careful audit this same session —
+every service was read, one real gap was found and fixed, and the whole surface now has regression tests
+proving it; (2) this sandbox has no live Postgres to implement or verify RLS policies against, so anything
+written now would be unverified SQL sitting alongside the unverified AuditLog-grant SQL below, compounding
+risk rather than reducing it; (3) Prisma's connection pooling makes RLS's usual mechanism (`SET
+app.institute_id` per session, read by `USING (institute_id = current_setting('app.institute_id'))` policies)
+non-trivial to wire correctly — pooled connections are reused across requests/tenants, so the session variable
+has to be set and reliably cleared on every single request via Prisma middleware, not just once at connect
+time; getting this subtly wrong would be worse than not having it, since it would look like protection while
+providing none. Revisit before: onboarding a customer with a specific compliance requirement naming DB-level
+tenant isolation, or if a second app-layer tenant-isolation bug is ever found in production (this session's
+AssignmentsService fix would then read as a pattern, not an isolated incident).
+
+**Load testing (10-SCALABILITY-STRATEGY.md targets, scenarios per 13-TESTING-STRATEGY.md §8) and the
+AuditLog DB-role grant (07-SECURITY-SPECIFICATION.md §13)** — both are genuinely unexecutable here, no
+hedging: `load-tests/*.js` (three k6 scripts, one per doc 13 §8 scenario — grading burst, AI blueprint-
+generation burst, report-generation burst) and `packages/db/manual-sql/audit_log_immutability.sql` (a
+trigger that rejects UPDATE/DELETE on `audit_logs` regardless of which DB role executes it — real defense-
+in-depth beyond a role-level GRANT, and the part worth keeping even once a proper least-privilege app role
+exists; the GRANT/REVOKE half is included but noted as inert until `DATABASE_URL` stops connecting as the
+`postgres` superuser, which bypasses grants by definition) are both written, reviewed, and explicitly labeled
+**unexecuted** in their own file headers and in `load-tests/README.md`. "Load testing executed against
+targets" cannot be honestly claimed done from this sandbox — only "scripts exist and are ready to run" can.
+
+Verified: full `pnpm typecheck`/`lint`/`test`/`build` clean on `apps/api` (184 backend tests, up from 90 at
+the start of this session); full `typecheck`/`test`/`build` clean on `apps/web` after the Next.js bump and the
+Suspense fix; live-verified the API boots cleanly and a real cached endpoint responds promptly rather than
+hanging, against this sandbox's always-unreachable Postgres/Redis.
 
 ## 6. Definition of Done reminder
 
