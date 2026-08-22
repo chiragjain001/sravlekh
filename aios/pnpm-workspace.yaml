@@ -22,6 +22,7 @@ overrides:
   nanoid: ^3.3.18
   vite: ^6.4.3
   file-type: ^21.3.2
+  sharp: ^0.35.3
 allowBuilds:
   '@nestjs/core': true
   '@prisma/client': true
