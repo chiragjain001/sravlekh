@@ -22,6 +22,10 @@ import { ReportsModule } from './reports/reports.module';
 import { AuditModule } from './audit/audit.module';
 import { FounderModule } from './founder/founder.module';
 import { HealthModule } from './health/health.module';
+import { EvaluationPoliciesModule } from './evaluation-policies/evaluation-policies.module';
+import { CaptureProvidersModule } from './capture-providers/capture-providers.module';
+import { AssessmentsModule } from './assessments/assessments.module';
+import { AttemptsModule } from './attempts/attempts.module';
 import { QueueModule } from './infrastructure/queue/queue.module';
 import { StorageModule } from './infrastructure/storage/storage.module';
 import { CacheModule } from './infrastructure/cache/cache.module';
@@ -74,6 +78,10 @@ import { RequestLoggingInterceptor } from './shared/interceptors/request-logging
     AuditModule,
     FounderModule,
     HealthModule,
+    EvaluationPoliciesModule,
+    CaptureProvidersModule,
+    AssessmentsModule,
+    AttemptsModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

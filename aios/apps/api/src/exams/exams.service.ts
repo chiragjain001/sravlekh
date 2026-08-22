@@ -10,27 +10,13 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { AuditAction, UserRole, ExamStatus, PaperStatus } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
+import { EXAM_STATUS_TRANSITIONS as NEXT_STATUS } from '../shared/exam-status-transitions';
 import {
   CreateExamDto,
   GradeAnswerSheetDto,
   UpdateExamStatusDto,
   UnlockExamDto,
 } from './dto/exam.dto';
-
-/**
- * 01-PRODUCT-REQUIREMENTS.md / 03-FEATURE-SPECIFICATIONS.md: strict forward-only
- * state machine, one stage at a time, no skipping. The only backward transition is
- * the separate unlock() method (LOCKED -> EVALUATING, admin-only, reason required).
- */
-const NEXT_STATUS: Record<ExamStatus, ExamStatus | null> = {
-  [ExamStatus.DRAFT]: ExamStatus.REVIEW,
-  [ExamStatus.REVIEW]: ExamStatus.APPROVED,
-  [ExamStatus.APPROVED]: ExamStatus.PUBLISHED,
-  [ExamStatus.PUBLISHED]: ExamStatus.ONGOING,
-  [ExamStatus.ONGOING]: ExamStatus.EVALUATING,
-  [ExamStatus.EVALUATING]: ExamStatus.LOCKED,
-  [ExamStatus.LOCKED]: null,
-};
 
 @Injectable()
 export class ExamsService {

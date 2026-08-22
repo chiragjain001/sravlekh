@@ -678,7 +678,7 @@ model ScoreRecord {
 /// Question-level response with mistake tagging.
 model Response {
   id               String          @id @default(cuid())
-  answerSheetId    String
+  answerSheetId    String?
   questionId       String
   marksAwarded     Float
   marksAvailable   Float
@@ -688,9 +688,22 @@ model Response {
   teacherComment   String?
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
+  // Phase 8 (docs/33-GAP-ANALYSIS-AND-BUILD-PLAN.md) — additive: a Response now
+  // belongs to EITHER a v1 AnswerSheet (answerSheetId) OR a v2 Attempt
+  // (attemptId), never neither. answerSheetId was loosened from required to
+  // optional to allow this — fully backward-compatible, since every existing
+  // v1 write path already always supplies it. evidenceType is null on every
+  // pre-Phase-8 row (legacy v1 shape); Phase 8's CaptureProvider ingest always
+  // sets it. This is NOT the doc 04 §3.1 Response redefinition (still
+  // deferred, still unexecuted — see response_v2_migration.sql) — that
+  // migration additionally moves marksAwarded/mistakeTags/teacherComment off
+  // this table entirely, which this change does not do.
+  attemptId        String?
+  evidenceType     EvidenceType?
 
-  answerSheet AnswerSheet @relation(fields: [answerSheetId], references: [id], onDelete: Cascade)
-  question    Question    @relation(fields: [questionId], references: [id])
+  answerSheet AnswerSheet? @relation(fields: [answerSheetId], references: [id], onDelete: Cascade)
+  attempt     Attempt?     @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  question    Question     @relation(fields: [questionId], references: [id])
 
   // V2 bridge (see the additive-block comment above AssessmentKind): Evaluation
   // and AIRecommendation FK into this existing v1 row as-is, ahead of the
@@ -699,6 +712,7 @@ model Response {
   aiRecommendations AIRecommendation[]
 
   @@unique([answerSheetId, questionId])
+  @@unique([attemptId, questionId])
   @@map("responses")
 }
 
@@ -1200,6 +1214,7 @@ model Attempt {
   assessmentDelivery AssessmentDelivery @relation(fields: [assessmentDeliveryId], references: [id], onDelete: Cascade)
   studentProfile     StudentProfile     @relation(fields: [studentProfileId], references: [id])
   documents          Document[]
+  responses          Response[]
 
   @@unique([assessmentDeliveryId, studentProfileId, isActiveAttempt])
   @@index([assessmentDeliveryId, studentProfileId])
