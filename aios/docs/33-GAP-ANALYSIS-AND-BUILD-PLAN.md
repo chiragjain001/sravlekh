@@ -178,11 +178,12 @@ root docs as historical/aspirational context only.
   opened or read by this analysis regardless, to avoid handling credentials.
 
 ### v2 subsystems (docs 21–32)
-100% unbuilt — no Assessment/AssessmentDelivery/Attempt/Document/Rubric/Evaluation models exist in
-`schema.prisma` yet, no corresponding modules, no UI. This is expected (v2 docs are all `STATUS: PROPOSED`)
-and means Phases 7–15 are genuinely greenfield with no legacy code fighting them — the only real dependency is
-that Phase 7 (domain refactor) must land cleanly on top of a *stabilized* v1 foundation, which is why Phase 1
-(this session's focus) matters disproportionately.
+**Updated in Phase 7 (this session):** the schema layer is no longer unbuilt — all 27 V2 models
+(Assessment/AssessmentDelivery/Attempt/Document/Rubric/Evaluation and the rest) now exist in `schema.prisma`,
+additively, alongside the untouched v1 tables (see §5 "Phase 7" for detail). No corresponding modules or UI
+exist yet — Phases 8–15 are still genuinely greenfield at the application layer, with no legacy code fighting
+them. Phase 7 landed cleanly on top of the *stabilized* v1 foundation Phase 1–6.5 built, per `20`'s own
+Sequencing Rationale.
 
 ---
 
@@ -295,17 +296,30 @@ bugs and one severe latent bug were found in the process — see §5 "Phase 6.5"
 exit gate before starting the v2 domain refactor** — `20`'s own Sequencing Rationale requires the v1 baseline
 to be regression-testable before Phase 7 touches the schema.
 
-**Phases 7–15 — v2 (Domain Refactor → Assessment Engine → Rubric Engine → Document Processing → OCR →
-Evaluation Engine [manual-only] → AI Evaluation → Reviewer Layer → v2 Hardening).** Unchanged from
-`20-IMPLEMENTATION-PLAN.md` — no existing code conflicts with these phases since none of this is built yet. The
-sequencing rationale in `20` (rubric before evaluation, document-processing before OCR, manual before AI
-evaluation, reviewer after AI) stands as written and should not be reordered.
+**Phase 7 — Domain Refactor (schema staging) — COMPLETE, additive-only scope.** Added the full V2 domain model
+(27 new tables, ~21 new enums) to `schema.prisma` — Assessment/AssessmentDelivery/Attempt, the document-
+processing pipeline, Rubric/RubricVersion/RubricCriterion, Evaluation/EvaluationVersion/EvaluationCriterionScore,
+AIRecommendation, and the AI model registry (AIProvider/AIModel/AIModelVersion/PromptVersion). No v1 table was
+modified beyond safe additive back-relations and one new nullable column (`Question.rubricId`). The doc's own
+destructive step — redefining v1 `Response` and dropping its graded-marks columns — is deliberately **not**
+executed here; see §5 "Phase 7" for the full reasoning and what was written-but-not-run instead. **This phase's
+own scope note corrects an inaccuracy in this very document** (see below).
 
-Two forward-reference gaps inherited from the v2 doc pack itself (not this codebase): `04-DATABASE-SCHEMA.md`'s
-V2 section, `05-API-SPECIFICATION.md`'s V2 section, `02-SYSTEM-ARCHITECTURE.md`'s V2 section, and
-`06B-AUTH-AUTHORIZATION-V2.md` are referenced throughout docs 21–32 but not yet written as of this session. They
-need to be drafted (from the detail already present in docs 21, 26, 27, 30) before or during Phase 7, not
-discovered as missing mid-implementation.
+**Correction to this document, found while starting Phase 7:** the paragraph immediately above (in earlier
+revisions of this file) claimed `04-DATABASE-SCHEMA.md`'s V2 section, `05-API-SPECIFICATION.md`'s V2 section,
+and `02-SYSTEM-ARCHITECTURE.md`'s V2 section "are not yet written." This was checked directly at the start of
+Phase 7 and is **false** — all three docs have complete "PART 2 — V2 EXTENSIONS" sections (04's is the ~190-line
+section this phase was built directly from). Only `06B-AUTH-AUTHORIZATION-V2.md`'s addendum inside doc 06 is
+genuinely thin/notes-only, and even that wasn't a blocker for schema-staging work. Flagging this per the
+session's standing rule to correct earlier inaccuracies before building on top of them rather than silently
+carrying them forward.
+
+**Phases 8–15 — Assessment Engine (endpoints) → Rubric Engine → Document Processing → OCR → Evaluation Engine
+[manual-only] → AI Evaluation → Reviewer Layer → v2 Hardening.** Unchanged from `20-IMPLEMENTATION-PLAN.md` — no
+existing code conflicts with these phases since none of the endpoint/UI layer is built yet (Phase 7 was schema
+only, per this session's scope decision). The sequencing rationale in `20` (rubric before evaluation, document-
+processing before OCR, manual before AI evaluation, reviewer after AI) stands as written and should not be
+reordered.
 
 ---
 
@@ -1025,6 +1039,95 @@ Verified: full `pnpm typecheck`/`lint`/`test`/`build` clean on `apps/api` (184 b
 the start of this session); full `typecheck`/`test`/`build` clean on `apps/web` after the Next.js bump and the
 Suspense fix; live-verified the API boots cleanly and a real cached endpoint responds promptly rather than
 hanging, against this sandbox's always-unreachable Postgres/Redis.
+
+### Phase 7: Domain Refactor — schema staging (this session)
+
+**Scope decision, made with the user:** this sandbox has never had a live Postgres instance (true across every
+phase of this session), so the doc's destructive step for this phase — migrating v1 `Response` rows into
+`Evaluation`/`EvaluationVersion` and then `DROP COLUMN`-ing `Response.marksAwarded`/`mistakeTags`/
+`teacherComment` — cannot be safely run or verified here. Asked the user how to scope Phase 7 given that
+constraint; chose **"Additive only, drop deferred"**: add every new V2 table as genuinely new, additive schema
+(zero risk to existing data or code, fully testable without live infra), and defer the destructive migration
+and its verification to whenever a real database exists. This is the same "build what's genuinely real, label
+what needs live infra as written-not-executed" pattern the user validated in Phase 6.5's "Full buildable scope"
+choice — applied here to a migration context instead of an infra context.
+
+**What was added to `schema.prisma`** — all from `04-DATABASE-SCHEMA.md`'s V2 section (§1.1–1.27, §2):
+- **Assessment engine**: `Assessment`, `AssessmentDelivery`, `Attempt`, `CaptureProvider`, `EvaluationPolicy`.
+- **Document processing pipeline**: `DocumentBundle`, `Document`, `Page`, `PageImage`, `PageRegion`, `OCRBlock`,
+  `OCRResult`, `ProcessingJob`, `ProcessingArtifact`, `Annotation`, `IdentityResolution`.
+- **Rubric engine**: `Rubric`, `RubricVersion`, `RubricCriterion` (self-referential `dependsOnCriterionId` for
+  criterion dependencies, disambiguated with a named `"CriterionDependency"` relation).
+- **Evaluation engine**: `Evaluation`, `EvaluationVersion` (self-referential `previousVersionId` version chain,
+  named `"EvaluationVersionChain"`; a separate named `"CurrentEvaluationVersion"` relation for the
+  `Evaluation.currentEvaluationVersionId` ↔ `EvaluationVersion` 1:1 pointer, needed since Prisma can't
+  auto-disambiguate two relations between the same two models), `EvaluationCriterionScore`, `AIRecommendation`.
+- **AI model registry (fix #6)**: `AIProvider`, `AIModel`, `AIModelVersion`, `PromptVersion` — the abstraction
+  boundary the doc requires so no evaluation-domain code may hardcode a vendor SDK call; every future AI
+  invocation resolves through these tables instead.
+- 21 new enums (`AssessmentKind`, `StakesLevel`, `EvaluationPolicyMode`, `EvidenceType`, and 17 more), all
+  exactly as doc 04 §2 specifies.
+
+**v1 models touched — additive only, confirmed via a clean `pnpm typecheck` + all 184 existing `apps/api` tests
+passing unchanged:**
+- `Institute`: added `assessments`, `captureProviders`, `rubrics`, `evaluationPolicies` back-relation arrays.
+- `Question`: added `rubricId String?` (denormalized convenience pointer, doc 04 §3.2) and `rubric Rubric?`
+  (the real back-relation — `Rubric.questionId` is the enforced 1:1 ownership FK).
+- `Batch`: added `assessmentDeliveries` back-relation array.
+- `StudentProfile`: added `attempts` back-relation array.
+- `Paper`: added `assessments` back-relation array (doc 04 §1.1 specifies `Assessment.paperId → Paper`, not
+  `Blueprint` — caught and corrected a self-made mistake before it landed).
+- `Response`: added `evaluation Evaluation?` and `aiRecommendations AIRecommendation[]` — see the bridging
+  decision below.
+
+**Bridging decision (not verbatim from the doc — flagged here as a genuine interpretation call):** `Evaluation`
+and `AIRecommendation` both need something to attach to. Since v1 `Response`'s shape isn't being redefined in
+this pass, both FK straight into the **existing, unmodified** `Response.id` as-is. This lets Rubric/Evaluation-
+adjacent work in later phases (Phase 10+) attach to something real without waiting on the destructive migration
+below. It also means v1's grading columns (`Response.marksAwarded` etc.) and the new `Evaluation` bridge
+temporarily coexist unmerged — deliberate, not an oversight; resolved when the migration below actually runs.
+
+**Deliberately NOT done, and why:**
+- **The `Response` field migration** (doc 04 §3.1) — written as an unexecuted script,
+  `packages/db/manual-sql/response_v2_migration.sql`, following the same pattern as Phase 6.5's
+  `audit_log_immutability.sql`. Beyond just "no live DB," this script also needed its own honesty pass: the
+  doc's conceptual SQL sketch assumes v1 `Response` has `gradedByUserId`/`gradedAt` columns, but this repo's
+  actual `Response` model never had them (marks/comments are written directly by `ExamsService`, no separate
+  "graded at" timestamp) — the script documents this reconciliation gap explicitly rather than silently
+  papering over it with SQL that would fail against the real table.
+- **`Exam`/`AnswerSheet` as compatibility views** (doc 04 §3.3) — design note only,
+  `packages/db/manual-sql/exam_compatibility_view_design.md`. Real Postgres `VIEW`/trigger DDL needs a live
+  database to prototype and verify; the note also surfaces a design decision doc 04 explicitly leaves open
+  (view+`INSTEAD OF` triggers vs. a synced table) that has real implications for `ExamsService`'s existing
+  write paths and shouldn't be decided as a drive-by inside a schema-staging phase.
+- **`AnswerSheet.isActiveAttempt` / corrected unique constraint** (doc 04's fix #2, bundled with `Attempt` in
+  the "New Indexes" table) — the column addition alone would be safe, but changing `AnswerSheet`'s existing
+  unique constraint changes an existing v1 duplicate-prevention guarantee, and no v1 code
+  (`ExamsService.createAnswerSheet`) understands the new insert-time semantics (new duplicates inserted with
+  `isActiveAttempt=false` rather than toggling the existing row) yet. Left untouched until that application-code
+  change is written alongside it — a bare schema change here would be inert at best, silently wrong at worst.
+
+**Bug found and fixed during this phase — Python client generator bootstrap crash:** naming the AI-registry
+back-relation `AIProvider.models: AIModel[]` collided with `prisma-client-py`'s own generated module name
+(`prisma/models.py`, imported as `models` inside the generated package). The generated Python client's forward
+type reference `'models.AIModel'` resolved `models` against the class's own `models` field (shadowing the
+module) instead of the module itself, crashing on import with `AttributeError: 'NoneType' object has no
+attribute 'AIModel'`. Worse, this also **bricked `prisma generate` itself** for the Python target — the
+`prisma-client-py` CLI's own bootstrap (`prisma/__init__.py`) eagerly imports the very models it's about to
+regenerate, so a broken previous generation prevented the next one from running at all, needing a direct
+one-line patch to the installed generated file (`AIProvider.models` → `AIProvider.aiModels`) to unstick the
+bootstrap before `prisma generate` could run cleanly again. Renamed the field in `schema.prisma` to
+`aiModels` and confirmed clean regeneration for both clients afterward. This is a real, reusable finding for
+any future schema work: **relation/field names must avoid `models`, `types`, `enums`, `actions`, `errors`,
+`client`, `bases`, `metadata`** — the exact module names `prisma-client-py` generates — since a JS-only
+typecheck/test pass cannot catch this (it's a Python-client-only failure mode), only running the Python
+generation step and its test suite does.
+
+Verified: `npx prisma validate` and `prisma generate` clean for both JS and Python clients; full
+`pnpm typecheck` clean on `apps/api`; all 184 existing `apps/api` tests pass unchanged (confirming the schema
+change is purely additive, as intended — no existing model's real columns changed, only new relation arrays and
+one new nullable scalar); `apps/api-python`'s full test suite (7 tests) passes against the regenerated client.
+`apps/web` untouched and unaffected — Phase 7 is schema-only, no new endpoints or UI (that starts at Phase 8).
 
 ## 6. Definition of Done reminder
 
