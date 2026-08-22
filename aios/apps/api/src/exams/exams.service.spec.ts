@@ -19,7 +19,11 @@ const VALID_FORWARD: Record<ExamStatus, ExamStatus | null> = {
 
 describe('ExamsService — state machine', () => {
   let service: ExamsService;
-  let prisma: { exam: { findUnique: jest.Mock; update: jest.Mock }; auditLog: { create: jest.Mock } };
+  let prisma: {
+    exam: { findUnique: jest.Mock; update: jest.Mock };
+    auditLog: { create: jest.Mock };
+    $transaction: jest.Mock;
+  };
 
   const admin: AuthenticatedUser = { id: 'admin-1', email: 'a@x.com', name: 'Admin', role: UserRole.ADMIN, instituteId: 'inst-1' };
   const teacher: AuthenticatedUser = { ...admin, id: 'teacher-1', role: UserRole.TEACHER };
@@ -28,6 +32,9 @@ describe('ExamsService — state machine', () => {
     prisma = {
       exam: { findUnique: jest.fn(), update: jest.fn() },
       auditLog: { create: jest.fn() },
+      // LOCK/UNLOCK go through prisma.$transaction([...]) so the audit entry is
+      // atomic with the mutation — mirror Prisma's array-form behavior in the mock.
+      $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
     };
     const module: TestingModule = await Test.createTestingModule({
       providers: [

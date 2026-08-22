@@ -153,16 +153,31 @@ export class ExamsService {
       data['lockedByUserId'] = actor.id;
     }
 
-    const updated = await this.prisma.exam.update({ where: { id: examId }, data });
-
     const auditAction: AuditAction =
       dto.status === ExamStatus.APPROVED ? AuditAction.APPROVE
       : dto.status === ExamStatus.PUBLISHED ? AuditAction.PUBLISH
       : dto.status === ExamStatus.LOCKED ? AuditAction.LOCK
       : AuditAction.UPDATE;
 
-    await this.writeAudit(instituteId, actor.id, auditAction, 'exams', examId, { status: exam.status }, { status: dto.status });
+    // 03-FEATURE-SPECIFICATIONS.md's Audit & Governance module requires LOCK to be
+    // atomic with its audit entry (same transaction) — an audit-write failure must
+    // roll back the lock, not silently succeed with no trail. Every other transition
+    // keeps the existing fire-and-forget writeAudit (audit failures never block those).
+    if (auditAction === AuditAction.LOCK) {
+      const [updated] = await this.prisma.$transaction([
+        this.prisma.exam.update({ where: { id: examId }, data }),
+        this.prisma.auditLog.create({
+          data: {
+            instituteId, actorId: actor.id, action: auditAction, entity: 'exams', entityId: examId,
+            oldValue: { status: exam.status } as any, newValue: { status: dto.status } as any,
+          },
+        }),
+      ]);
+      return updated;
+    }
 
+    const updated = await this.prisma.exam.update({ where: { id: examId }, data });
+    await this.writeAudit(instituteId, actor.id, auditAction, 'exams', examId, { status: exam.status }, { status: dto.status });
     return updated;
   }
 
@@ -190,15 +205,20 @@ export class ExamsService {
       });
     }
 
-    const updated = await this.prisma.exam.update({
-      where: { id: examId },
-      data: { status: ExamStatus.EVALUATING, unlockReason: dto.reason, version: { increment: 1 } },
-    });
-
-    await this.writeAudit(
-      instituteId, actor.id, AuditAction.UNLOCK, 'exams', examId,
-      { status: ExamStatus.LOCKED }, { status: ExamStatus.EVALUATING, reason: dto.reason },
-    );
+    // Atomic with its audit entry, same rationale as LOCK in updateStatus() above.
+    const [updated] = await this.prisma.$transaction([
+      this.prisma.exam.update({
+        where: { id: examId },
+        data: { status: ExamStatus.EVALUATING, unlockReason: dto.reason, version: { increment: 1 } },
+      }),
+      this.prisma.auditLog.create({
+        data: {
+          instituteId, actorId: actor.id, action: AuditAction.UNLOCK, entity: 'exams', entityId: examId,
+          oldValue: { status: ExamStatus.LOCKED } as any,
+          newValue: { status: ExamStatus.EVALUATING, reason: dto.reason } as any,
+        },
+      }),
+    ]);
 
     return updated;
   }
