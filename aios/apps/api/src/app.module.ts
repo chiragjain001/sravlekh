@@ -26,6 +26,7 @@ import { EvaluationPoliciesModule } from './evaluation-policies/evaluation-polic
 import { CaptureProvidersModule } from './capture-providers/capture-providers.module';
 import { AssessmentsModule } from './assessments/assessments.module';
 import { AttemptsModule } from './attempts/attempts.module';
+import { RubricsModule } from './rubrics/rubrics.module';
 import { QueueModule } from './infrastructure/queue/queue.module';
 import { StorageModule } from './infrastructure/storage/storage.module';
 import { CacheModule } from './infrastructure/cache/cache.module';
@@ -82,6 +83,7 @@ import { RequestLoggingInterceptor } from './shared/interceptors/request-logging
     CaptureProvidersModule,
     AssessmentsModule,
     AttemptsModule,
+    RubricsModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
