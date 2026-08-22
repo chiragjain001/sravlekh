@@ -8,6 +8,8 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { Request, Response } from 'express';
+import * as Sentry from '@sentry/node';
+import { logStructured } from '../logging/structured-log';
 
 /**
  * Standard error envelope per 08-ERROR-HANDLING.md:
@@ -46,15 +48,34 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const requestId = request.requestId ?? 'unknown';
 
     const { status, body } = this.resolve(exception, requestId);
+    const user = (request as Request & { user?: { id?: string; instituteId?: string } }).user;
 
     if (status >= 500) {
       this.logger.error(
         `[${requestId}] ${request.method} ${request.url} -> ${status}`,
         exception instanceof Error ? exception.stack : undefined,
       );
+      // 07-SECURITY-SPECIFICATION.md §12 / 12-LOGGING-MONITORING.md §3: ids
+      // only, never PII or request-body content, in what's sent to Sentry.
+      Sentry.captureException(exception, {
+        tags: { requestId, route: `${request.method} ${request.url}`, errorCode: body.code },
+        user: user?.id ? { id: user.id } : undefined,
+        extra: { instituteId: user?.instituteId },
+      });
     } else {
       this.logger.warn(`[${requestId}] ${request.method} ${request.url} -> ${status} ${body.code}`);
     }
+
+    // 12-LOGGING-MONITORING.md §2 — machine-parseable line alongside the
+    // human-readable one above, for a log aggregator to correlate by requestId.
+    logStructured(status >= 500 ? 'error' : 'warn', {
+      service: 'api',
+      requestId,
+      instituteId: user?.instituteId,
+      userId: user?.id,
+      route: `${request.method} ${request.url}`,
+      errorCode: body.code,
+    });
 
     response.status(status).json({ success: false, error: body });
   }

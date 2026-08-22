@@ -5,7 +5,21 @@ import { ConfigService } from '@nestjs/config';
 import helmet from 'helmet';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const cookieParser = require('cookie-parser') as () => unknown;
+import * as Sentry from '@sentry/node';
 import { AppModule } from './app.module';
+
+// 12-LOGGING-MONITORING.md §1: Sentry for error tracking. Same "optional, warn,
+// degrade" pattern as Redis/S3/INTERNAL_SERVICE_TOKEN elsewhere — SENTRY_DSN is
+// optional in env.schema.ts, and without it this is a silent no-op rather than
+// a startup failure. Initialized before NestFactory.create() so it can capture
+// errors during module bootstrap itself, not just request-handling.
+if (process.env['SENTRY_DSN']) {
+  Sentry.init({
+    dsn: process.env['SENTRY_DSN'],
+    environment: process.env['NODE_ENV'] ?? 'development',
+    tracesSampleRate: 0.1,
+  });
+}
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
