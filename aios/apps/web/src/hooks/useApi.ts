@@ -463,6 +463,26 @@ export function useTimetable(params?: Record<string, unknown>) {
   });
 }
 
+export function useCreateTimetableSlot() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (data: any) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/timetable`, data);
+      return res.data;
+    },
+    onSuccess: () => {
+      toast.success('Slot scheduled successfully');
+      queryClient.invalidateQueries({ queryKey: ['timetable', user?.instituteId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to schedule slot';
+      toast.error(msg);
+    },
+  });
+}
+
 // ── Exams ───────────────────────────────────────────────────────────────
 
 export function useExams(params?: Record<string, unknown>) {

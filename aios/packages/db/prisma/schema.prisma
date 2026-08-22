@@ -764,6 +764,7 @@ model DoubtTicket {
   content          String      // text description
   attachmentUrls   String[]
   assignedTeacherId String?
+  responseText     String?     // 04-DATABASE-SCHEMA.md: the resolving teacher/admin's answer
   resolvedAt       DateTime?
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt

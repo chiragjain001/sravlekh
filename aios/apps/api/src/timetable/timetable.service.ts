@@ -1,6 +1,7 @@
 import {
   Injectable,
   ForbiddenException,
+  ConflictException,
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
@@ -24,6 +25,43 @@ export class TimetableService {
       throw new ForbiddenException('Students cannot create timetable slots.');
     }
 
+    const startTime = new Date(dto.startTime);
+    const endTime = new Date(dto.endTime);
+
+    // 18-EDGE-CASES.md: "Admin schedules a slot that overlaps an existing slot
+    // for the same teacher -> 409 conflict, rejected before persistence."
+    // Same check applied to roomRef, since the schema/dto carry it for exactly
+    // this purpose (03-FEATURE-SPECIFICATIONS.md: "conflict prevention").
+    // Recurring-slot occurrence expansion and holiday exceptions are a separate,
+    // larger edge case (18-EDGE-CASES.md's holiday-suppresses-one-occurrence rule)
+    // and are not covered by this check — it compares the given startTime/endTime
+    // window only.
+    const overlapping = { startTime: { lt: endTime }, endTime: { gt: startTime } };
+
+    if (dto.teacherUserId) {
+      const teacherConflict = await this.prisma.timetableSlot.findFirst({
+        where: { instituteId, teacherUserId: dto.teacherUserId, ...overlapping },
+      });
+      if (teacherConflict) {
+        throw new ConflictException({
+          code: 'TIMETABLE_TEACHER_CONFLICT',
+          message: `This teacher already has "${teacherConflict.title}" scheduled during this time.`,
+        });
+      }
+    }
+
+    if (dto.roomRef) {
+      const roomConflict = await this.prisma.timetableSlot.findFirst({
+        where: { instituteId, roomRef: dto.roomRef, ...overlapping },
+      });
+      if (roomConflict) {
+        throw new ConflictException({
+          code: 'TIMETABLE_ROOM_CONFLICT',
+          message: `Room "${dto.roomRef}" is already booked for "${roomConflict.title}" during this time.`,
+        });
+      }
+    }
+
     const slot = await this.prisma.timetableSlot.create({
       data: {
         instituteId,
@@ -33,8 +71,8 @@ export class TimetableService {
         teacherUserId: dto.teacherUserId,
         subjectId: dto.subjectId,
         roomRef: dto.roomRef,
-        startTime: new Date(dto.startTime),
-        endTime: new Date(dto.endTime),
+        startTime,
+        endTime,
         isRecurring: dto.isRecurring,
         recurRule: dto.recurRule,
       },

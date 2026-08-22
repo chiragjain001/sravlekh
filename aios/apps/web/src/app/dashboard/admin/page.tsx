@@ -21,6 +21,7 @@ import { AdminAcademics }     from '@/components/dashboard/admin/screens/AdminAc
 import { QuestionBankManager } from '@/components/dashboard/questions/QuestionBankManager';
 import { PapersList }         from '@/components/dashboard/admin/papers/PapersList';
 import { AdminExams }         from '@/components/dashboard/admin/screens/AdminExams';
+import { DoubtsList }         from '@/components/dashboard/admin/doubts/DoubtsList';
 import { AdminTimetable }     from '@/components/dashboard/admin/screens/AdminTimetable';
 import { AdminAttendance }    from '@/components/dashboard/admin/screens/AdminAttendance';
 import { AdminCommunication } from '@/components/dashboard/admin/screens/AdminCommunication';
@@ -48,6 +49,7 @@ function AdminDashboardInner() {
       case 'Question Bank':   return <QuestionBankManager />;
       case 'Papers':          return <div className="p-6"><PapersList /></div>;
       case 'Exams':           return <AdminExams />;
+      case 'Doubts':          return <div className="p-6"><DoubtsList /></div>;
       case 'Timetable':       return <AdminTimetable />;
       case 'Attendance':      return <AdminAttendance />;
       case 'Communication':   return <AdminCommunication />;

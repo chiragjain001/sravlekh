@@ -43,6 +43,7 @@ const ICON_MAP: Record<string, React.ElementType> = {
   'Academics':             BookOpen,
   'Papers':                FileText,
   'Exams':                 ClipboardList,
+  'Doubts':                HelpCircle,
   'Timetable':             Calendar,
   'Attendance':            ClipboardList,
   'Communication':         MessageSquare,

@@ -160,17 +160,12 @@ export class DoubtsService {
 
     const doubt = await this.findById(instituteId, doubtId, actor);
 
-    // In a full implementation, the resolution text would be saved as a comment or response object.
-    // For this blueprint, we update status and resolvedAt. We can append the resolution to a notes field
-    // or create a notice/notification. 
-    
-    // For now, we update the status.
     const updated = await this.prisma.doubtTicket.update({
       where: { id: doubtId },
       data: {
         status: DoubtStatus.ANSWERED,
         resolvedAt: new Date(),
-        // We'd ideally store `dto.resolutionText` in a DoubtResponse table.
+        responseText: dto.resolutionText,
       },
     });
 

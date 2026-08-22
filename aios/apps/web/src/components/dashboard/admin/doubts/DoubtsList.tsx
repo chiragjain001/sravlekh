@@ -1,16 +1,34 @@
 'use client';
 
 import { useState } from 'react';
-import { useDoubts } from '@/hooks/useApi';
-import { Search, Filter, MessageSquare } from 'lucide-react';
+import { useDoubts, useTeachers, useAssignDoubt, useResolveDoubt } from '@/hooks/useApi';
+import { Search, Filter, MessageSquare, X, Loader2 } from 'lucide-react';
+
+interface DoubtRow {
+  id: string;
+  content: string;
+  urgency: number;
+  status: string;
+  createdAt: string;
+  assignedTeacherId?: string | null;
+  responseText?: string | null;
+  studentProfile?: { user?: { name?: string } };
+  subject?: { name?: string };
+}
 
 export function DoubtsList() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
-  
-  const { data: doubtsData, isLoading } = useDoubts({
+  const [activeDoubt, setActiveDoubt] = useState<DoubtRow | null>(null);
+
+  const { data: doubtsData, isPending } = useDoubts({
     status: status || undefined,
   });
+
+  const doubts: DoubtRow[] = doubtsData?.data ?? [];
+  const visibleDoubts = search.trim()
+    ? doubts.filter((d) => d.content.toLowerCase().includes(search.trim().toLowerCase()))
+    : doubts;
 
   return (
     <div className="space-y-6">
@@ -49,9 +67,9 @@ export function DoubtsList() {
       </div>
 
       <div className="card p-0 overflow-hidden">
-        {isLoading ? (
+        {isPending ? (
           <div className="p-8 text-center text-navy-500">Loading doubts...</div>
-        ) : doubtsData?.data?.length === 0 ? (
+        ) : visibleDoubts.length === 0 ? (
           <div className="p-12 text-center">
             <MessageSquare className="w-12 h-12 text-navy-300 mx-auto mb-3" />
             <p className="text-navy-900 font-medium mb-1">No doubt tickets found.</p>
@@ -72,7 +90,7 @@ export function DoubtsList() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {doubtsData?.data.map((doubt: any) => (
+                {visibleDoubts.map((doubt) => (
                   <tr key={doubt.id} className="hover:bg-navy-50/50 transition-colors">
                     <td className="px-6 py-4 font-medium text-navy-900">
                       {doubt.studentProfile?.user?.name || 'Unknown'}
@@ -90,8 +108,8 @@ export function DoubtsList() {
                     </td>
                     <td className="px-6 py-4">
                       <span className={`chip-${
-                        doubt.status === 'OPEN' ? 'error' : 
-                        doubt.status === 'ANSWERED' ? 'success' : 
+                        doubt.status === 'OPEN' ? 'error' :
+                        doubt.status === 'ANSWERED' ? 'success' :
                         doubt.status === 'ASSIGNED' ? 'warning' : 'navy'
                       }`}>
                         {doubt.status}
@@ -101,7 +119,10 @@ export function DoubtsList() {
                       {new Date(doubt.createdAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
                     </td>
                     <td className="px-6 py-4 text-right">
-                      <button className="text-teal-600 hover:text-teal-800 font-medium text-xs">
+                      <button
+                        onClick={() => setActiveDoubt(doubt)}
+                        className="text-teal-600 hover:text-teal-800 font-medium text-xs"
+                      >
                         View / Assign
                       </button>
                     </td>
@@ -111,6 +132,109 @@ export function DoubtsList() {
             </table>
           </div>
         )}
+      </div>
+
+      <DoubtActionDialog doubt={activeDoubt} onClose={() => setActiveDoubt(null)} />
+    </div>
+  );
+}
+
+// ─── Assign / Resolve ───────────────────────────────────────────────────────
+
+function DoubtActionDialog({ doubt, onClose }: { doubt: DoubtRow | null; onClose: () => void }) {
+  const { data: teachers } = useTeachers();
+  const assignDoubt = useAssignDoubt();
+  const resolveDoubt = useResolveDoubt();
+
+  const [teacherUserId, setTeacherUserId] = useState('');
+  const [resolutionText, setResolutionText] = useState('');
+
+  if (!doubt) return null;
+
+  const isClosed = doubt.status === 'ANSWERED' || doubt.status === 'CLOSED';
+
+  function handleAssign(e: React.FormEvent) {
+    e.preventDefault();
+    if (!doubt || !teacherUserId) return;
+    assignDoubt.mutate({ doubtId: doubt.id, data: { teacherUserId } }, { onSuccess: () => setTeacherUserId('') });
+  }
+
+  function handleResolve(e: React.FormEvent) {
+    e.preventDefault();
+    if (!doubt || resolutionText.trim().length === 0) return;
+    resolveDoubt.mutate(
+      { doubtId: doubt.id, data: { resolutionText: resolutionText.trim() } },
+      { onSuccess: () => { setResolutionText(''); onClose(); } },
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm" role="dialog" aria-modal="true">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+          <h3 className="text-[14px] font-bold text-slate-900">Doubt from {doubt.studentProfile?.user?.name || 'a student'}</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-4 h-4" /></button>
+        </div>
+
+        <div className="p-5 space-y-5">
+          <p className="text-[12.5px] text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-3">{doubt.content}</p>
+
+          {doubt.responseText && (
+            <div>
+              <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1">Resolution</p>
+              <p className="text-[12.5px] text-slate-700 bg-emerald-50 border border-emerald-100 rounded-lg p-3">{doubt.responseText}</p>
+            </div>
+          )}
+
+          {!isClosed && (
+            <>
+              <form onSubmit={handleAssign} className="space-y-2">
+                <label className="block text-[12px] font-semibold text-slate-700">Assign to teacher</label>
+                <div className="flex gap-2">
+                  <select
+                    value={teacherUserId}
+                    onChange={(e) => setTeacherUserId(e.target.value)}
+                    className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg bg-white"
+                  >
+                    <option value="">Select a teacher</option>
+                    {(teachers?.data ?? []).map((t: { user: { id: string; name: string } }) => (
+                      <option key={t.user.id} value={t.user.id}>{t.user.name}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="submit"
+                    disabled={!teacherUserId || assignDoubt.isPending}
+                    className="px-3 py-2 text-[12px] font-bold text-white bg-slate-700 rounded-lg hover:bg-slate-800 disabled:opacity-50"
+                  >
+                    {assignDoubt.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Assign'}
+                  </button>
+                </div>
+              </form>
+
+              <form onSubmit={handleResolve} className="space-y-2">
+                <label className="block text-[12px] font-semibold text-slate-700">Mark resolved</label>
+                <textarea
+                  value={resolutionText}
+                  onChange={(e) => setResolutionText(e.target.value)}
+                  placeholder="Write the answer the student will see..."
+                  rows={3}
+                  required
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                />
+                <div className="flex justify-end">
+                  <button
+                    type="submit"
+                    disabled={resolveDoubt.isPending || resolutionText.trim().length === 0}
+                    className="flex items-center gap-1.5 px-4 py-2 text-[12px] font-bold text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 disabled:opacity-50"
+                  >
+                    {resolveDoubt.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                    Resolve
+                  </button>
+                </div>
+              </form>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

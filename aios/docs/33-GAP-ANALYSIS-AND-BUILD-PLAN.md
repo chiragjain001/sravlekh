@@ -270,10 +270,14 @@ see §5 "Phase 4" for why. This was the highest-value, highest-risk v1 gap — n
 `Assessment`/`AssessmentDelivery` as a superset of `Exam`) can be validated for "zero regression" against a
 state machine that doesn't functionally exist yet.
 
-**Phase 5 — Mastery/Remediation verification + Doubts/Timetable fixes.** The mastery-calculation ownership gap
-(§2 "Academic Intelligence") was fixed ahead of schedule, this session, while it was still small — see §5
-"Mastery calculation moved to Python." Remaining Phase 5 work: fix `DoubtsService.resolveDoubt()` to persist
-resolution text; add Timetable conflict checking.
+**Phase 5 — Mastery/Remediation verification + Doubts/Timetable fixes — COMPLETE.** The mastery-calculation
+ownership gap (§2 "Academic Intelligence") was fixed ahead of schedule in an earlier session, while it was
+still small — see §5 "Mastery calculation moved to Python." This session closed out the rest: fixed
+`DoubtsService.resolveDoubt()` to persist resolution text, added Timetable conflict checking, and — third
+occurrence of the mock-vs-real fork pattern from Phases 2–4 — replaced `AdminTimetable.tsx`'s mock console
+with a real screen (user's call, same as Phase 4's AdminExams). One confirmed gap was investigated and
+explicitly deferred rather than built or silently dropped: auto-generated Interventions when mastery drops
+below threshold. See §5 "Phase 5" for detail on all of the above.
 
 **Phase 6 — Communication, Reports, Audit, Founder console.** Build the entirely-missing `NoticesModule`,
 `ReportsModule`, audit-log read endpoints, and the Founder-facing backend. Wire the corresponding frontend
@@ -660,6 +664,81 @@ optimistic-locking `version` field, no unlock endpoint, and grading was not bloc
   correctly formatted, date input) and closes cleanly via Cancel; no React crashes or console errors beyond the
   documented network 500s. Full `pnpm typecheck`/`lint`/`build` clean on `apps/web`; full
   `typecheck`/`test`/`build` clean on `apps/api` (83/83 tests).
+
+### Phase 5: Doubts, Timetable, and a third mock-vs-real fork (this session)
+
+- `packages/db/prisma/schema.prisma` — added `responseText String?` to `DoubtTicket`, matching
+  `04-DATABASE-SCHEMA.md`'s modeled field exactly (the DTO already used `resolutionText` as its request-body
+  key — kept that as-is, since it's a stable API contract with no functional bug, and just persist it into the
+  correctly-named `responseText` column). `apps/api/src/doubts/doubts.service.ts`'s `resolveDoubt()` had its
+  own comment admitting the discard ("In a full implementation, the resolution text would be saved...") —
+  removed the comment along with the bug; now writes `responseText: dto.resolutionText`. Unit-tested
+  (`doubts.service.spec.ts`): resolution text is persisted, a student cannot resolve a doubt.
+- `apps/api/src/timetable/timetable.service.ts` — `createSlot()` now checks for an overlapping slot (`startTime
+  < newEndTime AND endTime > newStartTime`) for the same `teacherUserId` (mandatory per `18-EDGE-CASES.md`) and
+  the same `roomRef` (not explicitly required by that doc, but the schema/DTO carry the field for exactly this
+  per `03-FEATURE-SPECIFICATIONS.md`'s "conflict prevention," and it's the same query shape) — either rejects
+  with 409 before persistence. Deliberately does **not** attempt recurring-slot occurrence expansion or the
+  holiday-exception-suppresses-one-occurrence rule (a separate, materially larger edge case in the same doc
+  section) — this checks the given `startTime`/`endTime` window only. Unit-tested (`timetable.service.spec.ts`):
+  teacher conflict rejected, room conflict rejected, non-conflicting slot succeeds, non-teacher role rejected,
+  and the overlap query itself uses `lt`/`gt` (not equality) on start/end time.
+- Needed a working Prisma client to even typecheck the above (`responseText` didn't exist on the generated
+  client's `DoubtTicketUpdateInput` until regenerated) — `prisma generate` failed outright in this environment
+  with `spawn prisma-client-py ENOENT` because the `prisma` Python package (which provides that generator
+  binary) wasn't installed system-wide, despite being declared in `apps/api-python/requirements.txt`. Installed
+  it (`pip install "prisma>=0.13.1"`, resolved to `0.15.0` — matches the version already used by the rest of
+  this environment) and regenerated both the JS and Python clients successfully. Also had to
+  `pip install -r requirements-dev.txt` (pytest/pytest-asyncio weren't present either) to re-run the Python
+  suite against the regenerated client — both confirmed clean (7/7) before proceeding, so the schema change
+  doesn't quietly break the mastery-recalc side.
+- **Third occurrence of the Phase 2/3 "isPending never settles to isError" mystery, still not chased**: not
+  re-investigated further this phase — see Phase 4's write-up for the current state of that investigation
+  (navigator.onLine ruled out; still points somewhere between the Next.js dev proxy and the shared
+  `QueryClient`, still needs a real Postgres instance to pin down).
+- **Third mock-vs-real architecture fork, flagged and resolved by the user rather than picked unilaterally**:
+  while investigating what Phase 5's "Timetable fixes" would actually touch in the UI, found `AdminTimetable.tsx`
+  already live in the nav (unlike Papers/Exams' fork in Phase 4, this one was never orphaned) but wired entirely
+  to `features/timetable/*`, an in-memory mock CRUD+analytics module structurally identical in kind to the
+  `features/exams/*` fork from Phase 4. Presented the same two options as Phase 4 (replace / defer); **user
+  chose "replace it with a real screen."** Executed: new `AdminTimetable.tsx` against `useTimetable` (existing)
+  and a new `useCreateTimetableSlot` hook — list + a schedule-slot modal (title, type, batch, teacher, room,
+  start/end) whose 409s (from the conflict check above) surface through the existing generic mutation-error
+  toast path in `useApi.ts`. Teacher names are resolved client-side against `useTeachers()` by matching
+  `teacherUserId`, since `TimetableSlot` has no Prisma relation to `User` for that field, only a raw string
+  column — `findAll`'s `include` can't join it server-side without a schema change, which was out of scope
+  here. Deleted `features/timetable/*` (only consumer). Confirmed Teacher's and Student's own timetable screens
+  are unrelated, ordinary mock-data screens (`@/lib/mock-data/teacher`, `@/lib/mock-data/student`) like most
+  other not-yet-rebuilt screens in the app — not a second instance of this fork, so left untouched.
+- **`DoubtsList.tsx` was the Phase 4 Papers situation again — orphaned, not forked**: real (`useDoubts`), same
+  `isLoading`→`isPending` bug as every other screen that's hit this the first time it went live, and reachable
+  only via a direct URL (`/dashboard/admin/doubts`), never linked from the nav. Wired "Doubts" into the sidebar
+  the same way as Papers/Question Bank (`AdminNav` type — the value already existed there, unused; `navItems`;
+  `renderScreen()`; `Sidebar.tsx`'s `ICON_MAP`). Its "View / Assign" button was also a dead no-op — since this
+  phase's actual backend fix (`resolveDoubt` persisting text) would otherwise have no live caller anywhere in
+  the product, wired it to a real action dialog: assign-to-teacher (`useAssignDoubt`, already existed unused)
+  and mark-resolved (`useResolveDoubt`, ditto) with a resolution textarea, plus displays `responseText` once
+  set. Judged this as within the same "straightforward, just do it" bar as the isLoading/nav fixes rather than
+  a new scope decision — it's one bounded dialog on an existing screen, not a console rebuild.
+- **A confirmed gap, investigated and explicitly deferred by the user's own decision, not built or dropped
+  silently**: `01-PRODUCT-REQUIREMENTS.md` item 8 — "If mastery < 0.50, system auto-creates an `Intervention`:
+  auto-generated `Assignment` and/or `EXTRA_CLASS` grouping." The `Intervention` model exists in the schema;
+  grepping the entire codebase turns up exactly one reference anywhere, a hardcoded string in a student mock
+  fixture ("Schedule Intervention") — no creation trigger in the mastery-recalc flow, no read endpoint, no real
+  UI. Flagged to the user rather than building it as a drive-by addition to "Timetable fixes," since it's a
+  standalone vertical feature (Python-side trigger + endpoint + UI), not a small gap. **User's explicit ruling,
+  recorded here as the confirmed future spec** (refines doc 01's ambiguous "Assignment and/or EXTRA_CLASS"):
+  auto-intervention generates a targeted **Assignment** (not an extra class) when a topic's mastery falls below
+  a configurable threshold (0.50 initially); it prioritizes the student's most significant weak topic(s) rather
+  than firing per-topic for every weak topic; it notifies the relevant teacher with an actionable CTA; **AIOS
+  never auto-schedules an extra class** — the teacher alone decides whether an extra class or other
+  intervention is warranted. Not implemented this session — deferred to a dedicated future phase.
+- Verified in-browser (fresh tab, admin login, both dev servers live): Timetable and Doubts both render
+  correctly from their new nav entries with no crashes; the Schedule Slot modal opens with all fields (7 slot
+  types correctly formatted, batch/teacher selects, room/time inputs); no console errors beyond the by-now-
+  expected network 500s (this sandbox has no reachable Postgres). Full `pnpm typecheck`/`lint`/`build` clean on
+  `apps/web`; full `typecheck`/`lint`/`test`/`build` clean on `apps/api` (90/90 tests, up from 83); Python suite
+  clean (7/7) against the regenerated client.
 
 ## 6. Definition of Done reminder
 
