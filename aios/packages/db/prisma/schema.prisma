@@ -12,8 +12,9 @@ generator client_py {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // ---------------------------------------------------------------------------
@@ -46,6 +47,20 @@ enum InstituteStatus {
   SUSPENDED
   ONBOARDING
   ARCHIVED
+}
+
+enum SupportTicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum SupportTicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
 }
 
 enum ExamType {
@@ -189,6 +204,7 @@ model Institute {
   address         String?
   phone           String?
   featureFlags    Json            @default("{}") // 05-API-SPECIFICATION.md: PATCH /founder/feature-flags — per-tenant toggles (e.g. omrCapture, aiBlueprintAgent)
+  trialEndsAt     DateTime?       // Founder Console Phase 2 — set when plan moves to TRIAL, cleared otherwise
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
 
@@ -215,7 +231,105 @@ model Institute {
   rubrics            Rubric[]
   evaluationPolicies EvaluationPolicy[]
 
+  // Founder Console build-out (see docs/33-GAP-ANALYSIS-AND-BUILD-PLAN.md,
+  // "Founder Console — remaining screens") — additive only, no v1 table touched.
+  planHistory      InstitutePlanHistory[]
+  supportTickets   SupportTicket[]
+
   @@map("institutes")
+}
+
+/// Founder Console Phase 2 (Subscription/Plan management). Per-plan limits are
+/// advisory/informational — surfaced as usage-vs-limit on the Founder dashboard.
+/// Write-time enforcement (e.g. blocking a new user past maxUsers) is a
+/// deliberately separate, not-yet-built concern; this table exists so the
+/// dashboard shows real limits instead of inventing them.
+model PlanDefinition {
+  plan                   InstitutePlan @id
+  maxUsers               Int?
+  maxStudents            Int?
+  maxTeachers            Int?
+  maxStorageGb           Int?
+  maxAssessmentsPerMonth Int?
+  trialDurationDays      Int?
+  defaultFeatureFlags    Json          @default("{}")
+  updatedAt              DateTime      @updatedAt
+
+  @@map("plan_definitions")
+}
+
+/// Generic platform-wide key/value settings store for the Founder Settings
+/// screen. Deliberately minimal: this closes the "Save Changes claims success
+/// but persists nothing" trust gap (audit-flagged Critical) by giving the
+/// screen's toggle switches somewhere real to land. It does NOT imply every
+/// setting exercised through here actually gates real behavior elsewhere —
+/// most of the 25-tab screen's fields describe subsystems (billing, SSO/SAML,
+/// IP whitelisting enforcement, LLM provider selection, etc.) that don't exist
+/// anywhere else in this codebase yet, matching this project's established
+/// "don't fabricate a backend for a UI that has nowhere real to plug in"
+/// discipline. Only `maintenanceMode` is wired to real enforcement so far
+/// (see MaintenanceGuard). One row per logical settings group, not one row
+/// per field, so unrelated tabs can't clobber each other on save.
+model PlatformSetting {
+  key             String   @id
+  value           Json
+  updatedAt       DateTime @updatedAt
+  updatedByUserId String?
+
+  @@map("platform_settings")
+}
+
+/// Founder Console Phase 2 — append-only audit trail of plan changes,
+/// separate from the generic AuditLog so plan history can be queried and
+/// rendered as a timeline without parsing AuditLog's generic old/new JSON.
+model InstitutePlanHistory {
+  id              String         @id @default(cuid())
+  instituteId     String
+  institute       Institute      @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  fromPlan        InstitutePlan?
+  toPlan          InstitutePlan
+  changedByUserId String
+  reason          String?
+  createdAt       DateTime       @default(now())
+
+  @@index([instituteId, createdAt])
+  @@map("institute_plan_history")
+}
+
+/// Founder Console Phase 8 — a genuinely new subsystem (no prior backend
+/// existed for this, only a mock UI). ADMIN creates/replies within their own
+/// institute; FOUNDER has cross-tenant status/priority/assignment control.
+model SupportTicket {
+  id               String                 @id @default(cuid())
+  instituteId      String
+  institute        Institute              @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  subject          String
+  description      String
+  status           SupportTicketStatus    @default(OPEN)
+  priority         SupportTicketPriority  @default(MEDIUM)
+  createdByUserId  String
+  assignedToUserId String?
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+  resolvedAt       DateTime?
+
+  messages SupportTicketMessage[]
+
+  @@index([instituteId, status])
+  @@index([status, priority])
+  @@map("support_tickets")
+}
+
+model SupportTicketMessage {
+  id           String        @id @default(cuid())
+  ticketId     String
+  ticket       SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorUserId String
+  body         String
+  createdAt    DateTime      @default(now())
+
+  @@index([ticketId, createdAt])
+  @@map("support_ticket_messages")
 }
 
 model Branch {
@@ -257,6 +371,7 @@ model User {
   avatarUrl   String?
   role        UserRole
   status      UserStatus @default(ACTIVE)
+  tokenVersion Int       @default(0) // Founder Console Phase 4 — bumped to force-invalidate every issued JWT for this user
   lastLoginAt DateTime?
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
@@ -337,6 +452,7 @@ model StudentProfile {
   interventions   Intervention[]   @relation("StudentInterventions")
   profileHistory  StudentHistory[]
   attempts        Attempt[]
+  attendanceRecords AttendanceRecord[]
 
   @@index([batchId])
   @@map("student_profiles")
@@ -401,6 +517,7 @@ model Batch {
   timetableSlots TimetableSlot[]
   assignments Assignment[]
   assessmentDeliveries AssessmentDelivery[]
+  attendanceRecords AttendanceRecord[]
 
   @@index([instituteId])
   @@map("batches")
@@ -775,6 +892,16 @@ model MasteryScore {
   sampleCount      Int      @default(0) // number of responses used to compute this
   lastUpdatedAt    DateTime @default(now())
   updatedAt        DateTime @updatedAt
+  // V2 Analytics/Mastery Integration phase — atomic idempotency claim for
+  // auto-generated interventions. NULL = no intervention currently in flight
+  // for this student+topic; set = one was already triggered for the current
+  // weak-topic episode, cleared automatically once mastery recovers above
+  // threshold. Deliberately reuses this row's existing @@unique([studentProfileId,
+  // topicId]) constraint below rather than adding a new one: a conditional
+  // update_many(where={..., interventionTriggeredAt: null}) against that
+  // already-unique row is what makes the claim race-safe at the DB level,
+  // not just an application-level check-then-create.
+  interventionTriggeredAt DateTime?
 
   studentProfile StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
   subject        Subject        @relation(fields: [subjectId], references: [id])
@@ -832,6 +959,37 @@ model TimetableSlot {
   @@index([instituteId, startTime])
   @@index([batchId, startTime])
   @@map("timetable_slots")
+}
+
+// ---------------------------------------------------------------------------
+// ATTENDANCE
+// ---------------------------------------------------------------------------
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  EXCUSED
+}
+
+model AttendanceRecord {
+  id               String           @id @default(cuid())
+  studentProfileId String
+  batchId          String
+  date             DateTime         // date-only semantics — callers truncate to midnight UTC
+  status           AttendanceStatus
+  markedByUserId   String           // no relation declared — same pattern as StudentHistory.changedByUserId
+  correctedAt      DateTime?        // set only when this entry was corrected after initial marking
+  correctionReason String?          // required by the service whenever correctedAt is set
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  studentProfile StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+  batch          Batch          @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@unique([studentProfileId, batchId, date])
+  @@index([batchId, date])
+  @@map("attendance_records")
 }
 
 // ---------------------------------------------------------------------------
@@ -1192,6 +1350,7 @@ enum AIModelPurpose {
   EVALUATION
   OCR
   HANDWRITING
+  BLUEPRINT
 }
 
 // ---------------------------------------------------------------------------
