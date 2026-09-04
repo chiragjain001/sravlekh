@@ -3,6 +3,10 @@ node_modules/
 .env
 .env.local
 .env.*.local
+# Staging smoke-test secrets. The template (staging.env.example) IS tracked;
+# the filled-in file holding a real provider key must never be. Note that the
+# bare `.env` rule above does NOT match `staging.env`.
+infra/staging/staging.env
 .next/
 dist/
 build/

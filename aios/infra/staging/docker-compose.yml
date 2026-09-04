@@ -1,0 +1,40 @@
+# Disposable Postgres for the staging real-provider smoke test.
+#
+#   docker compose -f infra/staging/docker-compose.yml up -d
+#
+# Deliberately NOT a full platform stack. The smoke test imports the Python
+# modules directly and needs only a database — apps/api-python has no Redis
+# dependency and makes no outbound HTTP to the Node service, so the Node API,
+# Redis, and the web app are not required to execute any of the nine checks.
+# Adding them would be setup cost with no verification benefit.
+#
+# Port 5433, not 5432, so this can never collide with a local Postgres someone
+# is already running — and so the host:port nominated in STAGING_DB_ALLOWLIST is
+# distinctive rather than the default every database uses.
+#
+# The credentials here are throwaway and intentionally in plain sight: this
+# database is empty, local, disposable, and reachable only from this machine.
+# Never point the smoke test at a shared or hosted instance; see
+# scripts/staging_provider_smoke.py's allowlist guard.
+
+services:
+  staging-db:
+    image: postgres:16-alpine
+    container_name: aios-staging-db
+    environment:
+      POSTGRES_USER: aios_staging
+      POSTGRES_PASSWORD: staging_local_only
+      POSTGRES_DB: aios_staging
+    ports:
+      - "127.0.0.1:5433:5432"   # loopback only — not reachable off this machine
+    tmpfs:
+      - /var/lib/postgresql/data   # RAM-backed: the database cannot outlive the
+                                   # container, so staging data is disposable by
+                                   # construction rather than by remembering to
+                                   # clean up. Drop this line for a persistent
+                                   # volume if a run needs to survive a restart.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aios_staging -d aios_staging"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
