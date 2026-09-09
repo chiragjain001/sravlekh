@@ -3,6 +3,7 @@ import { BadRequestException, ForbiddenException, NotFoundException } from '@nes
 import { UserRole } from '@prisma/client';
 import { AssignmentsService } from './assignments.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageService } from '../infrastructure/storage/storage.service';
 import { AuthenticatedUser } from '../auth/auth.types';
 
 describe('AssignmentsService — tenant isolation (13-TESTING-STRATEGY.md §7)', () => {
@@ -11,6 +12,8 @@ describe('AssignmentsService — tenant isolation (13-TESTING-STRATEGY.md §7)',
     assignment: { create: jest.Mock; findMany: jest.Mock; count: jest.Mock; findUnique: jest.Mock; update: jest.Mock };
     batch: { findUnique: jest.Mock };
     studentProfile: { findUnique: jest.Mock };
+    teacherProfile: { findUnique: jest.Mock };
+    batchTeacher: { findMany: jest.Mock };
     auditLog: { create: jest.Mock };
   };
 
@@ -23,10 +26,17 @@ describe('AssignmentsService — tenant isolation (13-TESTING-STRATEGY.md §7)',
       assignment: { create: jest.fn(), findMany: jest.fn(), count: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
       batch: { findUnique: jest.fn() },
       studentProfile: { findUnique: jest.fn() },
+      teacherProfile: { findUnique: jest.fn() },
+      batchTeacher: { findMany: jest.fn() },
       auditLog: { create: jest.fn() },
     };
+    const storage = { buildKey: jest.fn(), upload: jest.fn(), getSignedDownloadUrl: jest.fn() };
     const module: TestingModule = await Test.createTestingModule({
-      providers: [AssignmentsService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        AssignmentsService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: StorageService, useValue: storage },
+      ],
     }).compile();
     service = module.get(AssignmentsService);
   });
@@ -79,6 +89,112 @@ describe('AssignmentsService — tenant isolation (13-TESTING-STRATEGY.md §7)',
           }),
         }),
       );
+    });
+
+    it('restricts a TEACHER to assignments for their own batches (batch-wide or per-student)', async () => {
+      prisma.teacherProfile.findUnique.mockResolvedValueOnce({ id: 'tp-1' });
+      prisma.batchTeacher.findMany.mockResolvedValueOnce([{ batchId: 'batch-1' }]);
+      prisma.assignment.findMany.mockResolvedValueOnce([]);
+      prisma.assignment.count.mockResolvedValueOnce(0);
+
+      await service.findAll('inst-1', {}, teacher);
+
+      expect(prisma.assignment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            AND: expect.arrayContaining([
+              { OR: [{ batchId: { in: ['batch-1'] } }, { studentProfile: { batchId: { in: ['batch-1'] } } }] },
+            ]),
+          }),
+        }),
+      );
+    });
+  });
+
+  // ── Student privacy: a student must never reach a classmate's row ─────────
+  //
+  // Regression guard for the leak where `OR: [{studentProfileId: me}, {batchId: myBatch}]`
+  // returned every classmate's per-student row — names, submission status and marks —
+  // to anyone enrolled in the batch.
+  describe('findAll — a STUDENT sees only their own assignments', () => {
+    it('never filters by bare batchId (which would match classmates\' rows)', async () => {
+      prisma.studentProfile.findUnique.mockResolvedValueOnce({ id: 'sp-me', batchId: 'batch-1' });
+      prisma.assignment.findMany.mockResolvedValueOnce([]);
+      prisma.assignment.count.mockResolvedValueOnce(0);
+
+      await service.findAll('inst-1', {}, student);
+
+      const where = prisma.assignment.findMany.mock.calls[0][0].where;
+      const clauses = JSON.stringify(where.AND);
+
+      // The only batch clause allowed is one pinned to studentProfileId: null.
+      expect(clauses).not.toContain('{"batchId":"batch-1"}');
+      expect(where.AND).toEqual(
+        expect.arrayContaining([
+          { OR: [{ studentProfileId: 'sp-me' }, { batchId: 'batch-1', studentProfileId: null }] },
+        ]),
+      );
+    });
+
+    it('falls back to own-rows-only when the student has no batch', async () => {
+      prisma.studentProfile.findUnique.mockResolvedValueOnce({ id: 'sp-me', batchId: null });
+      prisma.assignment.findMany.mockResolvedValueOnce([]);
+      prisma.assignment.count.mockResolvedValueOnce(0);
+
+      await service.findAll('inst-1', {}, student);
+
+      expect(prisma.assignment.findMany.mock.calls[0][0].where.AND).toEqual(
+        expect.arrayContaining([{ studentProfileId: 'sp-me' }]),
+      );
+    });
+
+    it('rejects a student with no profile rather than falling back to a broad query', async () => {
+      prisma.studentProfile.findUnique.mockResolvedValueOnce(null);
+      await expect(service.findAll('inst-1', {}, student)).rejects.toThrow(ForbiddenException);
+      expect(prisma.assignment.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getSubmissionDownloadUrl — a student cannot open a classmate\'s file', () => {
+    const classmateRow = {
+      id: 'a-classmate',
+      submissionUrl: 'inst-1/assignments/a-classmate/answer.pdf',
+      studentProfileId: 'sp-classmate',
+      batchId: 'batch-1',
+      batch: { instituteId: 'inst-1' },
+      studentProfile: { user: { instituteId: 'inst-1' } },
+    };
+
+    it('denies a classmate in the same batch', async () => {
+      prisma.assignment.findUnique.mockResolvedValueOnce(classmateRow);
+      prisma.studentProfile.findUnique.mockResolvedValueOnce({ id: 'sp-me', batchId: 'batch-1' });
+
+      await expect(service.getSubmissionDownloadUrl('inst-1', 'a-classmate', student)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('allows the owning student', async () => {
+      prisma.assignment.findUnique.mockResolvedValueOnce({ ...classmateRow, studentProfileId: 'sp-me' });
+      prisma.studentProfile.findUnique.mockResolvedValueOnce({ id: 'sp-me', batchId: 'batch-1' });
+
+      await expect(service.getSubmissionDownloadUrl('inst-1', 'a-classmate', student)).resolves.toEqual({ url: undefined });
+    });
+  });
+
+  describe('submitAssignment — a student cannot submit against a classmate\'s row', () => {
+    it('denies submitting to a row owned by another student in the same batch', async () => {
+      prisma.assignment.findUnique.mockResolvedValueOnce({
+        id: 'a-classmate',
+        studentProfileId: 'sp-classmate',
+        batchId: 'batch-1',
+        batch: { instituteId: 'inst-1' },
+        studentProfile: { user: { instituteId: 'inst-1' } },
+      });
+      prisma.studentProfile.findUnique.mockResolvedValueOnce({ id: 'sp-me', batchId: 'batch-1' });
+
+      await expect(
+        service.submitAssignment('inst-1', 'a-classmate', { submissionUrl: 'x' }, student),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.assignment.update).not.toHaveBeenCalled();
     });
   });
 

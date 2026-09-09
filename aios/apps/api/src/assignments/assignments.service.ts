@@ -6,6 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageService } from '../infrastructure/storage/storage.service';
 import { AuditAction, UserRole, AssignmentStatus } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
 import {
@@ -14,12 +15,43 @@ import {
   GradeAssignmentDto,
   QueryAssignmentsDto,
 } from './dto/assignment.dto';
+import { getTeacherBatchIds } from '../shared/teacher-scope';
+
+/**
+ * The only rows a STUDENT may ever read.
+ *
+ * SECURITY: the previous form was `OR: [{studentProfileId: me}, {batchId: myBatch}]`.
+ * Because the "assign to a class" flow writes ONE ROW PER STUDENT — each row
+ * carrying BOTH batchId and studentProfileId — that second clause matched every
+ * classmate's row, exposing their names, submission status and marks to anyone
+ * in the batch. The batch clause is now restricted to rows that have no student
+ * attached at all (`studentProfileId: null`, the schema's "batch-wide" shape),
+ * which by construction cannot carry another student's identity or grade.
+ */
+export function studentVisibilityFilter(studentProfileId: string, batchId: string | null) {
+  const own = { studentProfileId };
+  if (!batchId) return own;
+  return { OR: [own, { batchId, studentProfileId: null }] };
+}
+
+/** True when this student is allowed to read the given assignment row. */
+export function studentMayAccessAssignment(
+  assignment: { studentProfileId: string | null; batchId: string | null },
+  student: { id: string; batchId: string | null } | null,
+): boolean {
+  if (!student) return false;
+  if (assignment.studentProfileId) return assignment.studentProfileId === student.id;
+  return !!assignment.batchId && assignment.batchId === student.batchId;
+}
 
 @Injectable()
 export class AssignmentsService {
   private readonly logger = new Logger(AssignmentsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
 
   // ── F-01: Create / Auto-Generate Assignment ──────────────────────────────
 
@@ -129,11 +161,19 @@ export class AssignmentsService {
     ];
 
     if (actor.role === UserRole.STUDENT) {
-      // Students see assignments for their batch OR for them specifically
       const student = await this.prisma.studentProfile.findUnique({ where: { userId: actor.id } });
       if (!student) throw new ForbiddenException('Student profile not found');
 
-      and.push({ OR: [{ studentProfileId: student.id }, { batchId: student.batchId }] });
+      and.push(studentVisibilityFilter(student.id, student.batchId));
+    } else {
+      // Teachers only see assignments for their own batches (batch-wide or
+      // individual, since a personalized Assignment still belongs to a
+      // student within one of the teacher's batches) — ADMIN/FOUNDER keep
+      // institute-wide visibility, unaffected by this branch.
+      const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor);
+      if (teacherBatchIds !== null) {
+        and.push({ OR: [{ batchId: { in: teacherBatchIds } }, { studentProfile: { batchId: { in: teacherBatchIds } } }] });
+      }
     }
 
     if (query.batchId) and.push({ batchId: query.batchId });
@@ -166,18 +206,36 @@ export class AssignmentsService {
 
   // ── Submit Assignment ────────────────────────────────────────────────────
 
-  async submitAssignment(instituteId: string, assignmentId: string, dto: SubmitAssignmentDto, actor: AuthenticatedUser) {
+  // Accepts a real uploaded file (multipart) OR a plain submissionUrl string
+  // (kept for API-compat / non-browser callers) — never both. The file, when
+  // present, is uploaded for real via StorageService under a tenant-scoped
+  // key; submissionUrl stores that key, not a public URL (07-SECURITY-
+  // SPECIFICATION.md — files are never served from an unsigned path). See
+  // getSubmissionDownloadUrl() for how a key becomes a fresh signed link.
+  async submitAssignment(
+    instituteId: string,
+    assignmentId: string,
+    dto: SubmitAssignmentDto | undefined,
+    actor: AuthenticatedUser,
+    file?: { buffer: Buffer; originalname: string; mimetype: string },
+  ) {
     if (actor.role !== UserRole.STUDENT) throw new ForbiddenException('Only students can submit assignments');
+    if (!file && !dto?.submissionUrl) throw new BadRequestException('A file or submissionUrl is required');
 
     const assignment = await this.getAssignmentWithTenantCheck(assignmentId, instituteId);
 
     const student = await this.prisma.studentProfile.findUnique({ where: { userId: actor.id } });
-    
-    if (assignment.studentProfileId && assignment.studentProfileId !== student?.id) {
+
+    if (!studentMayAccessAssignment(assignment, student)) {
       throw new ForbiddenException('Not your assignment');
     }
-    if (assignment.batchId && assignment.batchId !== student?.batchId) {
-      throw new ForbiddenException('Assignment not for your batch');
+
+    let submissionUrl = dto?.submissionUrl;
+    if (file) {
+      const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const key = this.storage.buildKey(instituteId, 'assignments', assignmentId, `${Date.now()}_${safeName}`);
+      await this.storage.upload(key, file.buffer, file.mimetype);
+      submissionUrl = key;
     }
 
     const status = new Date() > assignment.dueDate ? AssignmentStatus.LATE_SUBMITTED : AssignmentStatus.SUBMITTED;
@@ -185,11 +243,32 @@ export class AssignmentsService {
     return this.prisma.assignment.update({
       where: { id: assignmentId },
       data: {
-        submissionUrl: dto.submissionUrl,
+        submissionUrl,
         submittedAt: new Date(),
         status,
       },
     });
+  }
+
+  // Own-record (STUDENT) or batch/institute-scoped (TEACHER/ADMIN/FOUNDER)
+  // read of a submission's file as a fresh, time-limited signed URL — the
+  // stored submissionUrl is a storage key, never directly openable.
+  async getSubmissionDownloadUrl(instituteId: string, assignmentId: string, actor: AuthenticatedUser): Promise<{ url: string | null }> {
+    const assignment = await this.getAssignmentWithTenantCheck(assignmentId, instituteId);
+    if (!assignment.submissionUrl) return { url: null };
+
+    if (actor.role === UserRole.STUDENT) {
+      const student = await this.prisma.studentProfile.findUnique({ where: { userId: actor.id } });
+      // Same rule as the list query: a row belonging to a named student is
+      // readable only by that student. Previously any batch member could pull a
+      // signed URL for a classmate's uploaded answer file.
+      if (!studentMayAccessAssignment(assignment, student)) {
+        throw new ForbiddenException('Not your assignment');
+      }
+    }
+
+    const url = await this.storage.getSignedDownloadUrl(assignment.submissionUrl);
+    return { url };
   }
 
   // ── Grade Assignment ─────────────────────────────────────────────────────

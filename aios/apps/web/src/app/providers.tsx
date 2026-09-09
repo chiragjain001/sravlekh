@@ -23,9 +23,17 @@ export function Providers({ children }: { children: React.ReactNode }) {
       new QueryClient({
         defaultOptions: {
           queries: {
-            staleTime:    2 * 60 * 1000, // 2 minutes — reduces redundant fetches
+            // AIOS is multi-user by nature: a teacher publishes a test while the
+            // student's dashboard is already open, an admin renames a class while
+            // a teacher is looking at it. The old defaults (2-minute staleTime,
+            // focus refetch disabled) meant those changes only ever appeared on a
+            // manual F5. Freshness is now opt-in per query via the REFRESH tiers
+            // in hooks/useApi.ts; these defaults just stop the app from serving
+            // stale data to someone who has come back to the tab.
+            staleTime:    30 * 1000,
             retry:        1,
-            refetchOnWindowFocus: false,  // prevents unexpected refetches in dashboard
+            refetchOnWindowFocus: true,
+            refetchOnReconnect:   true,
           },
           mutations: {
             retry: 0, // mutations should NOT auto-retry (idempotency risk)

@@ -12,6 +12,12 @@
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--filter", "@aios/api", "dev"],
       "port": 4000
+    },
+    {
+      "name": "api-python",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-c", "import sys; from dotenv import load_dotenv; load_dotenv('apps/api-python/.env'); sys.path.insert(0, 'apps/api-python'); import uvicorn; uvicorn.run('src.main:app', port=8000, app_dir='apps/api-python')"],
+      "port": 8000
     }
   ]
 }
