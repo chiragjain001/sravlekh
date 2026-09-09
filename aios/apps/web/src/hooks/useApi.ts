@@ -1300,6 +1300,70 @@ export function useCreateAssignmentsForBatch() {
   });
 }
 
+/** Cancels an assignment, removing the per-student rows it was issued as. */
+export function useDeleteAssignment() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (assignmentId: string) => {
+      const res = await apiClient.delete(`/institutes/${user?.instituteId}/assignments/${assignmentId}`);
+      return res.data as { success: boolean; deleted: number };
+    },
+    onSuccess: (result) => {
+      toast.success(`Assignment cancelled (${result.deleted} student row${result.deleted === 1 ? '' : 's'} removed)`);
+      queryClient.invalidateQueries({ queryKey: ['assignments', user?.instituteId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? (error.response?.data?.error?.message ?? error.response?.data?.message) : undefined;
+      toast.error(msg ?? 'Failed to cancel assignment');
+    },
+  });
+}
+
+/** Withdraws a notice along with its per-recipient deliveries. */
+export function useDeleteNotice() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (noticeId: string) => {
+      const res = await apiClient.delete(`/institutes/${user?.instituteId}/notices/${noticeId}`);
+      return res.data;
+    },
+    onSuccess: () => {
+      toast.success('Notice withdrawn');
+      queryClient.invalidateQueries({ queryKey: ['notices', user?.instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['notifications', user?.instituteId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : undefined;
+      toast.error(msg ?? 'Failed to withdraw notice');
+    },
+  });
+}
+
+/** Deletes an exam that has not been published yet. */
+export function useDeleteExam() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (examId: string) => {
+      const res = await apiClient.delete(`/institutes/${user?.instituteId}/exams/${examId}`);
+      return res.data;
+    },
+    onSuccess: () => {
+      toast.success('Exam deleted');
+      queryClient.invalidateQueries({ queryKey: ['exams', user?.instituteId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : undefined;
+      toast.error(msg ?? 'Failed to delete exam');
+    },
+  });
+}
+
 export function useSubmitAssignment() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -1553,6 +1617,27 @@ export function useNoticeDeliveryReport(noticeId: string | null) {
       return res.data;
     },
     enabled: !!user?.instituteId && !!noticeId,
+  });
+}
+
+/** Removes a timetable slot — a cancelled or mis-scheduled class. */
+export function useDeleteTimetableSlot() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (slotId: string) => {
+      const res = await apiClient.delete(`/institutes/${user?.instituteId}/timetable/${slotId}`);
+      return res.data;
+    },
+    onSuccess: () => {
+      toast.success('Slot removed');
+      queryClient.invalidateQueries({ queryKey: ['timetable', user?.instituteId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : undefined;
+      toast.error(msg ?? 'Failed to remove slot');
+    },
   });
 }
 

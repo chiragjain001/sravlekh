@@ -5,10 +5,10 @@
 // bookings with a 409 (18-EDGE-CASES.md) instead of silently double-booking.
 
 import { useState } from 'react';
-import { Plus, Search, Clock, MapPin, Loader2 } from 'lucide-react';
+import { Plus, Search, Clock, MapPin, Loader2, Trash2 } from 'lucide-react';
 import {
   useTimetable, useBatches, useTeachers,
-  useCreateTimetableSlot,
+  useCreateTimetableSlot, useDeleteTimetableSlot,
 } from '@/hooks/useApi';
 import { SkeletonTable, EmptyState } from '@/components/ui/foundation';
 
@@ -45,10 +45,13 @@ export function AdminTimetable() {
   const [search, setSearch] = useState('');
   const [batchFilter, setBatchFilter] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
+  const [removeTarget, setRemoveTarget] = useState<any>(null);
+  const deleteSlot = useDeleteTimetableSlot();
 
+  const { data: batches } = useBatches();
   const { data: teachers } = useTeachers();
   const teacherNames = new Map<string, string>(
-    (teachers?.data ?? []).map((t: { user: { id: string; name: string } }) => [t.user.id, t.user.name]),
+    (teachers?.data ?? []).filter((t: any) => !!t.user?.id).map((t: any) => [t.user.id, t.user.name]),
   );
 
   const { data, isPending, isError } = useTimetable(batchFilter ? { batchId: batchFilter } : undefined);
@@ -84,6 +87,14 @@ export function AdminTimetable() {
             className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400"
           />
         </div>
+        <select
+          value={batchFilter}
+          onChange={(e) => setBatchFilter(e.target.value)}
+          className="appearance-none px-3 py-2 text-xs border border-slate-200 rounded-lg bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer"
+        >
+          <option value="">Batch: All</option>
+          {(batches?.data ?? batches ?? []).map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
+        </select>
       </div>
 
       {isPending && <SkeletonTable rows={6} cols={5} />}
@@ -116,6 +127,7 @@ export function AdminTimetable() {
                 <th className="px-4 py-2.5 text-[11px] font-bold text-slate-500 uppercase tracking-wide">Teacher</th>
                 <th className="px-4 py-2.5 text-[11px] font-bold text-slate-500 uppercase tracking-wide">Room</th>
                 <th className="px-4 py-2.5 text-[11px] font-bold text-slate-500 uppercase tracking-wide">When</th>
+                <th className="px-4 py-2.5" />
               </tr>
             </thead>
             <tbody>
@@ -139,6 +151,15 @@ export function AdminTimetable() {
                   <td className="px-4 py-3 text-[12px] text-slate-500 whitespace-nowrap">
                     {formatTime(slot.startTime)} – {formatTime(slot.endTime)}
                   </td>
+                  <td className="px-4 py-3 text-right">
+                    <button
+                      onClick={() => setRemoveTarget(slot)}
+                      title="Remove this slot"
+                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -147,6 +168,38 @@ export function AdminTimetable() {
       )}
 
       <CreateSlotDialog isOpen={createOpen} onClose={() => setCreateOpen(false)} />
+
+      {removeTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/65 backdrop-blur-md">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <h2 className="text-[16px] font-bold text-slate-800">Remove this slot?</h2>
+            </div>
+            <p className="text-[13px] text-slate-600">
+              <b>{removeTarget.title}</b>
+              {removeTarget.batch?.name ? <> for {removeTarget.batch.name}</> : null} will be taken off the timetable.
+            </p>
+            <div className="flex gap-3 pt-1">
+              <button
+                onClick={async () => { await deleteSlot.mutateAsync(removeTarget.id); setRemoveTarget(null); }}
+                disabled={deleteSlot.isPending}
+                className="flex-1 py-2.5 bg-rose-600 text-white text-[13px] font-bold rounded-xl hover:bg-rose-700 transition-colors disabled:opacity-50"
+              >
+                {deleteSlot.isPending ? 'Removing…' : 'Remove Slot'}
+              </button>
+              <button
+                onClick={() => setRemoveTarget(null)}
+                className="px-5 py-2.5 border border-slate-200 text-slate-600 text-[13px] font-bold rounded-xl hover:bg-slate-50 transition-colors"
+              >
+                Keep It
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -233,7 +286,7 @@ function CreateSlotDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
               <label className="block text-[12px] font-semibold text-slate-700 mb-1">Teacher</label>
               <select value={teacherUserId} onChange={(e) => setTeacherUserId(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg bg-white">
                 <option value="">Unassigned</option>
-                {(teachers?.data ?? []).map((t: { user: { id: string; name: string } }) => (
+                {(teachers?.data ?? []).filter((t: any) => !!t.user?.id).map((t: any) => (
                   <option key={t.user.id} value={t.user.id}>{t.user.name}</option>
                 ))}
               </select>
