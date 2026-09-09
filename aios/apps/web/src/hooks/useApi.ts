@@ -1277,6 +1277,29 @@ export function useCreateAssignment() {
   });
 }
 
+/** Issues one assignment per enrolled student of a batch in a single request. */
+export function useCreateAssignmentsForBatch() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (data: { batchId: string; topicId: string; title: string; description?: string; dueDate: string }) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/assignments/batch`, data);
+      return res.data as { created: number };
+    },
+    onSuccess: (result) => {
+      toast.success(`Assignment issued to ${result.created} student${result.created === 1 ? '' : 's'}`);
+      queryClient.invalidateQueries({ queryKey: ['assignments', user?.instituteId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error)
+        ? (error.response?.data?.error?.message ?? error.response?.data?.message)
+        : undefined;
+      toast.error(msg ?? 'Failed to create assignment');
+    },
+  });
+}
+
 export function useSubmitAssignment() {
   const { user } = useAuth();
   const queryClient = useQueryClient();

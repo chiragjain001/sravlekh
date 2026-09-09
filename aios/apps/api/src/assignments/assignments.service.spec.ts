@@ -9,9 +9,9 @@ import { AuthenticatedUser } from '../auth/auth.types';
 describe('AssignmentsService — tenant isolation (13-TESTING-STRATEGY.md §7)', () => {
   let service: AssignmentsService;
   let prisma: {
-    assignment: { create: jest.Mock; findMany: jest.Mock; count: jest.Mock; findUnique: jest.Mock; update: jest.Mock; deleteMany: jest.Mock };
+    assignment: { create: jest.Mock; findMany: jest.Mock; count: jest.Mock; findUnique: jest.Mock; update: jest.Mock; deleteMany: jest.Mock; createMany: jest.Mock };
     batch: { findUnique: jest.Mock };
-    studentProfile: { findUnique: jest.Mock };
+    studentProfile: { findUnique: jest.Mock; findMany: jest.Mock };
     teacherProfile: { findUnique: jest.Mock };
     batchTeacher: { findMany: jest.Mock };
     auditLog: { create: jest.Mock };
@@ -23,9 +23,9 @@ describe('AssignmentsService — tenant isolation (13-TESTING-STRATEGY.md §7)',
 
   beforeEach(async () => {
     prisma = {
-      assignment: { create: jest.fn(), findMany: jest.fn(), count: jest.fn(), findUnique: jest.fn(), update: jest.fn(), deleteMany: jest.fn() },
+      assignment: { create: jest.fn(), findMany: jest.fn(), count: jest.fn(), findUnique: jest.fn(), update: jest.fn(), deleteMany: jest.fn(), createMany: jest.fn() },
       batch: { findUnique: jest.fn() },
-      studentProfile: { findUnique: jest.fn() },
+      studentProfile: { findUnique: jest.fn(), findMany: jest.fn() },
       teacherProfile: { findUnique: jest.fn() },
       batchTeacher: { findMany: jest.fn() },
       auditLog: { create: jest.fn() },
@@ -195,6 +195,55 @@ describe('AssignmentsService — tenant isolation (13-TESTING-STRATEGY.md §7)',
         service.submitAssignment('inst-1', 'a-classmate', { submissionUrl: 'x' }, student),
       ).rejects.toThrow(ForbiddenException);
       expect(prisma.assignment.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // Regression guard for the silent data loss: the modal used to POST once per
+  // student, so a class of 12 tripped the 10-req/s throttle and only 11 rows
+  // were written — with nothing in the UI to say a student had been skipped.
+  describe('createAssignmentsForBatch — the whole roster, in one write', () => {
+    const dto = { batchId: 'batch-1', topicId: 't-1', title: 'HW', dueDate: '2026-10-01T00:00:00Z' };
+
+    it('writes one row per enrolled student in a single createMany', async () => {
+      prisma.batch.findUnique.mockResolvedValueOnce({ id: 'batch-1', instituteId: 'inst-1' });
+      prisma.studentProfile.findMany.mockResolvedValueOnce(
+        Array.from({ length: 12 }, (_, i) => ({ id: `sp-${i}` })),
+      );
+      prisma.assignment.createMany.mockResolvedValueOnce({ count: 12 });
+
+      await expect(service.createAssignmentsForBatch('inst-1', dto, admin)).resolves.toEqual({ created: 12 });
+
+      expect(prisma.assignment.createMany).toHaveBeenCalledTimes(1);
+      const rows = prisma.assignment.createMany.mock.calls[0][0].data;
+      expect(rows).toHaveLength(12);
+      expect(rows.every((r: { studentProfileId: string; batchId: string }) => r.batchId === 'batch-1' && r.studentProfileId)).toBe(true);
+      // Every student gets their own row — never one shared batch-wide row.
+      expect(new Set(rows.map((r: { studentProfileId: string }) => r.studentProfileId)).size).toBe(12);
+    });
+
+    it('rejects a batch from another institute', async () => {
+      prisma.batch.findUnique.mockResolvedValueOnce({ id: 'batch-1', instituteId: 'inst-OTHER' });
+      await expect(service.createAssignmentsForBatch('inst-1', dto, admin)).rejects.toThrow(BadRequestException);
+      expect(prisma.assignment.createMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects a teacher assigning to a batch they do not teach', async () => {
+      prisma.batch.findUnique.mockResolvedValueOnce({ id: 'batch-1', instituteId: 'inst-1' });
+      prisma.teacherProfile.findUnique.mockResolvedValueOnce({ id: 'tp-1' });
+      prisma.batchTeacher.findMany.mockResolvedValueOnce([{ batchId: 'batch-OTHER' }]);
+
+      await expect(service.createAssignmentsForBatch('inst-1', dto, teacher)).rejects.toThrow(ForbiddenException);
+      expect(prisma.assignment.createMany).not.toHaveBeenCalled();
+    });
+
+    it('explains an empty batch rather than writing nothing silently', async () => {
+      prisma.batch.findUnique.mockResolvedValueOnce({ id: 'batch-1', instituteId: 'inst-1' });
+      prisma.studentProfile.findMany.mockResolvedValueOnce([]);
+      await expect(service.createAssignmentsForBatch('inst-1', dto, admin)).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects a student', async () => {
+      await expect(service.createAssignmentsForBatch('inst-1', dto, student)).rejects.toThrow(ForbiddenException);
     });
   });
 

@@ -41,6 +41,17 @@ export class AssignmentsController {
     return this.assignmentsService.createAssignment(instituteId, dto, user, false);
   }
 
+  @Post('batch')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Issue one assignment per enrolled student of a batch, in a single request' })
+  createForBatch(
+    @Param('instituteId') instituteId: string,
+    @Body() dto: CreateAssignmentDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.assignmentsService.createAssignmentsForBatch(instituteId, dto, user);
+  }
+
   @Post('auto-trigger')
   @Roles(UserRole.ADMIN, UserRole.FOUNDER)
   @ApiOperation({ summary: 'Trigger auto-assignments for students with weak topics' })

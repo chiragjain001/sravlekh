@@ -21,3 +21,6 @@ __pycache__/
 .ruff_cache/
 .venv/
 .venv-ci/
+
+# Development-only file storage fallback (StorageService), never committed
+.local-storage/

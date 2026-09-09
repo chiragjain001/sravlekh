@@ -1,8 +1,18 @@
 'use client';
 
 import { useState, useMemo } from 'react';
+import axios from 'axios';
 import { X, BookOpen, Send } from 'lucide-react';
-import { useBatches, useStudents, useSubjects, useCreateAssignment } from '@/hooks/useApi';
+import { useBatches, useSubjects, useCreateAssignmentsForBatch } from '@/hooks/useApi';
+
+/** Surface the server's own reason (empty batch, not your class) rather than a generic retry line. */
+function extractMessage(err: unknown, fallback: string): string {
+  if (axios.isAxiosError(err)) {
+    const data = err.response?.data as { message?: string; error?: { message?: string } } | undefined;
+    return data?.error?.message ?? data?.message ?? fallback;
+  }
+  return fallback;
+}
 
 interface CreateAssignmentModalProps {
   onClose: () => void;
@@ -15,7 +25,7 @@ export function CreateAssignmentModal({ onClose, onSuccess, defaultBatchId }: Cr
   const batches: any[] = batchesResp?.data ?? batchesResp ?? [];
   const { data: subjectsResp } = useSubjects();
   const subjects: any[] = subjectsResp?.data ?? subjectsResp ?? [];
-  const createAssignment = useCreateAssignment();
+  const createAssignmentsForBatch = useCreateAssignmentsForBatch();
 
   const [batchId, setBatchId] = useState(defaultBatchId ?? '');
   const [topicId, setTopicId] = useState('');
@@ -25,8 +35,10 @@ export function CreateAssignmentModal({ onClose, onSuccess, defaultBatchId }: Cr
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const { data: studentsResp } = useStudents(batchId ? { batchId, limit: 100 } : undefined);
-  const studentCount = studentsResp?.meta?.total ?? 0;
+  // Roster size for the "N students will receive this" hint only — the batches
+  // list already carries it, so the modal no longer fetches the roster at all.
+  // Issuing the work is one server-side call (see handleSubmit).
+  const studentCount = batches.find((b: any) => b.id === batchId)?._count?.students ?? 0;
 
   const topics = useMemo(
     () => subjects.flatMap((s: any) => (s.chapters ?? []).flatMap((c: any) => (c.topics ?? []).map((t: any) => ({ id: t.id, label: `${s.name} — ${c.name} — ${t.name}` })))),
@@ -42,27 +54,22 @@ export function CreateAssignmentModal({ onClose, onSuccess, defaultBatchId }: Cr
     setIsSubmitting(true);
 
     try {
-      const students = studentsResp?.data ?? [];
-      if (students.length === 0) {
-        setError('This batch has no enrolled students yet.');
-        return;
-      }
-
-      // One real Assignment row per student — the schema's batchId-wide row
-      // has only a single submissionUrl/gradedMarks, so it can't track each
-      // student's submission independently. Creating one per student (the
-      // same pattern the auto-generated weak-topic assignments already use)
-      // is what actually gives each student their own real submission/grade.
-      await Promise.all(
-        students.map((s: any) =>
-          createAssignment.mutateAsync({ batchId, studentProfileId: s.id, topicId, title: title.trim(), description: description.trim() || undefined, dueDate: new Date(dueDate).toISOString() }),
-        ),
-      );
+      // The server fans this out into one row per enrolled student in a single
+      // createMany. Doing it here instead — one POST per student — meant the
+      // burst hit the 10-req/s throttle and silently dropped students from any
+      // class bigger than about ten.
+      await createAssignmentsForBatch.mutateAsync({
+        batchId,
+        topicId,
+        title: title.trim(),
+        description: description.trim() || undefined,
+        dueDate: new Date(dueDate).toISOString(),
+      });
 
       onSuccess?.();
       onClose();
     } catch (err) {
-      setError('Failed to create assignment. Please try again.');
+      setError(extractMessage(err, 'Failed to create assignment. Please try again.'));
     } finally {
       setIsSubmitting(false);
     }
