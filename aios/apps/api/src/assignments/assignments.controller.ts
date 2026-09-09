@@ -3,11 +3,15 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Body,
   Param,
   Query,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiConsumes } from '@nestjs/swagger';
 import { AssignmentsService } from './assignments.service';
 import {
   CreateAssignmentDto,
@@ -60,14 +64,28 @@ export class AssignmentsController {
 
   @Post(':assignmentId/submit')
   @Roles(UserRole.STUDENT)
-  @ApiOperation({ summary: 'Submit an assignment (Students only)' })
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Submit an assignment (Students only) — upload a file, or pass a submissionUrl' })
   submitAssignment(
     @Param('instituteId') instituteId: string,
     @Param('assignmentId') assignmentId: string,
     @Body() dto: SubmitAssignmentDto,
     @CurrentUser() user: AuthenticatedUser,
+    @UploadedFile() file?: Express.Multer.File,
   ) {
-    return this.assignmentsService.submitAssignment(instituteId, assignmentId, dto, user);
+    return this.assignmentsService.submitAssignment(instituteId, assignmentId, dto, user, file);
+  }
+
+  @Get(':assignmentId/submission-url')
+  @Roles(UserRole.STUDENT, UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: "Fresh signed URL for a submission's uploaded file" })
+  getSubmissionUrl(
+    @Param('instituteId') instituteId: string,
+    @Param('assignmentId') assignmentId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.assignmentsService.getSubmissionDownloadUrl(instituteId, assignmentId, user);
   }
 
   @Patch(':assignmentId/grade')
@@ -80,5 +98,16 @@ export class AssignmentsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.assignmentsService.gradeAssignment(instituteId, assignmentId, dto, user);
+  }
+
+  @Delete(':assignmentId')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Cancel an assignment (removes the per-student rows created with it)' })
+  deleteAssignment(
+    @Param('instituteId') instituteId: string,
+    @Param('assignmentId') assignmentId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.assignmentsService.deleteAssignment(instituteId, assignmentId, user);
   }
 }

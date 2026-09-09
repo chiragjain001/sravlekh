@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Delete,
   Body,
   Param,
   Query,
@@ -32,6 +33,17 @@ export class TimetableController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.timetableService.createSlot(instituteId, dto, user);
+  }
+
+  @Delete(':slotId')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Remove a timetable slot (cancelled or mis-scheduled class)' })
+  deleteSlot(
+    @Param('instituteId') instituteId: string,
+    @Param('slotId') slotId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.timetableService.deleteSlot(instituteId, slotId, user);
   }
 
   @Get()

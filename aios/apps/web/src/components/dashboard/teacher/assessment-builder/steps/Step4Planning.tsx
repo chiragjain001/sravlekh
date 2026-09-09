@@ -12,15 +12,34 @@ import {
   Sparkles
 } from 'lucide-react';
 import { AssessmentState } from '../AssessmentSummaryPanel';
+import { SyllabusChapter } from './Step3Syllabus';
 
 interface Step4PlanningProps {
   state: AssessmentState;
   onChange: (updates: Partial<AssessmentState>) => void;
   onNext: () => void;
   onPrev: () => void;
+  chapters: SyllabusChapter[];
 }
 
-export function Step4Planning({ state, onChange, onNext, onPrev }: Step4PlanningProps) {
+const DEFAULT_CHAPTER_PLAN = { easy: 4, medium: 6, hard: 2 };
+
+export function Step4Planning({ state, onChange, onNext, onPrev, chapters }: Step4PlanningProps) {
+  // Every chapter the teacher selected is rendered with DEFAULT_CHAPTER_PLAN
+  // when it has no entry yet. That default has to be committed to the real
+  // assessment state, not just drawn: publishing reads chapterQuestionPlan, so
+  // a teacher who accepted the visible defaults without touching a slider used
+  // to reach the last step with an empty plan and be told to "set a question
+  // plan (Step 3-4)" on a screen that was showing them one.
+  React.useEffect(() => {
+    const missing = state.selectedChapters.filter((id) => !state.chapterQuestionPlan[id]);
+    if (missing.length === 0) return;
+
+    const seeded = { ...state.chapterQuestionPlan };
+    for (const id of missing) seeded[id] = { ...DEFAULT_CHAPTER_PLAN };
+    onChange({ chapterQuestionPlan: seeded });
+  }, [state.selectedChapters, state.chapterQuestionPlan, onChange]);
+
   // Update question plan for a specific chapter
   const handleCountChange = (
     chapterId: string,
@@ -42,23 +61,18 @@ export function Step4Planning({ state, onChange, onNext, onPrev }: Step4Planning
   };
 
   // Calculate totals
-  const chaptersList = state.selectedChapters.length > 0
-    ? state.selectedChapters
-    : ['ch_rotational', 'ch_gravitation', 'ch_electricity'];
+  const chaptersList = state.selectedChapters;
 
-  const chapterNamesMap: Record<string, string> = {
-    ch_rotational: 'Rotational Motion & Dynamics',
-    ch_gravitation: 'Gravitation & Satellites',
-    ch_electricity: 'Current Electricity & Circuits',
-    ch_thermo: 'Thermodynamics & Kinetic Theory',
-  };
+  const chapterNamesMap: Record<string, string> = Object.fromEntries(
+    chapters.map((c) => [c.id, c.name]),
+  );
 
   let totalEasy = 0;
   let totalMedium = 0;
   let totalHard = 0;
 
   chaptersList.forEach((chId) => {
-    const plan = state.chapterQuestionPlan[chId] || { easy: 4, medium: 6, hard: 2 };
+    const plan = state.chapterQuestionPlan[chId] || DEFAULT_CHAPTER_PLAN;
     totalEasy += plan.easy;
     totalMedium += plan.medium;
     totalHard += plan.hard;
@@ -67,7 +81,9 @@ export function Step4Planning({ state, onChange, onNext, onPrev }: Step4Planning
   const totalQuestions = totalEasy + totalMedium + totalHard;
   const totalMarks = totalQuestions * 4; // 4 marks per Q
   const estimatedTime = Math.round(totalQuestions * 3); // 3 mins per Q
-  const coveragePct = Math.min(100, Math.round((chaptersList.length / 4) * 100));
+  const coveragePct = chapters.length > 0
+    ? Math.min(100, Math.round((chaptersList.length / chapters.length) * 100))
+    : 0;
 
   return (
     <div className="space-y-6 animate-fadein">
@@ -87,7 +103,7 @@ export function Step4Planning({ state, onChange, onNext, onPrev }: Step4Planning
       {/* Chapter Expandable Planning Cards */}
       <div className="space-y-4">
         {chaptersList.map((chapterId) => {
-          const plan = state.chapterQuestionPlan[chapterId] || { easy: 4, medium: 6, hard: 2 };
+          const plan = state.chapterQuestionPlan[chapterId] || DEFAULT_CHAPTER_PLAN;
           const chapterTotal = plan.easy + plan.medium + plan.hard;
 
           return (

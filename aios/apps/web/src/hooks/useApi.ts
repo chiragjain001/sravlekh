@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient, aiClient } from '../lib/api-client';
 import { useAuth } from '../contexts/auth.context';
@@ -18,26 +19,120 @@ import axios from 'axios';
 // success, so your own actions still update instantly rather than waiting for
 // the next tick.
 
+// These intervals are a SAFETY NET, not the main mechanism: the change feed
+// below pushes invalidations within a few seconds. They exist to cover the
+// gaps the feed cannot see — a mutation whose service does not write an audit
+// row, or a spell where the feed itself is failing — so they are deliberately
+// slow. Shortening them does not make the app more live; it only adds load.
+
 /** Shared worklists two people act on at the same time. */
 export const REFRESH_LIVE = {
-  refetchInterval: 30_000,
+  refetchInterval: 60_000,
   refetchIntervalInBackground: false,
   staleTime: 15_000,
 } as const;
 
 /** Rosters, schedules and settings — change occasionally, matter when they do. */
 export const REFRESH_STEADY = {
-  refetchInterval: 60_000,
+  refetchInterval: 3 * 60_000,
   refetchIntervalInBackground: false,
   staleTime: 30_000,
 } as const;
 
 /** Expensive derived data (analytics, mastery) — correctness over immediacy. */
 export const REFRESH_SLOW = {
-  refetchInterval: 5 * 60_000,
+  refetchInterval: 10 * 60_000,
   refetchIntervalInBackground: false,
   staleTime: 2 * 60_000,
 } as const;
+
+// ── Live sync ────────────────────────────────────────────────────────────
+//
+// The tiers above are the safety net. The feed below is what actually makes
+// the app feel live: one small request every few seconds asks "what changed in
+// this institute?", and only the caches for those entities are invalidated —
+// so a change by another user lands in seconds without every screen polling
+// its own heavy list endpoint on a short timer.
+
+/** How often to ask the server what changed. */
+const CHANGE_FEED_INTERVAL_MS = 5_000;
+
+/**
+ * Audit-log `entity` names → the React Query key prefixes they invalidate.
+ * Entity strings come from each service's writeAudit() call and are not
+ * consistently styled, hence the aliases.
+ */
+const ENTITY_QUERY_KEYS: Record<string, string[]> = {
+  assignments:        ['assignments'],
+  exams:              ['exams', 'evaluation-work-items'],
+  papers:             ['papers', 'blueprints'],
+  blueprints:         ['blueprints'],
+  questions:          ['questions'],
+  batches:            ['batches', 'batch-stats', 'students'],
+  students:           ['students', 'student-stats', 'batches'],
+  teachers:           ['teachers', 'teacher-stats'],
+  users:              ['students', 'teachers'],
+  timetableSlots:     ['timetable'],
+  attendance_records: ['attendance', 'attendance-summary'],
+  doubtTickets:       ['doubts'],
+  notices:            ['notices', 'notifications'],
+  evaluations:        ['evaluation-work-items', 'evaluations', 'analytics'],
+  attempts:           ['attempts', 'evaluation-work-items'],
+  assessments:        ['assessments'],
+  documents:          ['documents', 'document-bundles'],
+  rubrics:            ['rubrics'],
+  reports:            ['reports'],
+  institutes:         ['institute'],
+};
+
+/**
+ * Subscribes the whole app to institute-wide changes. Mount once, high in the
+ * tree — see components/LiveSync.tsx.
+ */
+export function useLiveSync() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const since = useRef<string | null>(null);
+
+  const { data } = useQuery({
+    queryKey: ['changes', user?.instituteId],
+    queryFn: async () => {
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/changes`, {
+        params: since.current ? { since: since.current } : undefined,
+      });
+      return res.data as { now: string; entities: string[] };
+    },
+    enabled: !!user?.instituteId,
+    refetchInterval: CHANGE_FEED_INTERVAL_MS,
+    refetchIntervalInBackground: false,
+    staleTime: 0,
+    gcTime: 0,
+    // A blip in the feed must never surface as a dashboard-wide error toast;
+    // the per-query tiers still cover the data if this stays down.
+    retry: false,
+  });
+
+  useEffect(() => {
+    if (!data) return;
+
+    // First response only establishes the cursor — everything on screen was
+    // just fetched, so there is nothing to invalidate yet.
+    const isFirst = since.current === null;
+    since.current = data.now;
+    if (isFirst || data.entities.length === 0) return;
+
+    const prefixes = new Set<string>();
+    for (const entity of data.entities) {
+      for (const key of ENTITY_QUERY_KEYS[entity] ?? [entity]) prefixes.add(key);
+    }
+
+    for (const prefix of prefixes) {
+      // Only refetch what someone is actually looking at; anything mounted
+      // later refetches on mount anyway because its cache is left stale.
+      queryClient.invalidateQueries({ queryKey: [prefix], refetchType: 'active' });
+    }
+  }, [data, queryClient]);
+}
 
 // ── Students ─────────────────────────────────────────────────────────────
 

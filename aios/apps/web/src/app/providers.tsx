@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider } from '@/contexts/auth.context';
 import { AcademicContextProvider } from '@/contexts/academic-context';
+import { LiveSync } from '@/components/LiveSync';
 
 /**
  * Providers wraps the app in all necessary context providers.
@@ -46,6 +47,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <AcademicContextProvider>
+          <LiveSync />
           {children}
           {/* Global toast notifications — positioned top-right */}
           <Toaster

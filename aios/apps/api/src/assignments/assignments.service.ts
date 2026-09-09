@@ -230,6 +230,16 @@ export class AssignmentsService {
       throw new ForbiddenException('Not your assignment');
     }
 
+    // A batch-wide row (studentProfileId: null) is a single shared record: there
+    // is exactly one submissionUrl/gradedMarks for the whole class, so letting
+    // students submit against it means each upload silently overwrites the last.
+    // Submissions must go to a row that belongs to one student.
+    if (!assignment.studentProfileId) {
+      throw new BadRequestException(
+        'This assignment was issued to the whole class and has no personal copy to submit against. Ask your teacher to reissue it per student.',
+      );
+    }
+
     let submissionUrl = dto?.submissionUrl;
     if (file) {
       const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -287,6 +297,35 @@ export class AssignmentsService {
         status: AssignmentStatus.GRADED,
       },
     });
+  }
+
+  // ── Cancel an assignment ─────────────────────────────────────────────────
+  //
+  // The "assign to a class" flow writes one row per student, so cancelling has
+  // to remove the whole set the teacher created, not just the row they clicked.
+  // Rows are matched on the (title, batch, dueDate) triple the UI already uses
+  // to group them back into a single card.
+  async deleteAssignment(instituteId: string, assignmentId: string, actor: AuthenticatedUser) {
+    if (actor.role === UserRole.STUDENT) throw new ForbiddenException('Students cannot delete assignments.');
+
+    const assignment = await this.getAssignmentWithTenantCheck(assignmentId, instituteId);
+
+    if (actor.role === UserRole.TEACHER) {
+      const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor);
+      if (teacherBatchIds !== null && (!assignment.batchId || !teacherBatchIds.includes(assignment.batchId))) {
+        throw new ForbiddenException('This assignment is not for one of your batches.');
+      }
+    }
+
+    const siblings = assignment.batchId
+      ? { batchId: assignment.batchId, title: assignment.title, dueDate: assignment.dueDate }
+      : { id: assignmentId };
+
+    const { count } = await this.prisma.assignment.deleteMany({ where: siblings });
+
+    await this.writeAudit(instituteId, actor.id, AuditAction.DELETE, 'assignments', assignmentId, { title: assignment.title, rows: count }, null);
+
+    return { success: true, deleted: count };
   }
 
   private async getAssignmentWithTenantCheck(assignmentId: string, instituteId: string) {

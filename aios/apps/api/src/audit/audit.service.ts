@@ -27,9 +27,50 @@ function redactAuditLog(log: AuditLog) {
   return { ...log, oldValue: redactPii(log.oldValue), newValue: redactPii(log.newValue) };
 }
 
+/**
+ * Longest window a client may ask about in one poll. Bounds the index scan and
+ * stops a stale/hostile `since` from turning the feed into a full table read.
+ * A client that has been away longer simply refetches everything instead.
+ */
+const MAX_CHANGE_LOOKBACK_MS = 10 * 60 * 1000;
+
 @Injectable()
 export class AuditService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Change feed backing the dashboards' live updates.
+   *
+   * Every mutating service already writes an audit row, so "what changed in this
+   * institute since T" is one indexed read (@@index([instituteId, createdAt])).
+   * Clients poll this cheaply and invalidate only the affected caches, instead of
+   * every screen re-polling its own (much heavier) list endpoint on a timer.
+   *
+   * Deliberately returns entity NAMES only — no ids, no old/new values — so it
+   * leaks nothing a caller would not be allowed to read, and needs no per-role
+   * filtering. It is readable by any authenticated member of the institute.
+   */
+  async getChangedEntities(instituteId: string, actor: AuthenticatedUser, since?: string) {
+    if (actor.role !== UserRole.FOUNDER && actor.instituteId !== instituteId) {
+      throw new ForbiddenException("You don't have access to this institute.");
+    }
+
+    const now = new Date();
+    const floor = new Date(now.getTime() - MAX_CHANGE_LOOKBACK_MS);
+    const requested = since ? new Date(since) : null;
+    const from = requested && !Number.isNaN(requested.getTime()) && requested > floor ? requested : floor;
+
+    const rows = await this.prisma.auditLog.findMany({
+      where: { instituteId, createdAt: { gt: from } },
+      select: { entity: true },
+      distinct: ['entity'],
+      take: 50,
+    });
+
+    // `now` is echoed back as the client's next cursor so the window can never
+    // skip a row written between the query and the client's clock.
+    return { now: now.toISOString(), entities: rows.map((r) => r.entity) };
+  }
 
   // ── ADMIN: own tenant only. FOUNDER: any tenant via the same route. ───────
   async findAll(instituteId: string, query: QueryAuditLogsDto, actor: AuthenticatedUser) {
@@ -75,7 +116,13 @@ export class AuditService {
     const skip = (page - 1) * pageSize;
 
     const [logs, total] = await Promise.all([
-      this.prisma.auditLog.findMany({ where, skip, take: pageSize, orderBy: { createdAt: 'desc' } }),
+      this.prisma.auditLog.findMany({
+        where,
+        skip,
+        take: pageSize,
+        orderBy: { createdAt: 'desc' },
+        include: { actor: { select: { name: true, email: true } } },
+      }),
       this.prisma.auditLog.count({ where }),
     ]);
 

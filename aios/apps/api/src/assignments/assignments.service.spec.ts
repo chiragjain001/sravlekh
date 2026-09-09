@@ -9,7 +9,7 @@ import { AuthenticatedUser } from '../auth/auth.types';
 describe('AssignmentsService — tenant isolation (13-TESTING-STRATEGY.md §7)', () => {
   let service: AssignmentsService;
   let prisma: {
-    assignment: { create: jest.Mock; findMany: jest.Mock; count: jest.Mock; findUnique: jest.Mock; update: jest.Mock };
+    assignment: { create: jest.Mock; findMany: jest.Mock; count: jest.Mock; findUnique: jest.Mock; update: jest.Mock; deleteMany: jest.Mock };
     batch: { findUnique: jest.Mock };
     studentProfile: { findUnique: jest.Mock };
     teacherProfile: { findUnique: jest.Mock };
@@ -23,7 +23,7 @@ describe('AssignmentsService — tenant isolation (13-TESTING-STRATEGY.md §7)',
 
   beforeEach(async () => {
     prisma = {
-      assignment: { create: jest.fn(), findMany: jest.fn(), count: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
+      assignment: { create: jest.fn(), findMany: jest.fn(), count: jest.fn(), findUnique: jest.fn(), update: jest.fn(), deleteMany: jest.fn() },
       batch: { findUnique: jest.fn() },
       studentProfile: { findUnique: jest.fn() },
       teacherProfile: { findUnique: jest.fn() },
@@ -194,6 +194,56 @@ describe('AssignmentsService — tenant isolation (13-TESTING-STRATEGY.md §7)',
       await expect(
         service.submitAssignment('inst-1', 'a-classmate', { submissionUrl: 'x' }, student),
       ).rejects.toThrow(ForbiddenException);
+      expect(prisma.assignment.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('deleteAssignment — cancelling homework', () => {
+    const row = {
+      id: 'a-1', title: 'HW', batchId: 'batch-1', dueDate: new Date('2026-09-01'),
+      studentProfileId: 'sp-1',
+      batch: { instituteId: 'inst-1' },
+      studentProfile: { user: { instituteId: 'inst-1' } },
+    };
+
+    it('removes the whole per-student set the teacher created, not just one row', async () => {
+      prisma.assignment.findUnique.mockResolvedValueOnce(row);
+      prisma.teacherProfile.findUnique.mockResolvedValueOnce({ id: 'tp-1' });
+      prisma.batchTeacher.findMany.mockResolvedValueOnce([{ batchId: 'batch-1' }]);
+      prisma.assignment.deleteMany.mockResolvedValueOnce({ count: 11 });
+
+      await expect(service.deleteAssignment('inst-1', 'a-1', teacher)).resolves.toEqual({ success: true, deleted: 11 });
+      expect(prisma.assignment.deleteMany).toHaveBeenCalledWith({
+        where: { batchId: 'batch-1', title: 'HW', dueDate: row.dueDate },
+      });
+    });
+
+    it('rejects a teacher deleting an assignment for a batch they do not teach', async () => {
+      prisma.assignment.findUnique.mockResolvedValueOnce(row);
+      prisma.teacherProfile.findUnique.mockResolvedValueOnce({ id: 'tp-1' });
+      prisma.batchTeacher.findMany.mockResolvedValueOnce([{ batchId: 'batch-OTHER' }]);
+
+      await expect(service.deleteAssignment('inst-1', 'a-1', teacher)).rejects.toThrow(ForbiddenException);
+      expect(prisma.assignment.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects a student', async () => {
+      await expect(service.deleteAssignment('inst-1', 'a-1', student)).rejects.toThrow(ForbiddenException);
+      expect(prisma.assignment.deleteMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('submitAssignment — batch-wide rows are not submittable', () => {
+    it('refuses a shared class-wide row instead of letting one upload overwrite another', async () => {
+      prisma.assignment.findUnique.mockResolvedValueOnce({
+        id: 'a-shared', studentProfileId: null, batchId: 'batch-1',
+        batch: { instituteId: 'inst-1' }, studentProfile: null,
+      });
+      prisma.studentProfile.findUnique.mockResolvedValueOnce({ id: 'sp-me', batchId: 'batch-1' });
+
+      await expect(
+        service.submitAssignment('inst-1', 'a-shared', { submissionUrl: 'x' }, student),
+      ).rejects.toThrow(BadRequestException);
       expect(prisma.assignment.update).not.toHaveBeenCalled();
     });
   });
