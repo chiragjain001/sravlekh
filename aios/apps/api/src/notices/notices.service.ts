@@ -11,6 +11,8 @@ import { AuditAction, DeliveryStatus, NoticeChannel, UserRole } from '@prisma/cl
 import { AuthenticatedUser } from '../auth/auth.types';
 import { CreateNoticeDto, QueryNoticesDto, TargetAudienceDto } from './dto/notice.dto';
 import { NOTICE_DISPATCH_QUEUE, NoticeDispatchJobData } from './notice-dispatch.constants';
+import { enqueueDeduped, jobKey } from '../infrastructure/queue/enqueue';
+import { QUEUE_POLICY } from '../infrastructure/queue/queue-policy';
 
 interface Recipient {
   userId: string;
@@ -85,7 +87,7 @@ export class NoticesService {
 
     const hasQueued = deliveries.some((d) => d.status === DeliveryStatus.QUEUED);
     if (hasQueued) {
-      await this.dispatchQueue.add('dispatch', { noticeId: notice.id }, { attempts: 3, backoff: { type: 'exponential', delay: 1000 } });
+      await enqueueDeduped(this.dispatchQueue, 'dispatch', { noticeId: notice.id }, jobKey('notice', notice.id), { attempts: 3, backoff: { type: 'exponential', delay: 1000 }, ...QUEUE_POLICY.noticeDispatch.jobOptions }, this.logger);
     }
 
     await this.writeAudit(instituteId, actor.id, AuditAction.CREATE, 'notices', notice.id, null, {
@@ -117,6 +119,55 @@ export class NoticesService {
     return { data: notices, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
+  // ── Recipient-facing inbox (IN_APP channel) ───────────────────────────────
+  // Closes the audit's Critical Risk 08: the broadcast side of this module was
+  // always real, but nothing — not even the internal, automated interventions
+  // pipeline — could ever be read back by the person it was addressed to.
+  // Scoped to the caller's own NoticeDelivery rows; instituteId is still
+  // checked via the joined Notice for defense in depth, not because userId
+  // alone wouldn't already be tenant-safe.
+
+  async getMyNotifications(instituteId: string, actor: AuthenticatedUser, unreadOnly: boolean) {
+    const where = {
+      userId: actor.id,
+      channel: NoticeChannel.IN_APP,
+      notice: { instituteId },
+      ...(unreadOnly ? { readAt: null } : {}),
+    };
+
+    const [deliveries, unreadCount] = await Promise.all([
+      this.prisma.noticeDelivery.findMany({
+        where,
+        include: { notice: { select: { id: true, title: true, body: true, createdByUserId: true, createdAt: true } } },
+        orderBy: [{ sentAt: 'desc' }, { id: 'desc' }],
+        take: 50,
+      }),
+      this.prisma.noticeDelivery.count({ where: { userId: actor.id, channel: NoticeChannel.IN_APP, notice: { instituteId }, readAt: null } }),
+    ]);
+
+    return { data: deliveries, unreadCount };
+  }
+
+  async markNotificationRead(instituteId: string, deliveryId: string, actor: AuthenticatedUser) {
+    const delivery = await this.prisma.noticeDelivery.findUnique({
+      where: { id: deliveryId },
+      include: { notice: { select: { instituteId: true } } },
+    });
+    if (!delivery || delivery.notice.instituteId !== instituteId || delivery.userId !== actor.id) {
+      throw new NotFoundException('Notification not found.');
+    }
+    if (delivery.readAt) return delivery;
+    return this.prisma.noticeDelivery.update({ where: { id: deliveryId }, data: { readAt: new Date() } });
+  }
+
+  async markAllNotificationsRead(instituteId: string, actor: AuthenticatedUser) {
+    const { count } = await this.prisma.noticeDelivery.updateMany({
+      where: { userId: actor.id, channel: NoticeChannel.IN_APP, notice: { instituteId }, readAt: null },
+      data: { readAt: new Date() },
+    });
+    return { markedRead: count };
+  }
+
   async getDeliveryReport(instituteId: string, noticeId: string, actor: AuthenticatedUser) {
     this.assertInstituteAccess(actor, instituteId);
 
@@ -136,6 +187,27 @@ export class NoticesService {
     }, {});
 
     return { ...notice, summary };
+  }
+
+  // ── Withdraw a notice ────────────────────────────────────────────────────
+
+  async deleteNotice(instituteId: string, noticeId: string, actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
+
+    const notice = await this.prisma.notice.findUnique({ where: { id: noticeId } });
+    if (!notice || notice.instituteId !== instituteId) throw new NotFoundException('Notice not found.');
+
+    // Same ownership rule the delivery report already applies: a teacher owns
+    // only what they sent, admins can withdraw anything in their institute.
+    if (actor.role === UserRole.TEACHER && notice.createdByUserId !== actor.id) {
+      throw new ForbiddenException('You can only withdraw notices you sent.');
+    }
+
+    // NoticeDelivery cascades on the FK, so the per-recipient rows go with it.
+    await this.prisma.notice.delete({ where: { id: noticeId } });
+    await this.writeAudit(instituteId, actor.id, AuditAction.DELETE, 'notices', noticeId, { title: notice.title }, null);
+
+    return { success: true };
   }
 
   // ── Audience resolution ────────────────────────────────────────────────

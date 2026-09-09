@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Body,
   Param,
   HttpCode,
@@ -39,8 +40,8 @@ export class ExamsController {
   }
 
   @Get()
-  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
-  @ApiOperation({ summary: 'List exams for this institute' })
+  @Roles(UserRole.STUDENT, UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'List exams for this institute — a STUDENT sees only their own batch, published exams onward' })
   findAll(
     @Param('instituteId') instituteId: string,
     @CurrentUser() user: AuthenticatedUser,
@@ -59,6 +60,17 @@ export class ExamsController {
     return this.examsService.findById(instituteId, examId, user);
   }
 
+  @Get(':examId/results')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Per-student scores and per-question stats for a graded exam' })
+  getResults(
+    @Param('instituteId') instituteId: string,
+    @Param('examId') examId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.examsService.getResults(instituteId, examId, user);
+  }
+
   @Patch(':examId/status')
   @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
   @ApiOperation({ summary: 'Move an exam to the next stage (DRAFT -> REVIEW -> APPROVED -> PUBLISHED -> ONGOING -> EVALUATING -> LOCKED)' })
@@ -69,6 +81,17 @@ export class ExamsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.examsService.updateStatus(instituteId, examId, dto, user);
+  }
+
+  @Delete(':examId')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Delete an exam that has not been published yet' })
+  deleteExam(
+    @Param('instituteId') instituteId: string,
+    @Param('examId') examId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.examsService.deleteExam(instituteId, examId, user);
   }
 
   @Post(':examId/unlock')

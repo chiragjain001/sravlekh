@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConflictException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { ExamStatus, UserRole, Prisma } from '@prisma/client';
 import { ExamsService } from './exams.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -20,8 +20,13 @@ const VALID_FORWARD: Record<ExamStatus, ExamStatus | null> = {
 describe('ExamsService — state machine', () => {
   let service: ExamsService;
   let prisma: {
-    exam: { findUnique: jest.Mock; update: jest.Mock };
+    exam: { findUnique: jest.Mock; findMany: jest.Mock; update: jest.Mock; delete: jest.Mock };
+    teacherProfile: { findUnique: jest.Mock };
+    batchTeacher: { findMany: jest.Mock };
+    scoreRecord: { findMany: jest.Mock };
+    answerSheet: { findMany: jest.Mock; count: jest.Mock };
     auditLog: { create: jest.Mock };
+    paper: { updateMany: jest.Mock };
     $transaction: jest.Mock;
   };
 
@@ -30,8 +35,18 @@ describe('ExamsService — state machine', () => {
 
   beforeEach(async () => {
     prisma = {
-      exam: { findUnique: jest.fn(), update: jest.fn() },
+      exam: { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn(), delete: jest.fn() },
+      teacherProfile: { findUnique: jest.fn() },
+      batchTeacher: { findMany: jest.fn() },
+      scoreRecord: { findMany: jest.fn() },
+      // P1 A4: the LOCKED transition now runs assertAllAnswerSheetsVerified.
+      // count defaults to 0 (nothing unverified) so every pre-existing test in
+      // this file — which predates the gate and asserts pure state-machine
+      // behavior — keeps passing unchanged; the gate's own behavior is covered
+      // separately below, in 'governance gate (P1 A4)'.
+      answerSheet: { findMany: jest.fn(), count: jest.fn().mockResolvedValue(0) },
       auditLog: { create: jest.fn() },
+      paper: { updateMany: jest.fn() },
       // LOCK/UNLOCK go through prisma.$transaction([...]) so the audit entry is
       // atomic with the mutation — mirror Prisma's array-form behavior in the mock.
       $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
@@ -160,6 +175,57 @@ describe('ExamsService — state machine', () => {
     });
   });
 
+  // P1 A4: v2's AssessmentsService has always gated LOCKED on unevaluated
+  // subjective responses; v1 never gated LOCKED on grading state at all.
+  //
+  // v1 has no Evaluation/EvaluationVersion model involvement — gradeAnswerSheet
+  // grades a whole AnswerSheet atomically and unconditionally sets isVerified.
+  // A real-database probe run while building this confirmed reusing v2's
+  // Response/Evaluation-based check here was wrong: `evaluation: null` is the
+  // *permanent* state of every v1 Response, graded or not, so that check would
+  // have blocked LOCK on every v1 exam forever. AnswerSheet.isVerified is the
+  // real v1 signal — see shared/evaluation-lock-gate.ts.
+  describe('governance gate (P1 A4)', () => {
+    it('blocks LOCK when an answer sheet under this exam is still unverified', async () => {
+      mockExam(ExamStatus.EVALUATING, 3);
+      prisma.answerSheet.count.mockResolvedValueOnce(1);
+
+      await expect(
+        service.updateStatus('inst-1', 'exam-1', { status: ExamStatus.LOCKED, version: 3 }, admin),
+      ).rejects.toMatchObject({ response: expect.objectContaining({ code: 'SCHOOL_EXAM_LOCK_BLOCKED_UNEVALUATED' }) });
+      expect(prisma.exam.update).not.toHaveBeenCalled();
+    });
+
+    it('scopes the count to this exam and to unverified sheets only', async () => {
+      mockExam(ExamStatus.EVALUATING, 3);
+      prisma.answerSheet.count.mockResolvedValueOnce(0);
+      prisma.exam.update.mockResolvedValueOnce({ id: 'exam-1', status: ExamStatus.LOCKED, version: 4 });
+
+      await service.updateStatus('inst-1', 'exam-1', { status: ExamStatus.LOCKED, version: 3 }, admin);
+
+      expect(prisma.answerSheet.count).toHaveBeenCalledWith({ where: { examId: 'exam-1', isVerified: false } });
+    });
+
+    it('allows LOCK once every answer sheet has been graded and verified', async () => {
+      mockExam(ExamStatus.EVALUATING, 3);
+      prisma.answerSheet.count.mockResolvedValueOnce(0);
+      prisma.exam.update.mockResolvedValueOnce({ id: 'exam-1', status: ExamStatus.LOCKED, version: 4 });
+
+      await expect(
+        service.updateStatus('inst-1', 'exam-1', { status: ExamStatus.LOCKED, version: 3 }, admin),
+      ).resolves.toBeDefined();
+    });
+
+    it('does not gate any other transition — only LOCKED runs the count', async () => {
+      mockExam(ExamStatus.DRAFT, 0);
+      prisma.exam.update.mockResolvedValueOnce({ id: 'exam-1', status: ExamStatus.REVIEW });
+
+      await service.updateStatus('inst-1', 'exam-1', { status: ExamStatus.REVIEW, version: 0 }, admin);
+
+      expect(prisma.answerSheet.count).not.toHaveBeenCalled();
+    });
+  });
+
   describe('unlock (the one backward transition)', () => {
     it('rejects a non-admin outright', async () => {
       await expect(
@@ -196,6 +262,77 @@ describe('ExamsService — state machine', () => {
     });
   });
 
+  describe('teacher batch scoping', () => {
+    it('findAll restricts a TEACHER to exams for their assigned batches only', async () => {
+      prisma.teacherProfile.findUnique.mockResolvedValueOnce({ id: 'tp-1' });
+      prisma.batchTeacher.findMany.mockResolvedValueOnce([{ batchId: 'batch-1' }]);
+      prisma.exam.findMany.mockResolvedValueOnce([]);
+
+      await service.findAll('inst-1', teacher);
+
+      expect(prisma.exam.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { instituteId: 'inst-1', batchId: { in: ['batch-1'] } } }),
+      );
+    });
+
+    it('findAll keeps institute-wide visibility for ADMIN', async () => {
+      prisma.exam.findMany.mockResolvedValueOnce([]);
+      await service.findAll('inst-1', admin);
+      const call = prisma.exam.findMany.mock.calls[0]![0];
+      expect(call.where).toEqual({ instituteId: 'inst-1' });
+    });
+
+    it('findById rejects a teacher fetching an exam outside their assigned batches', async () => {
+      prisma.exam.findUnique.mockResolvedValueOnce({ id: 'exam-1', instituteId: 'inst-1', batchId: 'batch-OTHER' });
+      prisma.teacherProfile.findUnique.mockResolvedValueOnce({ id: 'tp-1' });
+      prisma.batchTeacher.findMany.mockResolvedValueOnce([{ batchId: 'batch-1' }]);
+
+      await expect(service.findById('inst-1', 'exam-1', teacher)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('findById allows a teacher fetching an exam for their own batch', async () => {
+      prisma.exam.findUnique.mockResolvedValueOnce({ id: 'exam-1', instituteId: 'inst-1', batchId: 'batch-1' });
+      prisma.teacherProfile.findUnique.mockResolvedValueOnce({ id: 'tp-1' });
+      prisma.batchTeacher.findMany.mockResolvedValueOnce([{ batchId: 'batch-1' }]);
+
+      await expect(service.findById('inst-1', 'exam-1', teacher)).resolves.toBeDefined();
+    });
+  });
+
+  describe('getResults', () => {
+    it('rejects a teacher outside the exam batch', async () => {
+      prisma.exam.findUnique.mockResolvedValueOnce({ id: 'exam-1', instituteId: 'inst-1', batchId: 'batch-OTHER' });
+      prisma.teacherProfile.findUnique.mockResolvedValueOnce({ id: 'tp-1' });
+      prisma.batchTeacher.findMany.mockResolvedValueOnce([{ batchId: 'batch-1' }]);
+
+      await expect(service.getResults('inst-1', 'exam-1', teacher)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('aggregates per-student scores and per-question correctness rates', async () => {
+      prisma.exam.findUnique.mockResolvedValueOnce({ id: 'exam-1', instituteId: 'inst-1', batchId: 'batch-1' });
+      prisma.scoreRecord.findMany.mockResolvedValueOnce([
+        { studentProfileId: 's1', obtainedMarks: 8, totalMarks: 10, percentage: 80, isFinalized: true, studentProfile: { user: { name: 'Aarav' } } },
+        { studentProfileId: 's2', obtainedMarks: 4, totalMarks: 10, percentage: 40, isFinalized: true, studentProfile: { user: { name: 'Diya' } } },
+      ]);
+      prisma.answerSheet.findMany.mockResolvedValueOnce([
+        {
+          responses: [
+            { questionId: 'q1', isCorrect: true, question: { id: 'q1', difficulty: 'EASY', content: 'Q1', topic: { name: 'Kinematics' } } },
+            { questionId: 'q1', isCorrect: false, question: { id: 'q1', difficulty: 'EASY', content: 'Q1', topic: { name: 'Kinematics' } } },
+          ],
+        },
+      ]);
+
+      const result = await service.getResults('inst-1', 'exam-1', admin);
+
+      expect(result.summary).toEqual({ participated: 1, graded: 2, avgScore: 60, topScore: 80 });
+      expect(result.students).toHaveLength(2);
+      expect(result.questionAnalysis).toEqual([
+        expect.objectContaining({ questionId: 'q1', topic: 'Kinematics', correct: 1, total: 2, correctPct: 50 }),
+      ]);
+    });
+  });
+
   describe('gradeAnswerSheet — immutability once LOCKED', () => {
     it('rejects grading a LOCKED exam (04-DATABASE-SCHEMA.md: Response is immutable once LOCKED)', async () => {
       const prismaWithAnswerSheet = {
@@ -221,6 +358,36 @@ describe('ExamsService — state machine', () => {
       await expect(
         lockedService.gradeAnswerSheet('inst-1', 'as-1', { responses: [] }, admin),
       ).rejects.toThrow(ConflictException);
+    });
+  });
+  describe('deleteExam — only before the batch has been told it is happening', () => {
+    const draft = { id: 'e-1', instituteId: 'inst-1', title: 'Weekly', status: ExamStatus.DRAFT };
+
+    it('deletes a DRAFT exam and detaches its papers rather than destroying them', async () => {
+      prisma.exam.findUnique.mockResolvedValueOnce(draft);
+      prisma.answerSheet.count.mockResolvedValueOnce(0);
+
+      await expect(service.deleteExam('inst-1', 'e-1', admin)).resolves.toEqual({ success: true });
+      expect(prisma.paper.updateMany).toHaveBeenCalledWith({ where: { examId: 'e-1' }, data: { examId: null } });
+      expect(prisma.exam.delete).toHaveBeenCalledWith({ where: { id: 'e-1' } });
+    });
+
+    it('refuses once the exam is PUBLISHED', async () => {
+      prisma.exam.findUnique.mockResolvedValueOnce({ ...draft, status: ExamStatus.PUBLISHED });
+      await expect(service.deleteExam('inst-1', 'e-1', admin)).rejects.toThrow(BadRequestException);
+      expect(prisma.exam.delete).not.toHaveBeenCalled();
+    });
+
+    it('refuses when answer sheets already exist', async () => {
+      prisma.exam.findUnique.mockResolvedValueOnce(draft);
+      prisma.answerSheet.count.mockResolvedValueOnce(3);
+      await expect(service.deleteExam('inst-1', 'e-1', admin)).rejects.toThrow(BadRequestException);
+      expect(prisma.exam.delete).not.toHaveBeenCalled();
+    });
+
+    it("404s for another institute's exam", async () => {
+      prisma.exam.findUnique.mockResolvedValueOnce({ ...draft, instituteId: 'inst-OTHER' });
+      await expect(service.deleteExam('inst-1', 'e-1', admin)).rejects.toThrow(NotFoundException);
     });
   });
 });

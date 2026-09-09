@@ -46,6 +46,21 @@ export const REFRESH_SLOW = {
   staleTime: 2 * 60_000,
 } as const;
 
+/**
+ * Data written by BullMQ processors — score aggregation and AI evaluation —
+ * rather than by a request. The change feed cannot see these: it is built from
+ * audit rows, and a background job has no acting user to attribute one to, so
+ * the only signal it emits is the *triggering* action, which fires long before
+ * the job finishes. These are the screens someone sits and waits on (a student
+ * refreshing for marks), so they poll on their own rather than inheriting the
+ * slow safety-net interval.
+ */
+export const REFRESH_ASYNC_JOB = {
+  refetchInterval: 30_000,
+  refetchIntervalInBackground: false,
+  staleTime: 15_000,
+} as const;
+
 // ── Live sync ────────────────────────────────────────────────────────────
 //
 // The tiers above are the safety net. The feed below is what actually makes
@@ -302,7 +317,7 @@ export function useMyStudentProfile() {
       const res = await apiClient.get(`/institutes/${user?.instituteId}/students/me`);
       return res.data;
     },
-    ...REFRESH_STEADY,
+    ...REFRESH_ASYNC_JOB,
     enabled: !!user?.instituteId && user?.role === 'STUDENT',
   });
 }
@@ -773,7 +788,7 @@ export function useEvaluationWorkItems(params?: Record<string, unknown>) {
       const res = await apiClient.get(`/institutes/${user?.instituteId}/evaluation-work-items`, { params });
       return res.data;
     },
-    ...REFRESH_LIVE,
+    ...REFRESH_ASYNC_JOB,
     enabled: !!user?.instituteId,
   });
 }
@@ -1376,7 +1391,7 @@ export function useExamResults(examId: string | null) {
       const res = await apiClient.get(`/institutes/${user?.instituteId}/exams/${examId}/results`);
       return res.data;
     },
-    ...REFRESH_STEADY,
+    ...REFRESH_ASYNC_JOB,
     enabled: !!user?.instituteId && !!examId,
   });
 }

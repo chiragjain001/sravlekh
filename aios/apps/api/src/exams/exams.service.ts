@@ -8,10 +8,12 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AnalyticsService } from '../analytics/analytics.service';
-import { AuditAction, UserRole, ExamStatus, PaperStatus } from '@prisma/client';
+import { AuditAction, UserRole, ExamStatus, PaperStatus, Prisma } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { EXAM_STATUS_TRANSITIONS as NEXT_STATUS } from '../shared/exam-status-transitions';
 import { withVersionGuard } from '../shared/version-guard';
+import { getTeacherBatchIds } from '../shared/teacher-scope';
+import { assertAllAnswerSheetsVerified } from '../shared/evaluation-lock-gate';
 import {
   CreateExamDto,
   GradeAnswerSheetDto,
@@ -67,8 +69,30 @@ export class ExamsService {
 
   async findAll(instituteId: string, actor: AuthenticatedUser) {
     this.assertInstituteAccess(actor, instituteId);
+
+    // Teachers only see exams for their own batches — ADMIN/FOUNDER keep
+    // institute-wide visibility, unaffected by this branch.
+    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor);
+
+    // Students only ever see exams for their own batch, and only once they're
+    // actually scheduled — DRAFT/REVIEW/APPROVED are pre-publication working
+    // states a student has no business seeing (audit finding: no student-
+    // scoped "my upcoming exams" read path existed at all before this).
+    let studentWhere: Record<string, unknown> | undefined;
+    if (actor.role === UserRole.STUDENT) {
+      const student = await this.prisma.studentProfile.findUnique({ where: { userId: actor.id } });
+      studentWhere = {
+        batchId: student?.batchId ?? '__none__',
+        status: { in: [ExamStatus.PUBLISHED, ExamStatus.ONGOING, ExamStatus.EVALUATING, ExamStatus.LOCKED] },
+      };
+    }
+
     return this.prisma.exam.findMany({
-      where: { instituteId },
+      where: {
+        instituteId,
+        ...(teacherBatchIds !== null && { batchId: { in: teacherBatchIds } }),
+        ...studentWhere,
+      },
       include: {
         batch: { select: { id: true, name: true } },
         blueprint: { select: { id: true, name: true, totalMarks: true } },
@@ -88,6 +112,12 @@ export class ExamsService {
       },
     });
     if (!exam || exam.instituteId !== instituteId) throw new NotFoundException('Exam not found.');
+
+    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor);
+    if (teacherBatchIds !== null && !teacherBatchIds.includes(exam.batchId)) {
+      throw new ForbiddenException('You can only view exams for batches you are assigned to.');
+    }
+
     return exam;
   }
 
@@ -125,6 +155,20 @@ export class ExamsService {
     // workflow, mirroring the Question approval pattern (03-FEATURE-SPECIFICATIONS.md).
     if (dto.status === ExamStatus.APPROVED && actor.role !== UserRole.ADMIN && actor.role !== UserRole.FOUNDER) {
       throw new ForbiddenException('Only admins can approve an exam.');
+    }
+
+    // P1 A4: v2's AssessmentsService has always gated LOCKED on unevaluated
+    // subjective responses; v1 never gated LOCKED on anything grading-related at
+    // all. v1 Exam has no stakesLevel/practice-vs-graded distinction — every v1
+    // exam is a real, scored exam — so this applies unconditionally on LOCKED.
+    // Uses AnswerSheet.isVerified, not Response/Evaluation state: v1 has no
+    // Evaluation model involvement whatsoever (gradeAnswerSheet grades a whole
+    // sheet atomically), so v2's Response-based check cannot be reused here — see
+    // shared/evaluation-lock-gate.ts's assertAllAnswerSheetsVerified for why.
+    // A real-database probe confirms this correctly allows LOCK once every
+    // answer sheet is graded, and blocks it while any remain unverified.
+    if (dto.status === ExamStatus.LOCKED) {
+      await assertAllAnswerSheetsVerified(this.prisma, examId);
     }
 
     const data: Record<string, unknown> = { status: dto.status, version: { increment: 1 } };
@@ -217,6 +261,51 @@ export class ExamsService {
     );
 
     return updated;
+  }
+
+  // ── Cancel an exam ───────────────────────────────────────────────────────
+  //
+  // Only while it is still being prepared. Once an exam is PUBLISHED the batch
+  // has been told it is happening, and from ONGOING onwards answer sheets and
+  // score records hang off it — deleting then would destroy real student work,
+  // so those stages are refused and the exam should be moved through its normal
+  // status flow instead.
+  async deleteExam(instituteId: string, examId: string, actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
+
+    const exam = await this.prisma.exam.findUnique({ where: { id: examId } });
+    if (!exam || exam.instituteId !== instituteId) throw new NotFoundException('Exam not found.');
+
+    const cancellable: ExamStatus[] = [ExamStatus.DRAFT, ExamStatus.REVIEW, ExamStatus.APPROVED];
+    if (!cancellable.includes(exam.status)) {
+      throw new BadRequestException(
+        `An exam can only be deleted while it is DRAFT, REVIEW or APPROVED — this one is ${exam.status}.`,
+      );
+    }
+
+    const answerSheets = await this.prisma.answerSheet.count({ where: { examId } });
+    if (answerSheets > 0) {
+      throw new BadRequestException('This exam already has answer sheets and cannot be deleted.');
+    }
+
+    // Papers point at the exam; detach rather than delete, since a generated
+    // paper is reusable work that outlives the exam it was linked to.
+    await this.prisma.$transaction([
+      this.prisma.paper.updateMany({ where: { examId }, data: { examId: null } }),
+      this.prisma.exam.delete({ where: { id: examId } }),
+      this.prisma.auditLog.create({
+        data: {
+          instituteId,
+          actorId: actor.id,
+          action: AuditAction.DELETE,
+          entity: 'exams',
+          entityId: examId,
+          oldValue: { title: exam.title, status: exam.status } satisfies Prisma.InputJsonValue,
+        },
+      }),
+    ]);
+
+    return { success: true };
   }
 
   // ── D-01: Link Generated Paper to Exam ───────────────────────────────────
@@ -386,6 +475,87 @@ export class ExamsService {
     await this.analyticsService.enqueueMasteryRecalc(studentProfileId, Array.from(topicsToRecalculate));
 
     return { message: 'Answer sheet graded and finalized. Analytics updated.' };
+  }
+
+  // ── Results: per-student scores + per-question stats for the Teacher UI ──
+
+  async getResults(instituteId: string, examId: string, actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
+
+    const exam = await this.prisma.exam.findUnique({ where: { id: examId } });
+    if (!exam || exam.instituteId !== instituteId) throw new NotFoundException('Exam not found.');
+
+    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor);
+    if (teacherBatchIds !== null && !teacherBatchIds.includes(exam.batchId)) {
+      throw new ForbiddenException('You can only view results for batches you are assigned to.');
+    }
+
+    const [scoreRecords, answerSheets] = await Promise.all([
+      this.prisma.scoreRecord.findMany({
+        where: { examId },
+        include: { studentProfile: { include: { user: { select: { name: true } } } } },
+        orderBy: { obtainedMarks: 'desc' },
+      }),
+      this.prisma.answerSheet.findMany({
+        where: { examId },
+        include: {
+          responses: {
+            include: {
+              question: { select: { id: true, difficulty: true, content: true, topic: { select: { name: true } } } },
+            },
+          },
+        },
+      }),
+    ]);
+
+    const students = scoreRecords.map((s) => ({
+      studentProfileId: s.studentProfileId,
+      name: s.studentProfile.user.name,
+      obtainedMarks: s.obtainedMarks,
+      totalMarks: s.totalMarks,
+      percentage: s.percentage,
+      isFinalized: s.isFinalized,
+    }));
+
+    const byQuestion = new Map<string, { questionId: string; topic: string; difficulty: string; content: string; correct: number; total: number }>();
+    for (const sheet of answerSheets) {
+      for (const r of sheet.responses) {
+        if (!r.question) continue;
+        const key = r.questionId;
+        const entry = byQuestion.get(key) ?? {
+          questionId: key,
+          topic: r.question.topic.name,
+          difficulty: r.question.difficulty,
+          content: r.question.content,
+          correct: 0,
+          total: 0,
+        };
+        entry.total += 1;
+        if (r.isCorrect) entry.correct += 1;
+        byQuestion.set(key, entry);
+      }
+    }
+    const questionAnalysis = Array.from(byQuestion.values()).map((q) => ({
+      ...q,
+      correctPct: q.total > 0 ? Math.round((q.correct / q.total) * 100) : 0,
+    }));
+
+    const finalized = scoreRecords.filter((s) => s.isFinalized);
+    const avgScore = finalized.length > 0
+      ? Math.round(finalized.reduce((sum, s) => sum + s.percentage, 0) / finalized.length)
+      : 0;
+    const topScore = finalized.length > 0 ? Math.round(Math.max(...finalized.map((s) => s.percentage))) : 0;
+
+    return {
+      summary: {
+        participated: answerSheets.length,
+        graded: finalized.length,
+        avgScore,
+        topScore,
+      },
+      students,
+      questionAnalysis,
+    };
   }
 
   // ── Private helpers ───────────────────────────────────────────────────────
