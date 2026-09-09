@@ -6,9 +6,9 @@
 // faked SENT — see NoticeDispatchProcessor).
 
 import { useState } from 'react';
-import { Plus, Search, Send, Loader2, Megaphone } from 'lucide-react';
+import { Plus, Search, Send, Loader2, Megaphone, Trash2 } from 'lucide-react';
 import { useAuth } from '@/contexts/auth.context';
-import { useNotices, useCreateNotice, useNoticeDeliveryReport, useBatches } from '@/hooks/useApi';
+import { useNotices, useCreateNotice, useNoticeDeliveryReport, useBatches, useDeleteNotice } from '@/hooks/useApi';
 import { SkeletonTable, EmptyState } from '@/components/ui/foundation';
 
 const CHANNELS = ['IN_APP', 'EMAIL', 'SMS', 'WHATSAPP'];
@@ -32,6 +32,8 @@ export function AdminCommunication() {
   const [search, setSearch] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const [reportTarget, setReportTarget] = useState<NoticeRow | null>(null);
+  const [withdrawTarget, setWithdrawTarget] = useState<NoticeRow | null>(null);
+  const deleteNotice = useDeleteNotice();
 
   const { data, isPending, isError } = useNotices();
   const notices: NoticeRow[] = data?.data ?? [];
@@ -105,9 +107,18 @@ export function AdminCommunication() {
                   <td className="px-4 py-3 text-[12px] text-slate-500">{n._count?.deliveries ?? '—'}</td>
                   <td className="px-4 py-3 text-[12px] text-slate-500">{new Date(n.createdAt).toLocaleString()}</td>
                   <td className="px-4 py-3 text-right">
-                    <button onClick={() => setReportTarget(n)} className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800">
-                      Delivery Report
-                    </button>
+                    <div className="inline-flex items-center gap-2">
+                      <button onClick={() => setReportTarget(n)} className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800">
+                        Delivery Report
+                      </button>
+                      <button
+                        onClick={() => setWithdrawTarget(n)}
+                        title="Withdraw this notice"
+                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -117,6 +128,35 @@ export function AdminCommunication() {
       )}
 
       <CreateNoticeDialog isOpen={createOpen} onClose={() => setCreateOpen(false)} />
+      {withdrawTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/65 backdrop-blur-md">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <h2 className="text-[16px] font-bold text-slate-800">Withdraw this notice?</h2>
+            </div>
+            <p className="text-[13px] text-slate-600">
+              <b>{withdrawTarget.title}</b> and its {withdrawTarget._count?.deliveries ?? 0} recipient
+              {(withdrawTarget._count?.deliveries ?? 0) === 1 ? '' : 's'} will be removed. It will no longer appear in anyone's notifications.
+            </p>
+            <div className="flex gap-3 pt-1">
+              <button
+                onClick={async () => { await deleteNotice.mutateAsync(withdrawTarget.id); setWithdrawTarget(null); }}
+                disabled={deleteNotice.isPending}
+                className="flex-1 py-2.5 bg-rose-600 text-white text-[13px] font-bold rounded-xl hover:bg-rose-700 transition-colors disabled:opacity-50"
+              >
+                {deleteNotice.isPending ? 'Withdrawing…' : 'Withdraw Notice'}
+              </button>
+              <button onClick={() => setWithdrawTarget(null)} className="px-5 py-2.5 border border-slate-200 text-slate-600 text-[13px] font-bold rounded-xl hover:bg-slate-50 transition-colors">
+                Keep It
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <DeliveryReportDialog notice={reportTarget} onClose={() => setReportTarget(null)} />
     </div>
   );

@@ -523,6 +523,24 @@ export function useBatchPerformance(batchId: string | null) {
   });
 }
 
+/**
+ * Headline stats for every visible batch in one request. Use this for any
+ * screen showing a card per class — calling useBatchPerformance() in a loop
+ * costs one request and two queries per batch.
+ */
+export function useBatchPerformanceSummaries() {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['batches', user?.instituteId, 'performance-summary'],
+    queryFn: async () => {
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/batches/performance-summary`);
+      return res.data as { id: string; name: string; classYear: string | null; section: string | null; studentCount: number; avgScore: number; trend: 'up' | 'down' | 'stable' }[];
+    },
+    enabled: !!user?.instituteId,
+    ...REFRESH_SLOW,
+  });
+}
+
 export function useWeakStudentsForTopic(batchId: string | null, topicId: string | null) {
   const { user } = useAuth();
   return useQuery({
@@ -1082,6 +1100,20 @@ export function useBatchHeatmap(batchId: string | undefined) {
     },
     ...REFRESH_SLOW,
     enabled: !!batchId,
+  });
+}
+
+/** Heatmaps for several batches in one request, keyed by batch id. */
+export function useBatchesHeatmap(batchIds: string[]) {
+  const key = [...batchIds].sort().join(',');
+  return useQuery({
+    queryKey: ['analytics', 'heatmap', 'bulk', key],
+    queryFn: async () => {
+      const res = await aiClient.get('/analytics/batches/heatmap', { params: { batchIds: key } });
+      return (res.data?.data ?? {}) as Record<string, unknown[]>;
+    },
+    enabled: batchIds.length > 0,
+    ...REFRESH_SLOW,
   });
 }
 

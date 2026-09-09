@@ -6,10 +6,10 @@
 // 02-SYSTEM-ARCHITECTURE.md / 03-FEATURE-SPECIFICATIONS.md / 18-EDGE-CASES.md.
 
 import { useState } from 'react';
-import { Plus, Search, ArrowRight, Unlock, ClipboardList, X, Loader2 } from 'lucide-react';
+import { Plus, Search, ArrowRight, Unlock, ClipboardList, X, Loader2, Trash2 } from 'lucide-react';
 import { useAuth } from '@/contexts/auth.context';
 import {
-  useExams, useBatches, useBlueprints,
+  useExams, useBatches, useBlueprints, useDeleteExam,
   useCreateExam, useUpdateExamStatus, useUnlockExam,
 } from '@/hooks/useApi';
 import { SkeletonTable, EmptyState } from '@/components/ui/foundation';
@@ -61,6 +61,8 @@ export function AdminExams() {
   const [statusFilter, setStatusFilter] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const [unlockTarget, setUnlockTarget] = useState<ExamRow | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ExamRow | null>(null);
+  const deleteExam = useDeleteExam();
 
   const { data, isPending, isError } = useExams(statusFilter ? { status: statusFilter } : undefined);
   const updateStatus = useUpdateExamStatus();
@@ -185,6 +187,15 @@ export function AdminExams() {
                             <Unlock className="w-3.5 h-3.5" /> Unlock
                           </button>
                         )}
+                        {['DRAFT', 'REVIEW', 'APPROVED'].includes(exam.status) && (
+                          <button
+                            onClick={() => setDeleteTarget(exam)}
+                            title="Delete this exam"
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -197,6 +208,35 @@ export function AdminExams() {
 
       <CreateExamDialog isOpen={createOpen} onClose={() => setCreateOpen(false)} />
       <UnlockExamDialog exam={unlockTarget} onClose={() => setUnlockTarget(null)} />
+
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/65 backdrop-blur-md">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <h2 className="text-[16px] font-bold text-slate-800">Delete this exam?</h2>
+            </div>
+            <p className="text-[13px] text-slate-600">
+              <b>{deleteTarget.title}</b>{deleteTarget.batch?.name ? <> for {deleteTarget.batch.name}</> : null} is still {deleteTarget.status}, so nothing has been graded against it.
+              Any generated paper stays in the question bank.
+            </p>
+            <div className="flex gap-3 pt-1">
+              <button
+                onClick={async () => { await deleteExam.mutateAsync(deleteTarget.id); setDeleteTarget(null); }}
+                disabled={deleteExam.isPending}
+                className="flex-1 py-2.5 bg-rose-600 text-white text-[13px] font-bold rounded-xl hover:bg-rose-700 transition-colors disabled:opacity-50"
+              >
+                {deleteExam.isPending ? 'Deleting…' : 'Delete Exam'}
+              </button>
+              <button onClick={() => setDeleteTarget(null)} className="px-5 py-2.5 border border-slate-200 text-slate-600 text-[13px] font-bold rounded-xl hover:bg-slate-50 transition-colors">
+                Keep It
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

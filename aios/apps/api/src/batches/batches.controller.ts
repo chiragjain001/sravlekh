@@ -37,6 +37,24 @@ export class BatchesController {
     @CurrentUser() user: AuthenticatedUser,
   ) { return this.batchesService.findAllBatches(id, user); }
 
+  @Get('batches/stats')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Aggregate batch stats (counts by class year, enrollment)' })
+  getStats(
+    @Param('instituteId') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) { return this.batchesService.getStats(id, user); }
+
+  // Must precede 'batches/:batchId' — otherwise Nest matches this path first
+  // and hands "performance-summary" through as a batchId.
+  @Get('batches/performance-summary')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Headline performance (studentCount/avgScore/trend) for every visible batch, in one call' })
+  getBatchPerformanceSummaries(
+    @Param('instituteId') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) { return this.batchesService.getBatchPerformanceSummaries(id, user); }
+
   @Get('batches/:batchId')
   @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
   @ApiOperation({ summary: 'Get batch details with students and teachers' })
@@ -45,6 +63,25 @@ export class BatchesController {
     @Param('batchId') batchId: string,
     @CurrentUser() user: AuthenticatedUser,
   ) { return this.batchesService.findBatchById(id, batchId, user); }
+
+  @Get('batches/:batchId/performance')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Per-student score aggregation (avg/rank/status) and batch trend' })
+  getBatchPerformance(
+    @Param('instituteId') id: string,
+    @Param('batchId') batchId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) { return this.batchesService.getBatchPerformance(id, batchId, user); }
+
+  @Get('batches/:batchId/topics/:topicId/weak-students')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Students in this batch below the mastery threshold for one topic' })
+  getWeakStudentsForTopic(
+    @Param('instituteId') id: string,
+    @Param('batchId') batchId: string,
+    @Param('topicId') topicId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) { return this.batchesService.getWeakStudentsForTopic(id, batchId, topicId, user); }
 
   @Patch('batches/:batchId')
   @Roles(UserRole.ADMIN, UserRole.FOUNDER)
@@ -55,6 +92,16 @@ export class BatchesController {
     @Body() dto: UpdateBatchDto,
     @CurrentUser() user: AuthenticatedUser,
   ) { return this.batchesService.updateBatch(id, batchId, dto, user); }
+
+  @Delete('batches/:batchId')
+  @Roles(UserRole.ADMIN, UserRole.FOUNDER)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Archive a batch (soft-delete via isActive, preserves students/history)' })
+  archiveBatch(
+    @Param('instituteId') id: string,
+    @Param('batchId') batchId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) { return this.batchesService.archiveBatch(id, batchId, user); }
 
   // ── Subjects ──────────────────────────────────────────────────────────────
   @Post('subjects')
