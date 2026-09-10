@@ -48,6 +48,22 @@ export const envSchema = z
 
     // JWT session signing
     JWT_SECRET: z.string().min(32),
+
+    // Global throttle limits (07-SECURITY-SPECIFICATION.md §7). Configurable
+    // rather than hardcoded for two reasons found while load-testing: the
+    // numbers cannot be tuned in production without a redeploy, and a load test
+    // measuring real capacity has no way to get past them — the first run of
+    // read-path-baseline.js measured the throttler rather than the application,
+    // with 90% of requests correctly rejected as 429.
+    //
+    // Defaults are the previously hardcoded values, so behaviour is unchanged
+    // unless an operator opts in. Tracking is PER USER on authenticated routes
+    // (UserThrottlerGuard) and per IP only on public ones, so these are a single
+    // person's budget, not a whole institute's behind one NAT.
+    THROTTLE_SHORT_LIMIT: z.coerce.number().int().positive().default(10),
+    THROTTLE_SHORT_TTL_MS: z.coerce.number().int().positive().default(1000),
+    THROTTLE_MEDIUM_LIMIT: z.coerce.number().int().positive().default(100),
+    THROTTLE_MEDIUM_TTL_MS: z.coerce.number().int().positive().default(60_000),
     // The ACCESS token's lifetime. Shortened from 7d to 15m when refresh tokens
     // landed: a 7-day access token in localStorage is a credential an XSS can
     // steal and use for a week, and User.tokenVersion was the only revocation —

@@ -1,6 +1,7 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 import { envSchema } from './config/env.schema';
 import { AuthModule } from './auth/auth.module';
@@ -60,18 +61,18 @@ import { CacheService } from './infrastructure/cache/cache.service';
     // multiplied by the number of running API processes.
     ThrottlerModule.forRootAsync({
       imports: [CacheModule],
-      inject: [CacheService],
-      useFactory: (cache: CacheService) => ({
+      inject: [CacheService, ConfigService],
+      useFactory: (cache: CacheService, config: ConfigService) => ({
         throttlers: [
           {
             name: 'short',
-            ttl: 1000,   // 1 second
-            limit: 10,
+            ttl: config.get<number>('THROTTLE_SHORT_TTL_MS', 1000),
+            limit: config.get<number>('THROTTLE_SHORT_LIMIT', 10),
           },
           {
             name: 'medium',
-            ttl: 60_000, // 1 minute
-            limit: 100,
+            ttl: config.get<number>('THROTTLE_MEDIUM_TTL_MS', 60_000),
+            limit: config.get<number>('THROTTLE_MEDIUM_LIMIT', 100),
           },
         ],
         storage: new RedisThrottlerStorage(cache),

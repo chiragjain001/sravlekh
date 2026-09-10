@@ -4,7 +4,16 @@
 added in Phase 15 (`docs/20-IMPLEMENTATION-PLAN.md`), targeting `docs/10-SCALABILITY-STRATEGY.md`'s
 (including its V2 addendum) peak-load numbers.
 
-**Status: written, never executed.** This sandbox has no live Postgres, Redis, or running deployment to run
+**Status: partially executed — see `RESULTS-2026-09-11.md`.**
+
+`read-path-baseline.js` has been run against a real API and Postgres and has real
+numbers. The five domain scripts below are still unexecuted, because each needs
+seeded state a fresh database does not have (a real ANSWER_SHEET_ID on an ONGOING
+exam, DELIVERY_IDS with submitted subjective Responses, and so on). Running them
+without it produces 404s at speed, which measures nothing — so they stay honestly
+unrun rather than green.
+
+The original note, still true of those five: This sandbox has no live Postgres, Redis, or running deployment to run
 these against — see `docs/33-GAP-ANALYSIS-AND-BUILD-PLAN.md`'s Phase 6.5 and Phase 15 sections. "Load testing
 executed against targets" cannot be honestly claimed done from here; only "scripts exist and are ready to run"
 can. Nothing in these files has been validated beyond `k6 lint`-level syntax review — treat the request shapes
