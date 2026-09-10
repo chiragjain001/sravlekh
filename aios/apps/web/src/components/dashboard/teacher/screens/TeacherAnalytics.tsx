@@ -293,7 +293,7 @@ export function TeacherAnalytics() {
                         className="w-full flex items-center justify-between p-3.5 border border-slate-100 rounded-xl bg-slate-50 hover:border-indigo-200 hover:shadow-sm transition-all text-left group">
                         <div>
                           <p className="text-[14px] font-bold text-slate-800 group-hover:text-indigo-600 transition-colors">{wt.topic}</p>
-                          <p className="text-[11.5px] text-slate-500 mt-0.5">{wt.count} students struggling ({wt.weakPct}% of cohort)</p>
+                          <p className="text-[11.5px] text-slate-500 mt-0.5">{wt.count} {wt.count === 1 ? 'student' : 'students'} struggling ({wt.weakPct}% of cohort)</p>
                         </div>
                         <div className="flex items-center gap-3">
                           <span className={`px-2.5 py-1 rounded-md text-[11px] font-bold ${wt.impact === 'High' ? 'bg-rose-100 text-rose-700' : wt.impact === 'Medium' ? 'bg-amber-100 text-amber-700' : 'bg-sky-100 text-sky-700'}`}>{wt.impact} Impact</span>
