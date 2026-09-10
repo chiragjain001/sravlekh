@@ -44,6 +44,16 @@ const STRIPPED_REQUEST_HEADERS = new Set([
   // Let undici negotiate its own encoding with the upstream rather than
   // promising the browser's preferences on a connection we then re-frame.
   'accept-encoding',
+  // `Expect: 100-continue` is per-hop and belongs to the client<->proxy
+  // conversation, not the proxy<->upstream one. Forwarding it is not merely
+  // untidy: undici REFUSES the request outright with
+  // `NotSupportedError: expect header not supported`.
+  //
+  // Found by proxying a 25 MB upload — curl (and other clients) add this header
+  // automatically once a body is large enough, so the failure hit exactly the
+  // booklet-upload path this proxy streams for, and nothing smaller. The client
+  // saw a 502 with no explanation.
+  'expect',
 ]);
 
 const STRIPPED_RESPONSE_HEADERS = new Set([
@@ -78,12 +88,43 @@ export type ProxyOptions = {
   label: string;
 };
 
+/**
+ * Thrown when a request cannot be mapped to a safe upstream URL. Handled by the
+ * caller as a 400 — it is a malformed request, not an upstream failure.
+ */
+class UnsafePathError extends Error {}
+
 function buildTargetUrl(request: NextRequest, { upstreamBase, path, upstreamPrefix = '' }: ProxyOptions): URL {
-  // Segments are re-encoded rather than concatenated raw, so a segment cannot
-  // smuggle `../`, a `?`, or a `#` into the upstream URL. Next has already
-  // decoded them, so encodeURIComponent here restores exactly one level.
+  // Reject traversal segments OUTRIGHT rather than trying to encode them away.
+  //
+  // encodeURIComponent was the original defence here and it is not sufficient:
+  // it does not escape dots, so a `..` segment survives it unchanged and the URL
+  // constructor then resolves the traversal. Caught by the test below —
+  // `['..', '..', 'admin', 'secrets']` against prefix `/api/v1` produced
+  // `/admin/secrets`, escaping the prefix entirely and letting a caller reach
+  // paths on the internal host that this proxy is not meant to expose.
+  //
+  // Encoding is still applied for everything else (`?`, `#`, `/` inside a
+  // segment), but the traversal case is rejected, because "encode it and hope
+  // the normaliser agrees" is a weaker property than "this cannot be expressed".
+  for (const segment of path) {
+    if (segment === '.' || segment === '..' || segment === '') {
+      throw new UnsafePathError(`Illegal path segment: ${JSON.stringify(segment)}`);
+    }
+  }
+
   const suffix = path.map(encodeURIComponent).join('/');
   const target = new URL(`${upstreamBase}${upstreamPrefix}/${suffix}`);
+
+  // Belt and braces: whatever the segments were, the resolved path must still sit
+  // under the prefix we intended. A future change to the encoding above cannot
+  // silently reopen the hole without failing here.
+  const base = new URL(upstreamBase);
+  const expectedPrefix = `${base.pathname.replace(/\/$/, '')}${upstreamPrefix}/`;
+  if (!target.pathname.startsWith(expectedPrefix)) {
+    throw new UnsafePathError(`Resolved path ${target.pathname} escapes ${expectedPrefix}`);
+  }
+
   // Assigning .search rather than merging: the query belongs to the caller and
   // is passed through whole.
   target.search = request.nextUrl.search;
@@ -91,7 +132,19 @@ function buildTargetUrl(request: NextRequest, { upstreamBase, path, upstreamPref
 }
 
 export async function proxyToUpstream(request: NextRequest, options: ProxyOptions): Promise<Response> {
-  const target = buildTargetUrl(request, options);
+  let target: URL;
+  try {
+    target = buildTargetUrl(request, options);
+  } catch (error) {
+    if (error instanceof UnsafePathError) {
+      // 400, not 502: the request itself is malformed, and nothing was sent
+      // upstream. The reason stays in the log — echoing it back would confirm
+      // to a prober exactly which shapes are rejected.
+      console.warn(`[proxy:${options.label}] rejected unsafe path: ${error.message}`);
+      return NextResponse.json({ success: false, message: 'Invalid request path.' }, { status: 400 });
+    }
+    throw error;
+  }
 
   const headers = new Headers();
   request.headers.forEach((value, key) => {
@@ -121,7 +174,10 @@ export async function proxyToUpstream(request: NextRequest, options: ProxyOption
     // An unreachable backend is an expected operational state, not a bug here.
     // The reason goes to the server log — it can name internal hostnames and
     // ports — while the caller gets a stable, uninformative 502.
-    console.error(`[proxy:${options.label}] upstream request failed: ${String(error)}`);
+    console.error(
+      `[proxy:${options.label}] upstream request failed: ${String(error)}` +
+        (error instanceof Error && error.cause ? ` | cause: ${String(error.cause)}` : ''),
+    );
     return NextResponse.json(
       { success: false, message: `The ${options.label} service is unavailable. Please try again.` },
       { status: 502 },
