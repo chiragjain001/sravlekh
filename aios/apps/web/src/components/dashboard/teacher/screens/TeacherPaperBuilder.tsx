@@ -10,29 +10,34 @@ import {
   X,
   ChevronRight,
   Moon,
-  Bell,
   CheckCircle2,
   ChevronDown,
-  Trash2,
   Clock,
   Search,
   Plus,
   ArrowRight,
   Check
 } from 'lucide-react';
+import axios from 'axios';
 import { useDashboardStore } from '@/store/dashboard-store';
-import { batches, teacherProfile } from '@/lib/mock-data/teacher';
+import { useAuth } from '@/contexts/auth.context';
+import { NotificationBell } from '@/components/shared/NotificationBell';
+import {
+  useBatches, useSubjects, useQuestions,
+  useCreateBlueprint, useGeneratePaper, useCreateExam, useLinkPaperToExam, useBlueprints,
+} from '@/hooks/useApi';
+import { buildDistributionRules, totalQuestionsFromRules, mapExamType, MARKS_PER_QUESTION } from '@/lib/assessment-blueprint';
 
 // Subcomponents
 import { AssessmentSummaryPanel, AssessmentState } from '../assessment-builder/AssessmentSummaryPanel';
-import { AiAssistantModal } from '../assessment-builder/AiAssistantModal';
+import { AiAssistantModal, AiBlueprintResult } from '../assessment-builder/AiAssistantModal';
 import { Step1Details } from '../assessment-builder/steps/Step1Details';
 import { Step2Sources } from '../assessment-builder/steps/Step2Sources';
-import { Step3Syllabus } from '../assessment-builder/steps/Step3Syllabus';
+import { Step3Syllabus, SyllabusChapter } from '../assessment-builder/steps/Step3Syllabus';
 import { Step4Planning } from '../assessment-builder/steps/Step4Planning';
 import { Step5Rules } from '../assessment-builder/steps/Step5Rules';
 import { Step6Strategy } from '../assessment-builder/steps/Step6Strategy';
-import { Step7Preview } from '../assessment-builder/steps/Step7Preview';
+import { Step7Preview, PreviewQuestion } from '../assessment-builder/steps/Step7Preview';
 import { Step8Generate } from '../assessment-builder/steps/Step8Generate';
 
 const STEP_NAMES = [
@@ -48,31 +53,33 @@ const STEP_NAMES = [
 
 export function TeacherPaperBuilder() {
   const { teacherCtx, setTeacherNav } = useDashboardStore();
+  const { user } = useAuth();
   const { classId, subjectId, batchId } = teacherCtx;
 
   // Active step (1 to 8)
   const [currentStep, setCurrentStep] = useState<number>(1);
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
 
+  // ── Real data: subjects/chapters/topics, batches, question bank ─────────
+  const { data: subjectsResp } = useSubjects();
+  const subjects: any[] = subjectsResp?.data ?? subjectsResp ?? [];
+  const { data: realBatchesRaw } = useBatches();
+  const realBatches: { id: string; name: string }[] = (() => { const d = realBatchesRaw?.data ?? realBatchesRaw; return Array.isArray(d) ? d : []; })();
+  const { data: blueprintsRaw } = useBlueprints();
+  const blueprintsList: any[] = blueprintsRaw?.data ?? blueprintsRaw ?? [];
+
   // Pre-fill initial context details based on active class / batch context
   const initialContext = React.useMemo(() => {
     const activeSubLabel = subjectId === 'maths' ? 'Mathematics' : subjectId === 'chemistry' ? 'Chemistry' : subjectId === 'biology' ? 'Biology' : 'Physics';
     const activeExamLabel = classId === '12' ? 'NEET 2026' : 'NEET 2027';
 
-    let defaultBatches: string[] = ['Batch 11A', 'Batch 11B', 'Batch 11C'];
-    let defaultTitle = 'Physics Weekly Test 08';
+    let defaultBatches: string[] = [];
+    let defaultTitle = `${activeSubLabel} Weekly Test`;
 
-    if (batchId) {
-      const matchBatch = batches.find(b => b.id === batchId);
-      const labelText = matchBatch ? matchBatch.label : batchId;
-      defaultBatches = [`Batch ${labelText}`];
-      defaultTitle = `${activeSubLabel} Test (Batch ${labelText})`;
-    } else if (classId) {
-      const classBatches = batches.filter(b => b.classId === classId);
-      if (classBatches.length > 0) {
-        defaultBatches = classBatches.map(b => `Batch ${b.label}`);
-      }
-      defaultTitle = `Class ${classId} ${activeSubLabel} Weekly Test`;
+    const matchBatch = batchId ? realBatches.find((b) => b.id === batchId) : undefined;
+    if (matchBatch) {
+      defaultBatches = [matchBatch.name];
+      defaultTitle = `${activeSubLabel} Test (${matchBatch.name})`;
     }
 
     return {
@@ -81,41 +88,43 @@ export function TeacherPaperBuilder() {
       batches: defaultBatches,
       title: defaultTitle,
     };
-  }, [classId, subjectId, batchId]);
+  }, [classId, subjectId, batchId, realBatches]);
+
+  // Tracks an AI-driven subject switch (see handleApplyAiResult below) that
+  // overrides the teacher's own logged-in subject context. Reset whenever
+  // that context itself changes, so navigating to a different class/subject
+  // doesn't keep a stale override alive.
+  const [selectedSubjectId, setSelectedSubjectId] = useState<string | null>(null);
+  React.useEffect(() => {
+    setSelectedSubjectId(null);
+  }, [initialContext.subject]);
+
+  const activeSubject = React.useMemo(() => {
+    if (selectedSubjectId) {
+      return subjects.find((s: any) => s.id === selectedSubjectId) ?? null;
+    }
+    return subjects.find((s: any) => s.name.toLowerCase() === initialContext.subject.toLowerCase()) ?? null;
+  }, [subjects, selectedSubjectId, initialContext.subject]);
+
+  const chaptersTree: SyllabusChapter[] = React.useMemo(() => {
+    if (!activeSubject) return [];
+    return (activeSubject.chapters ?? []).map((c: any) => ({
+      id: c.id,
+      name: c.name,
+      topics: (c.topics ?? []).map((t: any) => ({ id: t.id, name: t.name })),
+    }));
+  }, [activeSubject]);
+
+  const { data: questionsResp, isLoading: questionsLoading } = useQuestions(
+    activeSubject ? { subjectId: activeSubject.id, isApproved: true, limit: 200 } : { isApproved: true, limit: 0 },
+  );
+  const approvedQuestions: any[] = questionsResp?.data ?? [];
 
   // Modals state for header utilities
   const [isTemplatesOpen, setIsTemplatesOpen] = useState(false);
   const [isDraftsOpen, setIsDraftsOpen] = useState(false);
   const [isQuestionBankOpen, setIsQuestionBankOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  // Saved Drafts List
-  const [draftsList, setDraftsList] = useState([
-    {
-      id: 'draft-1',
-      title: 'Physics Weekly Mock Test 07',
-      type: 'Weekly Test',
-      date: '2 hours ago',
-      questions: 35,
-      subject: 'Physics',
-    },
-    {
-      id: 'draft-2',
-      title: 'Rotational Motion Chapter Quiz',
-      type: 'Chapter Test',
-      date: 'Yesterday',
-      questions: 20,
-      subject: 'Physics',
-    },
-    {
-      id: 'draft-3',
-      title: 'NEET Gravitation Practice Set',
-      type: 'DPP',
-      date: '3 days ago',
-      questions: 15,
-      subject: 'Physics',
-    },
-  ]);
 
   // Global Assessment State
   const [assessmentState, setAssessmentState] = useState<AssessmentState>(() => ({
@@ -136,13 +145,9 @@ export function TeacherPaperBuilder() {
     shuffleOptions: true,
     showSolutions: false,
     selectedSources: ['NCERT', 'PYQ', 'Institute Module', 'DPP', 'Teacher Questions'],
-    selectedChapters: ['ch_rotational', 'ch_gravitation', 'ch_electricity'],
-    selectedTopics: ['top_torque', 'top_moi', 'top_angular_momentum', 'top_escape_velocity', 'top_orbital_motion'],
-    chapterQuestionPlan: {
-      ch_rotational: { easy: 4, medium: 6, hard: 2 },
-      ch_gravitation: { easy: 3, medium: 5, hard: 2 },
-      ch_electricity: { easy: 2, medium: 4, hard: 2 },
-    },
+    selectedChapters: [],
+    selectedTopics: [],
+    chapterQuestionPlan: {},
     questionTypes: ['MCQ', 'Numerical'],
     allowRepeat: false,
     avoidRecentDays: 60,
@@ -171,20 +176,7 @@ export function TeacherPaperBuilder() {
     setTimeout(() => setToastMessage(null), 2500);
   };
 
-  const handleSaveDraft = () => {
-    const newDraft = {
-      id: `draft-${Date.now()}`,
-      title: assessmentState.title || 'Untitled Draft',
-      type: assessmentState.type,
-      date: 'Just now',
-      questions: 30,
-      subject: assessmentState.subject,
-    };
-    setDraftsList((prev) => [newDraft, ...prev]);
-    showToast('Draft successfully saved to cloud drafts!');
-  };
-
-  // Compute stats for summary panel
+  // Compute stats for summary panel — real, derived from the teacher's own plan.
   let easyCount = 0;
   let medCount = 0;
   let hardCount = 0;
@@ -195,34 +187,189 @@ export function TeacherPaperBuilder() {
     hardCount += plan.hard || 0;
   });
 
-  const totalQuestions = easyCount + medCount + hardCount || 40;
-  const easyPct = Math.round((easyCount / totalQuestions) * 100) || 30;
-  const medPct = Math.round((medCount / totalQuestions) * 100) || 50;
-  const hardPct = 100 - easyPct - medPct;
+  const totalQuestions = easyCount + medCount + hardCount;
+  const easyPct = totalQuestions > 0 ? Math.round((easyCount / totalQuestions) * 100) : 0;
+  const medPct = totalQuestions > 0 ? Math.round((medCount / totalQuestions) * 100) : 0;
+  const hardPct = totalQuestions > 0 ? 100 - easyPct - medPct : 0;
 
   const estimatedTime = Math.round(totalQuestions * 3);
-  const qualityScore = 82;
-  const availableQuestionsCount = 12540;
 
-  // AI Prompt fill handler
-  const handleApplyAiPrompt = (promptText: string) => {
+  const selectedTopicQuestions = approvedQuestions.filter((q) => assessmentState.selectedTopics.includes(q.topicId));
+  const availableQuestionsCount = selectedTopicQuestions.length;
+  // Real coverage heuristic: how much of the planned question count the approved
+  // bank can actually supply for the selected topics — not a fabricated score.
+  const qualityScore = totalQuestions > 0
+    ? Math.max(0, Math.min(100, Math.round((availableQuestionsCount / totalQuestions) * 100)))
+    : 0;
+
+  // Keep the displayed/submitted Total Marks in sync with the real plan
+  // (papers.service.ts createBlueprint() requires distribution marks to sum
+  // exactly to totalMarks — MARKS_PER_QUESTION per question, by convention).
+  React.useEffect(() => {
+    const computed = totalQuestions * MARKS_PER_QUESTION;
+    setAssessmentState((prev) => (prev.totalMarks === computed ? prev : { ...prev, totalMarks: computed }));
+  }, [totalQuestions]);
+
+  // AI Prompt fill handler — takes the real AI blueprint result and resolves
+  // its topicName strings against the loaded real curriculum tree.
+  const handleApplyAiResult = (result: AiBlueprintResult) => {
+    // The AI result carries only topic names, never a subject (see
+    // BlueprintGenerationResult in apps/api-python/src/ai/blueprint_agent.py)
+    // — so it must be resolved against every loaded subject's curriculum,
+    // not just the teacher's own logged-in subject. Matching only against
+    // `chaptersTree` (activeSubject's chapters) silently produced 0/N
+    // matches whenever the prompt was about a different subject than the
+    // teacher's own (e.g. a Chemistry prompt typed by a Physics teacher).
+    type Match = { chapterId: string; topicId: string };
+    let best: { subject: any; matches: Map<number, Match> } | null = null;
+
+    for (const subject of subjects) {
+      const chapters = subject.chapters ?? [];
+      const matches = new Map<number, Match>();
+      result.rules.forEach((rule, idx) => {
+        const norm = rule.topicName.trim().toLowerCase();
+        for (const chapter of chapters) {
+          const topic = (chapter.topics ?? []).find((t: any) => t.name.trim().toLowerCase() === norm);
+          if (topic) { matches.set(idx, { chapterId: chapter.id, topicId: topic.id }); break; }
+        }
+      });
+      if (matches.size === 0) continue;
+      // Ties favor the teacher's currently active subject, so an ambiguous
+      // prompt doesn't jump curricula unnecessarily.
+      if (!best || matches.size > best.matches.size || (matches.size === best.matches.size && subject.id === activeSubject?.id)) {
+        best = { subject, matches };
+      }
+    }
+
+    const targetSubject = best?.subject ?? activeSubject;
+    const matches = best?.matches ?? new Map<number, Match>();
+    const unmatched = result.rules.length - matches.size;
+    const isSubjectSwitch = Boolean(targetSubject && targetSubject.id !== activeSubject?.id);
+
+    // A subject switch means prior selections belong to a different
+    // curriculum's topic IDs — carrying them forward would silently mix
+    // topic IDs from two subjects, so start clean instead of merging.
+    const selectedChapters = new Set<string>(isSubjectSwitch ? [] : assessmentState.selectedChapters);
+    const selectedTopics = new Set<string>(isSubjectSwitch ? [] : assessmentState.selectedTopics);
+    const chapterQuestionPlan: AssessmentState['chapterQuestionPlan'] = isSubjectSwitch ? {} : { ...assessmentState.chapterQuestionPlan };
+
+    result.rules.forEach((rule, idx) => {
+      const found = matches.get(idx);
+      if (!found) return;
+      selectedChapters.add(found.chapterId);
+      selectedTopics.add(found.topicId);
+      const tier = rule.difficulty.toUpperCase() === 'HARD' ? 'hard' : rule.difficulty.toUpperCase() === 'MEDIUM' ? 'medium' : 'easy';
+      const existing = chapterQuestionPlan[found.chapterId] ?? { easy: 0, medium: 0, hard: 0 };
+      chapterQuestionPlan[found.chapterId] = { ...existing, [tier]: existing[tier] + rule.count };
+    });
+
+    if (isSubjectSwitch) setSelectedSubjectId(targetSubject.id);
+
     updateState({
-      title: 'AI Generated NEET Physics Test',
-      type: 'Weekly Test',
-      exam: 'NEET 2027',
-      duration: 120,
-      totalMarks: 240,
-      selectedSources: ['NCERT', 'PYQ', 'Institute Module'],
-      selectedChapters: ['ch_rotational', 'ch_gravitation'],
-      selectedTopics: ['top_torque', 'top_moi', 'top_escape_velocity'],
-      chapterQuestionPlan: {
-        ch_rotational: { easy: 5, medium: 7, hard: 3 },
-        ch_gravitation: { easy: 4, medium: 6, hard: 2 },
-      },
+      title: result.title || assessmentState.title,
+      duration: result.duration || assessmentState.duration,
+      subject: targetSubject ? targetSubject.name : assessmentState.subject,
+      selectedChapters: Array.from(selectedChapters),
+      selectedTopics: Array.from(selectedTopics),
+      chapterQuestionPlan,
       strategy: 'personalized',
     });
-    setCurrentStep(4);
-    showToast('AI filled assessment state!');
+    setCurrentStep(3);
+    const switchNote = isSubjectSwitch ? ` (switched to ${targetSubject.name})` : '';
+    showToast(
+      unmatched > 0
+        ? `AI filled ${result.rules.length - unmatched} of ${result.rules.length} topics${switchNote} — the rest weren't found in your curriculum.`
+        : `AI filled the assessment from your prompt!${switchNote}`,
+    );
+  };
+
+  // ── Publish chain: Blueprint -> (Paper + Exam per batch) -> link ────────
+  const createBlueprint = useCreateBlueprint();
+  const generatePaper = useGeneratePaper();
+  const createExam = useCreateExam();
+  const linkPaper = useLinkPaperToExam();
+  const [publishError, setPublishError] = useState<string | null>(null);
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
+
+  function extractErrorMessage(err: unknown, fallback: string): string {
+    if (axios.isAxiosError(err)) {
+      const data = err.response?.data as { message?: string; error?: { message?: string } } | undefined;
+      return data?.error?.message ?? data?.message ?? fallback;
+    }
+    return fallback;
+  }
+
+  const handleSaveDraft = async () => {
+    if (!activeSubject) { showToast('Select a subject with a real curriculum before saving.'); return; }
+    const rules = buildDistributionRules(assessmentState, chaptersTree);
+    if (rules.length === 0) { showToast('Select topics and set a question plan (Step 3-4) before saving.'); return; }
+
+    setIsSavingDraft(true);
+    try {
+      await createBlueprint.mutateAsync({
+        subjectId: activeSubject.id,
+        name: assessmentState.title || 'Untitled Draft',
+        totalMarks: totalQuestionsFromRules(rules) * MARKS_PER_QUESTION,
+        duration: assessmentState.duration,
+        instructions: assessmentState.instructions,
+        distribution: rules,
+      });
+      showToast('Draft saved as a blueprint.');
+    } catch (err) {
+      showToast(extractErrorMessage(err, 'Failed to save draft.'));
+    } finally {
+      setIsSavingDraft(false);
+    }
+  };
+
+  const handlePublish = async () => {
+    setPublishError(null);
+
+    if (!activeSubject) { setPublishError('Select a subject with a real curriculum before publishing.'); throw new Error('no-subject'); }
+    const rules = buildDistributionRules(assessmentState, chaptersTree);
+    if (rules.length === 0) { setPublishError('Select topics and set a question plan (Step 3-4) before publishing.'); throw new Error('no-rules'); }
+    const targetBatches = realBatches.filter((b) => assessmentState.batches.includes(b.name));
+    if (targetBatches.length === 0) { setPublishError('Select at least one batch (Step 1) before publishing.'); throw new Error('no-batches'); }
+
+    setIsPublishing(true);
+    try {
+      const blueprint = await createBlueprint.mutateAsync({
+        subjectId: activeSubject.id,
+        name: assessmentState.title || 'Untitled Assessment',
+        totalMarks: totalQuestionsFromRules(rules) * MARKS_PER_QUESTION,
+        duration: assessmentState.duration,
+        instructions: assessmentState.instructions,
+        distribution: rules,
+      });
+
+      // One Paper + Exam per selected batch, from the same Blueprint — Exam
+      // and Paper are both single-batch models (apps/api/src/exams/dto/exam.dto.ts),
+      // so a multi-batch assessment fans out into one exam instance per batch.
+      for (const batch of targetBatches) {
+        const paper = await generatePaper.mutateAsync({
+          blueprintId: blueprint.id,
+          title: assessmentState.title || 'Untitled Assessment',
+          targetBatchId: batch.id,
+        });
+        const exam = await createExam.mutateAsync({
+          title: assessmentState.title || 'Untitled Assessment',
+          batchId: batch.id,
+          blueprintId: blueprint.id,
+          type: mapExamType(assessmentState.type),
+          scheduledDate: assessmentState.scheduleType === 'later' && assessmentState.dueDate
+            ? new Date(`${assessmentState.dueDate}T${assessmentState.startTime || '09:00'}:00`).toISOString()
+            : undefined,
+          durationMinutes: assessmentState.duration,
+        });
+        await linkPaper.mutateAsync({ examId: exam.id, paperId: paper.id });
+      }
+    } catch (err) {
+      setPublishError(extractErrorMessage(err, 'Failed to publish assessment. Please try again.'));
+      throw err;
+    } finally {
+      setIsPublishing(false);
+    }
   };
 
   // Progress calculation
@@ -301,23 +448,15 @@ export function TeacherPaperBuilder() {
             <Moon className="w-4.5 h-4.5" />
           </button>
 
-          <div
-            onClick={() => showToast('12 Notifications')}
-            className="relative p-2 rounded-xl text-slate-500 hover:bg-slate-100 cursor-pointer transition-colors"
-          >
-            <Bell className="w-4.5 h-4.5" />
-            <span className="absolute top-1 right-1 bg-rose-500 text-white text-[9px] font-extrabold px-1 rounded-full">
-              12
-            </span>
-          </div>
+          <NotificationBell />
 
           <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
             <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-600 to-purple-600 text-white font-bold flex items-center justify-center text-[12px] shadow-2xs">
-              RS
+              {(user?.name ?? '?').split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase()}
             </div>
             <div className="text-left hidden sm:block">
-              <p className="text-[12.5px] font-bold text-slate-800 leading-tight">Rahul Sharma</p>
-              <p className="text-[10px] text-slate-400 font-semibold">Physics Faculty</p>
+              <p className="text-[12.5px] font-bold text-slate-800 leading-tight">{user?.name ?? 'Teacher'}</p>
+              <p className="text-[10px] text-slate-400 font-semibold">{assessmentState.subject} Faculty</p>
             </div>
           </div>
         </div>
@@ -344,7 +483,7 @@ export function TeacherPaperBuilder() {
             onClick={() => setIsDraftsOpen(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-[12px] font-bold rounded-xl transition-colors shadow-2xs"
           >
-            <FileCheck className="w-4 h-4 text-slate-500" /> Saved Drafts ({draftsList.length})
+            <FileCheck className="w-4 h-4 text-slate-500" /> Saved Drafts ({blueprintsList.length})
           </button>
 
           <button
@@ -436,7 +575,7 @@ export function TeacherPaperBuilder() {
             <Step1Details
               state={assessmentState}
               onChange={updateState}
-              availableBatches={batches.map((b) => ({ id: b.id, name: `Batch ${b.label}` }))}
+              availableBatches={realBatches.map((b) => ({ id: b.id, name: b.name }))}
               onNext={() => handleNextStep(2)}
             />
           )}
@@ -456,6 +595,8 @@ export function TeacherPaperBuilder() {
               onChange={updateState}
               onNext={() => handleNextStep(4)}
               onPrev={() => setCurrentStep(2)}
+              chapters={chaptersTree}
+              isLoading={!activeSubject && subjects.length === 0}
             />
           )}
 
@@ -465,6 +606,7 @@ export function TeacherPaperBuilder() {
               onChange={updateState}
               onNext={() => handleNextStep(5)}
               onPrev={() => setCurrentStep(3)}
+              chapters={chaptersTree}
             />
           )}
 
@@ -492,6 +634,17 @@ export function TeacherPaperBuilder() {
               onChange={updateState}
               onNext={() => handleNextStep(8)}
               onPrev={() => setCurrentStep(6)}
+              questions={selectedTopicQuestions.map((q, idx): PreviewQuestion => ({
+                id: q.id,
+                num: idx + 1,
+                text: q.content,
+                topic: q.topic?.name ?? 'Unknown Topic',
+                difficulty: q.difficulty === 'HARD' ? 'Hard' : q.difficulty === 'MEDIUM' ? 'Medium' : 'Easy',
+                marks: q.marks,
+                isApproved: true,
+              }))}
+              totalAvailable={availableQuestionsCount}
+              isLoading={questionsLoading}
             />
           )}
 
@@ -500,6 +653,11 @@ export function TeacherPaperBuilder() {
               state={assessmentState}
               onPrev={() => setCurrentStep(7)}
               onPublishSuccess={() => setTeacherNav('tests-exams')}
+              onPublish={handlePublish}
+              isPublishing={isPublishing}
+              publishError={publishError}
+              onSaveDraft={handleSaveDraft}
+              isSavingDraft={isSavingDraft}
             />
           )}
         </div>
@@ -534,9 +692,10 @@ export function TeacherPaperBuilder() {
         <div className="flex items-center gap-3">
           <button
             onClick={handleSaveDraft}
-            className="px-4 py-2 border border-slate-300 text-slate-700 hover:bg-slate-50 text-[12.5px] font-bold rounded-xl transition-colors"
+            disabled={isSavingDraft}
+            className="px-4 py-2 border border-slate-300 text-slate-700 hover:bg-slate-50 text-[12.5px] font-bold rounded-xl transition-colors disabled:opacity-50"
           >
-            Save Draft
+            {isSavingDraft ? 'Saving…' : 'Save Draft'}
           </button>
 
           {currentStep < 8 ? (
@@ -561,7 +720,7 @@ export function TeacherPaperBuilder() {
       <AiAssistantModal
         isOpen={isAiModalOpen}
         onClose={() => setIsAiModalOpen(false)}
-        onApplyPrompt={handleApplyAiPrompt}
+        onApplyResult={handleApplyAiResult}
       />
 
       {/* Template Library Modal */}
@@ -630,40 +789,56 @@ export function TeacherPaperBuilder() {
             </div>
 
             <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
-              {draftsList.map((d) => (
-                <div
-                  key={d.id}
-                  className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between hover:border-indigo-200 transition-all"
-                >
-                  <div>
-                    <h4 className="text-[13.5px] font-bold text-slate-800">{d.title}</h4>
-                    <p className="text-[11.5px] text-slate-500">
-                      {d.type} • Saved {d.date}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
+              {blueprintsList.length === 0 ? (
+                <p className="text-[12.5px] text-slate-500 text-center py-6">No saved drafts yet — use "Save Draft" once you've planned some topics.</p>
+              ) : (
+                blueprintsList.map((bp: any) => (
+                  <div
+                    key={bp.id}
+                    className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between hover:border-indigo-200 transition-all"
+                  >
+                    <div>
+                      <h4 className="text-[13.5px] font-bold text-slate-800">{bp.name}</h4>
+                      <p className="text-[11.5px] text-slate-500">
+                        {bp.subject?.name ?? 'Unknown Subject'} • {bp.totalMarks} Marks • {bp.duration} Min
+                      </p>
+                    </div>
                     <button
                       onClick={() => {
-                        updateState({ title: d.title, type: d.type });
+                        const rules: { topicId: string; difficulty: string; count: number }[] = Array.isArray(bp.distribution) ? bp.distribution : [];
+                        const selectedTopics = new Set<string>();
+                        const selectedChapters = new Set<string>();
+                        const chapterQuestionPlan: AssessmentState['chapterQuestionPlan'] = {};
+
+                        for (const rule of rules) {
+                          const chapter = chaptersTree.find((c) => c.topics.some((t) => t.id === rule.topicId));
+                          if (!chapter) continue;
+                          selectedTopics.add(rule.topicId);
+                          selectedChapters.add(chapter.id);
+                          const tier = rule.difficulty === 'HARD' ? 'hard' : rule.difficulty === 'MEDIUM' ? 'medium' : 'easy';
+                          const existing = chapterQuestionPlan[chapter.id] ?? { easy: 0, medium: 0, hard: 0 };
+                          chapterQuestionPlan[chapter.id] = { ...existing, [tier]: existing[tier] + rule.count };
+                        }
+
+                        updateState({
+                          title: bp.name,
+                          duration: bp.duration,
+                          totalMarks: bp.totalMarks,
+                          instructions: bp.instructions ?? assessmentState.instructions,
+                          selectedChapters: Array.from(selectedChapters),
+                          selectedTopics: Array.from(selectedTopics),
+                          chapterQuestionPlan,
+                        });
                         setIsDraftsOpen(false);
-                        showToast(`Loaded draft: ${d.title}`);
+                        showToast(`Loaded draft: ${bp.name}`);
                       }}
                       className="px-3 py-1.5 bg-indigo-600 text-white font-bold text-[11.5px] rounded-xl hover:bg-indigo-700"
                     >
                       Load
                     </button>
-                    <button
-                      onClick={() => {
-                        setDraftsList((prev) => prev.filter((x) => x.id !== d.id));
-                        showToast('Draft deleted');
-                      }}
-                      className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </div>
         </div>
