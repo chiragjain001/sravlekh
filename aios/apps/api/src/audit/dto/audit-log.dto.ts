@@ -44,3 +44,16 @@ export class QueryAuditLogsDto {
   @Max(100)
   pageSize?: number = 20;
 }
+
+// A real class (not `QueryAuditLogsDto & { instituteId?: string }`) so Nest's
+// reflected parameter metadata still resolves to a class ValidationPipe can
+// run class-transformer against — an inline intersection type erases to
+// `Object` at the metadata level, which makes ValidationPipe silently skip
+// transformation, leaving page/pageSize as raw query-string values and
+// crashing Prisma's `take` with a string instead of a number.
+export class QueryFounderAuditLogsDto extends QueryAuditLogsDto {
+  @ApiPropertyOptional({ description: 'Restrict to one institute; omit for every institute' })
+  @IsOptional()
+  @IsString()
+  instituteId?: string;
+}

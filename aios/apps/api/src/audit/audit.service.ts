@@ -2,7 +2,7 @@ import { Injectable, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { UserRole, type AuditLog } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
-import { QueryAuditLogsDto } from './dto/audit-log.dto';
+import { QueryAuditLogsDto, QueryFounderAuditLogsDto } from './dto/audit-log.dto';
 
 // 07-SECURITY-SPECIFICATION.md: oldValue/newValue must redact PII field values
 // while still recording that a change occurred. Applied at read time for this
@@ -85,7 +85,7 @@ export class AuditService {
   }
 
   // ── FOUNDER only: global, optionally filtered to one institute. ───────────
-  async findAllGlobal(query: QueryAuditLogsDto & { instituteId?: string }, actor: AuthenticatedUser) {
+  async findAllGlobal(query: QueryFounderAuditLogsDto, actor: AuthenticatedUser) {
     if (actor.role !== UserRole.FOUNDER) {
       throw new ForbiddenException('Only the founder can view cross-tenant audit logs.');
     }
