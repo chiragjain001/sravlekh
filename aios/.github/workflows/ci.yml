@@ -34,7 +34,11 @@ jobs:
       - run: pnpm db:generate
       - run: pnpm --filter @aios/api lint
       - run: pnpm --filter @aios/api typecheck
-      - run: pnpm --filter @aios/api test
+      # test:ci caps worker concurrency. GitHub's standard runner is 2 cores / 7 GB,
+      # and Jest's default (cores - 1) workers x a growing ts-jest heap can exhaust
+      # it as coverage grows — surfacing as an unrelated suite "failing" with zero
+      # failing tests, which is a miserable thing to debug from a CI log.
+      - run: pnpm --filter @aios/api test:ci
       - run: pnpm --filter @aios/api build
 
   web:

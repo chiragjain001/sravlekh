@@ -38,6 +38,80 @@ describe('UsersService — tenant isolation and self/founder protection (13-TEST
       prisma.user.findUnique.mockResolvedValueOnce(null);
       await expect(service.findById('missing', admin)).rejects.toThrow(NotFoundException);
     });
+
+    // ── Intra-tenant role scoping ──────────────────────────────────────────
+    //
+    // Regression for PRODUCTION-AUDIT-2026-09-10.md §4: GET /users/:id carries no
+    // @Roles() decorator, and RolesGuard lets an undecorated route through for any
+    // authenticated user. The service only ever compared instituteId, so a STUDENT
+    // or PARENT could read any colleague's record in their own institute — email,
+    // role, status, lastLoginAt. Tenant isolation was never the hole; role scoping
+    // inside the tenant was.
+    //
+    // The matrix below is the authorization contract. It is asserted per role
+    // rather than as one example, because the failure being prevented is
+    // "somebody adds a role and nobody notices it can read everyone".
+
+    const otherUserInSameInstitute = { id: 'user-2', instituteId: 'inst-1', email: 'someone@x.com' };
+
+    describe.each([
+      [UserRole.STUDENT, 'student-1'],
+      [UserRole.TEACHER, 'teacher-1'],
+    ])('a %s', (role, actorId) => {
+      const actor: AuthenticatedUser = { ...admin, id: actorId, role };
+
+      it("cannot read another user's record in their own institute", async () => {
+        prisma.user.findUnique.mockResolvedValueOnce(otherUserInSameInstitute);
+        await expect(service.findById('user-2', actor)).rejects.toThrow(ForbiddenException);
+      });
+
+      it('CAN read their own record', async () => {
+        prisma.user.findUnique.mockResolvedValueOnce({ id: actorId, instituteId: 'inst-1', email: 'me@x.com' });
+        await expect(service.findById(actorId, actor)).resolves.toMatchObject({ id: actorId });
+      });
+
+      it('cannot read their own record from a different institute row', async () => {
+        // Defence in depth: even an id match must not bypass tenant isolation,
+        // which is checked first.
+        prisma.user.findUnique.mockResolvedValueOnce({ id: actorId, instituteId: 'inst-OTHER' });
+        await expect(service.findById(actorId, actor)).rejects.toThrow(ForbiddenException);
+      });
+    });
+
+    it('an ADMIN can read another user in their own institute', async () => {
+      prisma.user.findUnique.mockResolvedValueOnce(otherUserInSameInstitute);
+      await expect(service.findById('user-2', admin)).resolves.toMatchObject({ id: 'user-2' });
+    });
+
+    it('an ADMIN still cannot read a user in a different institute', async () => {
+      prisma.user.findUnique.mockResolvedValueOnce({ id: 'user-2', instituteId: 'inst-OTHER' });
+      await expect(service.findById('user-2', admin)).rejects.toThrow(ForbiddenException);
+    });
+
+    it("a TEACHER is not granted the spec's batch-scoped read by this route", async () => {
+      // 05-API-SPECIFICATION.md §3 permits teachers to read users "read-limited to
+      // own batches". This endpoint implements no batch scoping, so granting
+      // TEACHER here would be WIDER than the spec allows. Pinned so that a future
+      // "teachers should see users too" change has to add the scoping rather than
+      // just the role.
+      const teacher: AuthenticatedUser = { ...admin, id: 'teacher-1', role: UserRole.TEACHER };
+      prisma.user.findUnique.mockResolvedValueOnce(otherUserInSameInstitute);
+      await expect(service.findById('user-2', teacher)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('does not reveal whether a cross-tenant id exists', async () => {
+      // A different message or status for "exists elsewhere" vs "not allowed"
+      // would confirm the existence of a user id to an attacker enumerating them.
+      prisma.user.findUnique.mockResolvedValueOnce({ id: 'user-2', instituteId: 'inst-OTHER' });
+      const crossTenant = await service.findById('user-2', admin).catch((e: Error) => e);
+
+      prisma.user.findUnique.mockResolvedValueOnce(otherUserInSameInstitute);
+      const student: AuthenticatedUser = { ...admin, id: 'student-1', role: UserRole.STUDENT };
+      const sameTenantForbidden = await service.findById('user-2', student).catch((e: Error) => e);
+
+      expect((crossTenant as Error).message).toBe((sameTenantForbidden as Error).message);
+      expect((crossTenant as Error).constructor).toBe((sameTenantForbidden as Error).constructor);
+    });
   });
 
   describe('findAllByInstitute', () => {

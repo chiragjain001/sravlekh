@@ -8,26 +8,19 @@ const nextConfig = {
       { protocol: 'https', hostname: '*.amazonaws.com' },
     ],
   },
-  // Proxy API requests to the NestJS backend in development
   async rewrites() {
     return [
-      {
-        source: '/api/v1/:path*',
-        destination: `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/v1/:path*`,
-      },
-      // NOTE: /api/py is deliberately NOT a rewrite. Next resolves rewrite
-      // destinations during `next build` and freezes them into
-      // .next/routes-manifest.json, so `process.env` here is build-time config —
-      // an image built without PYTHON_API_URL keeps pointing at localhost:8000 no
-      // matter what the container's environment says. It is proxied at request
-      // time instead by src/app/api/py/[...path]/route.ts.
+      // NEITHER /api/v1 NOR /api/py is a rewrite, deliberately. Next resolves
+      // rewrite destinations during `next build` and freezes them into
+      // .next/routes-manifest.json, so `process.env` read here is BUILD-time
+      // configuration — an image built without the variable keeps pointing at
+      // localhost forever, whatever the container's environment says.
       //
-      // The /api/v1 rewrite above has the same build-time constraint: whatever
-      // NEXT_PUBLIC_API_URL is set to at build time is what the image will always
-      // use. web.Dockerfile therefore declares it as a build ARG. Moving it to a
-      // route handler as well would make one image promotable across
-      // environments — worth doing, but it is the primary data path and deserves
-      // its own change and review rather than riding along here.
+      // Both are proxied at request time instead, by
+      // src/app/api/v1/[...path]/route.ts and src/app/api/py/[...path]/route.ts,
+      // so one immutable image can be promoted dev -> staging -> production.
+      // This rewrites() block is intentionally empty; it is kept so the next
+      // person to add one reads this first.
     ];
   },
 };

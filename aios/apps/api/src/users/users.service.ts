@@ -21,7 +21,38 @@ const USER_LIST_SELECT = {
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Get a user by ID — enforces tenant isolation. */
+  /**
+   * Get a user by ID.
+   *
+   * AUTHORIZATION (tightened 2026-09-10 — see PRODUCTION-AUDIT-2026-09-10.md §4):
+   *   FOUNDER  any user, in any institute
+   *   ADMIN    any user in their own institute
+   *   anyone   their OWN record, and nothing else
+   *
+   * This route carries no `@Roles()` decorator, and RolesGuard treats an
+   * undecorated route as "any authenticated user" (roles.guard.ts). Combined
+   * with a service that only ever compared instituteId, that meant a STUDENT or
+   * PARENT could read any user record in their institute — email, role, status,
+   * lastLoginAt. Tenant isolation held; intra-tenant role scoping did not.
+   *
+   * The role check lives HERE rather than as a `@Roles(ADMIN, FOUNDER)`
+   * decorator specifically so that self-read survives: a decorator cannot
+   * express "or it is your own record", and adding one would have silently
+   * removed the only case a future profile screen actually needs.
+   *
+   * WHY THIS IS SAFE TO TIGHTEN: every caller was inspected first. The frontend
+   * calls `/users/:id/status`, `/users/:id/force-logout` and
+   * `/users/me/logout-all-devices` — all already role-gated — and never `GET
+   * /users/:id`. No backend service calls UsersService.findById either. The
+   * endpoint had zero legitimate callers to break.
+   *
+   * TEACHER is deliberately NOT granted. 05-API-SPECIFICATION.md §3 allows
+   * teachers to read users "read-limited to own batches"; an unscoped grant here
+   * would be wider than the spec permits. If a teacher-facing caller ever needs
+   * this, implement it with the batch scoping the spec requires — shared/
+   * teacher-scope.ts already exists for exactly that — rather than by widening
+   * this check.
+   */
   async findById(userId: string, actor: AuthenticatedUser) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -40,12 +71,23 @@ export class UsersService {
 
     if (!user) throw new NotFoundException('User not found.');
 
-    // Tenant isolation — users can only see users within their own institute,
-    // except Founders who have cross-institute read (logged separately).
-    if (
-      actor.role !== UserRole.FOUNDER &&
-      user.instituteId !== actor.instituteId
-    ) {
+    // Founders read across institutes; everyone else is confined to their own.
+    // Checked first because it is the only case where a differing instituteId is
+    // legitimate.
+    if (actor.role === UserRole.FOUNDER) return user;
+
+    // Tenant isolation. Same message and exception type as the role check below,
+    // so a caller cannot distinguish "exists in another institute" from "exists
+    // but you may not read it" — the distinction alone would confirm a user id.
+    if (user.instituteId !== actor.instituteId) {
+      throw new ForbiddenException("You don't have access to this.");
+    }
+
+    // Reading yourself is always allowed, whatever your role.
+    if (user.id === actor.id) return user;
+
+    // Beyond that, reading another person's record is an administrative action.
+    if (actor.role !== UserRole.ADMIN) {
       throw new ForbiddenException("You don't have access to this.");
     }
 

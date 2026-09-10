@@ -10,7 +10,8 @@
     "start:worker": "node dist/worker.js",
     "lint": "eslint \"src/**/*.ts\"",
     "typecheck": "tsc --noEmit",
-    "test": "jest"
+    "test": "jest",
+    "test:ci": "jest --maxWorkers=2 --ci"
   },
   "dependencies": {
     "@aios/db": "workspace:*",

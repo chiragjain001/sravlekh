@@ -48,14 +48,16 @@ COPY apps/web apps/web
 # installable in a Node image and is generated in python.Dockerfile instead.
 RUN pnpm --filter @aios/db exec prisma generate --generator client
 
-# NEXT_PUBLIC_* values are inlined into the client bundle at BUILD time, not read
-# at run time — so this one is a build arg, unlike the two proxy destinations
-# below which the server reads from the environment when it starts. Baking the
-# wrong value here is invisible until a browser tries to use it, which is exactly
-# the class of bug the /api/py rewrite exists to remove; it is declared here so
-# the difference is explicit rather than discovered.
-ARG NEXT_PUBLIC_API_URL=http://localhost:4000
-ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+# No NEXT_PUBLIC_API_URL build arg, and that absence is the point: both backend
+# destinations are now resolved per request by route handlers (see
+# src/lib/server/upstream-proxy.ts), not frozen into the build. This image is
+# therefore environment-agnostic — the SAME artifact runs in dev, staging and
+# production, configured at run time by API_URL and PYTHON_API_URL.
+#
+# It used to take NEXT_PUBLIC_API_URL as a build arg because next.config.js
+# resolved its rewrite destinations at build time. That meant one image per
+# environment, and an image promoted from staging to production would have gone
+# on quietly calling the staging API.
 RUN pnpm --filter @aios/web build
 
 # ---- runtime ----------------------------------------------------------------

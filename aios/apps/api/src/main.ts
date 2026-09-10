@@ -8,6 +8,19 @@ const cookieParser = require('cookie-parser') as () => unknown;
 import * as Sentry from '@sentry/node';
 import { AppModule } from './app.module';
 import { RUN_WORKERS } from './infrastructure/queue/queue-policy';
+import { beginShutdown } from './shared/lifecycle';
+
+/**
+ * How long to keep serving after SIGTERM before closing, so the load balancer
+ * can observe /health/ready returning 503 and take this instance out of
+ * rotation. Must exceed the readiness probe interval; 5s suits a typical 2-3s
+ * probe. Set SHUTDOWN_DRAIN_MS=0 in local dev for an instant exit.
+ *
+ * The platform's own termination grace period must be LONGER than this plus the
+ * time in-flight requests need, or the orchestrator SIGKILLs mid-drain and the
+ * draining accomplishes nothing.
+ */
+const SHUTDOWN_DRAIN_MS = Number(process.env['SHUTDOWN_DRAIN_MS'] ?? 5000);
 
 // 12-LOGGING-MONITORING.md §1: Sentry for error tracking. Same "optional, warn,
 // degrade" pattern as Redis/S3/INTERNAL_SERVICE_TOKEN elsewhere — SENTRY_DSN is
@@ -96,7 +109,16 @@ async function bootstrap() {
   await app.listen(port);
 
   const shutdown = async (signal: string) => {
-    console.log(`${signal} received — draining in-flight requests before exit.`);
+    // Flip readiness to 503 FIRST, then wait, then close. The load balancer needs
+    // to observe this instance as unready and stop routing to it before the
+    // server begins tearing down — otherwise requests keep arriving at a process
+    // that is already closing and fail. The pause is one readiness-probe interval
+    // plus a margin; without it the flag is technically set but nothing has had a
+    // chance to poll it, which drains nothing.
+    console.log(`${signal} received — failing readiness, draining, then exiting.`);
+    beginShutdown();
+    await new Promise((resolve) => setTimeout(resolve, SHUTDOWN_DRAIN_MS));
+
     await app.close();
     process.exit(0);
   };

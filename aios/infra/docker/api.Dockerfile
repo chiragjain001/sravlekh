@@ -72,5 +72,22 @@ WORKDIR /repo/apps/api
 USER node
 EXPOSE 4000
 
+# Liveness, for `docker run`/compose deployments. An orchestrator (k8s, ECS)
+# should use its own probes instead and point them at BOTH endpoints:
+#
+#   livenessProbe  -> GET /api/v1/health/live   (checks nothing external)
+#   readinessProbe -> GET /api/v1/health/ready  (DB; 503 while draining)
+#
+# /live deliberately, not /ready: Docker RESTARTS an unhealthy container, which
+# is liveness semantics. Pointing this at /ready would restart every container
+# during a database blip and turn a recoverable outage into a crash loop.
+#
+# start-period covers Nest bootstrap so a slow start is not counted as a failure.
+HEALTHCHECK --interval=15s --timeout=3s --start-period=30s --retries=3   CMD node -e "require('http').get('http://127.0.0.1:4000/api/v1/health/live',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+
 # Overridden to dist/worker.js for the worker deployment.
+#
+# NOTE for the worker: it serves no HTTP, so the HEALTHCHECK above does not apply
+# to it. Override with `--no-healthcheck` (or a compose-level `healthcheck:
+# disable: true`) rather than leaving it to fail every 15s.
 CMD ["node", "dist/main.js"]
