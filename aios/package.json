@@ -10,7 +10,11 @@
     "typecheck": "pnpm --recursive typecheck",
     "db:generate": "pnpm --filter @aios/db generate",
     "db:migrate": "pnpm --filter @aios/db migrate:dev",
-    "db:studio": "pnpm --filter @aios/db studio"
+    "db:studio": "pnpm --filter @aios/db studio",
+    "backup": "node infra/backup/backup.js",
+    "backup:restore": "node infra/backup/restore.js",
+    "backup:drill": "node infra/backup/drill.js",
+    "backup:test": "node --test infra/backup/retention.test.js"
   },
   "devDependencies": {
     "typescript": "^5.4.5"

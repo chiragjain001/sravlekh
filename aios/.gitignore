@@ -24,3 +24,9 @@ __pycache__/
 
 # Development-only file storage fallback (StorageService), never committed
 .local-storage/
+
+# Database backups. These contain REAL DATA — every row of whatever database
+# they were taken from, including user emails and any PII. They are never
+# committed, and the tooling writes them here by default so that a routine
+# `git add -A` cannot sweep one in.
+infra/backup/artifacts/

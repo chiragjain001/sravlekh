@@ -6,6 +6,9 @@
 # consequences, both verified by building:
 #
 #  1. SECRETS. apps/api/.env, apps/api-python/.env and infra/staging/staging.env
+# Database backups contain every row of a real database. They must never be
+# baked into an image for the same reason .env must not.
+infra/backup/artifacts
 #     hold DATABASE_URL, JWT_SECRET, OPENAI_API_KEY and INTERNAL_SERVICE_TOKEN.
 #     They are correctly gitignored and have never been committed — but .gitignore
 #     has no bearing on a Docker build context, so every image was being built with
