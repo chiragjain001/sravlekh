@@ -10,7 +10,7 @@ import {
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { QuestionType, DifficultyLevel } from '@prisma/client';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 
 export class CreateQuestionDto {
   @ApiProperty({ description: 'ID of the Subject' })
@@ -133,7 +133,11 @@ export class QueryQuestionsDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @Type(() => Boolean)
+  // `@Type(() => Boolean)` calls JS's `Boolean(value)`, which is `true` for
+  // *any* non-empty string — so `?isApproved=false` would coerce to `true`
+  // and the "pending approval" filter would silently return approved
+  // questions instead. Compare the raw query string explicitly.
+  @Transform(({ value }) => value === true || value === 'true')
   @IsBoolean()
   isApproved?: boolean;
 

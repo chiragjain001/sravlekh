@@ -1,5 +1,5 @@
-import { IsString, IsNotEmpty, IsOptional, IsEnum, IsNumber, IsArray, ValidateNested, Min, IsInt, MinLength } from 'class-validator';
-import { Type } from 'class-transformer';
+import { IsString, IsNotEmpty, IsOptional, IsEnum, IsNumber, IsArray, ValidateNested, Min, IsInt, MinLength, IsBoolean } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { MistakeTagType } from '@prisma/client';
 
@@ -105,6 +105,16 @@ export class QueryEvaluationWorkItemsDto {
   @IsOptional()
   @IsString()
   priority?: string;
+
+  @ApiPropertyOptional({ description: 'When true, returns already-decided responses (TEACHER_REVIEWED/REVIEWER_FINALIZED) instead of the pending queue — the entry point for a reviewer override.' })
+  @IsOptional()
+  // `@Type(() => Boolean)` calls JS's `Boolean(value)`, which is `true` for
+  // *any* non-empty string — so `?includeDecided=false` would coerce to
+  // `true` and return decided responses instead of the pending queue.
+  // Compare the raw query string explicitly.
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  includeDecided?: boolean;
 
   @ApiPropertyOptional({ default: 1 })
   @IsOptional()
