@@ -5,6 +5,7 @@ import { ReportStatus, ReportType, UserRole } from '@prisma/client';
 import { ReportsService } from './reports.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { REPORT_GENERATION_QUEUE } from './report-generation.constants';
+import { StorageService } from '../infrastructure/storage/storage.service';
 import { AuthenticatedUser } from '../auth/auth.types';
 
 describe('ReportsService', () => {
@@ -16,6 +17,7 @@ describe('ReportsService', () => {
     auditLog: { create: jest.Mock };
   };
   let queue: { add: jest.Mock };
+  let storage: { buildKey: jest.Mock; getSignedDownloadUrl: jest.Mock };
 
   const admin: AuthenticatedUser = { id: 'admin-1', email: 'a@x.com', name: 'Admin', role: UserRole.ADMIN, instituteId: 'inst-1' };
   const teacher: AuthenticatedUser = { ...admin, id: 'teacher-1', role: UserRole.TEACHER };
@@ -29,11 +31,16 @@ describe('ReportsService', () => {
       auditLog: { create: jest.fn() },
     };
     queue = { add: jest.fn() };
+    storage = {
+      buildKey: jest.fn((instituteId: string, ...segments: string[]) => ['institutes', instituteId, ...segments].join('/')),
+      getSignedDownloadUrl: jest.fn(async (key: string) => `https://signed.test/${key}?exp=fresh`),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ReportsService,
         { provide: PrismaService, useValue: prisma },
+        { provide: StorageService, useValue: storage },
         { provide: getQueueToken(REPORT_GENERATION_QUEUE), useValue: queue },
       ],
     }).compile();
@@ -116,6 +123,50 @@ describe('ReportsService', () => {
     it('rejects a teacher reading a report they did not request', async () => {
       prisma.report.findUnique.mockResolvedValueOnce({ id: 'r-1', instituteId: 'inst-1', requestedByUserId: 'someone-else' });
       await expect(service.findById('inst-1', 'r-1', teacher)).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  // Signed URLs expire in 5 minutes, so the one the worker minted at
+  // completion is dead long before anyone clicks "View Report" — every
+  // finished report had a download link that 503'd. Re-minted per read.
+  describe('download URLs', () => {
+    const completed = {
+      id: 'r-1',
+      instituteId: 'inst-1',
+      requestedByUserId: 'admin-1',
+      status: ReportStatus.COMPLETE,
+      fileUrl: 'https://signed.test/stale?exp=long-gone',
+    };
+
+    it('re-mints the download URL on read rather than serving the stored, expired one', async () => {
+      prisma.report.findUnique.mockResolvedValueOnce(completed);
+
+      const result = await service.findById('inst-1', 'r-1', admin);
+
+      expect(storage.buildKey).toHaveBeenCalledWith('inst-1', 'reports', 'r-1.html');
+      expect(result.fileUrl).toBe('https://signed.test/institutes/inst-1/reports/r-1.html?exp=fresh');
+      expect(result.fileUrl).not.toBe(completed.fileUrl);
+    });
+
+    it('re-mints for every row in the list, not just a single read', async () => {
+      prisma.report.findMany.mockResolvedValueOnce([completed, { ...completed, id: 'r-2' }]);
+      (prisma.report as any).count = jest.fn().mockResolvedValueOnce(2);
+
+      const { data } = await service.findAll('inst-1', {}, admin);
+
+      expect(data.map((r: any) => r.fileUrl)).toEqual([
+        'https://signed.test/institutes/inst-1/reports/r-1.html?exp=fresh',
+        'https://signed.test/institutes/inst-1/reports/r-2.html?exp=fresh',
+      ]);
+    });
+
+    it('leaves a report that has not completed alone — there is no file to sign yet', async () => {
+      prisma.report.findUnique.mockResolvedValueOnce({ ...completed, status: ReportStatus.QUEUED, fileUrl: null });
+
+      const result = await service.findById('inst-1', 'r-1', admin);
+
+      expect(storage.getSignedDownloadUrl).not.toHaveBeenCalled();
+      expect(result.fileUrl).toBeNull();
     });
   });
 });

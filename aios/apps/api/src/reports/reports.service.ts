@@ -13,6 +13,7 @@ import { AuthenticatedUser } from '../auth/auth.types';
 import { CreateReportDto, QueryReportsDto } from './dto/report.dto';
 import { REPORT_GENERATION_QUEUE, ReportGenerationJobData } from './report-generation.constants';
 import { enqueueDeduped, jobKey } from '../infrastructure/queue/enqueue';
+import { StorageService } from '../infrastructure/storage/storage.service';
 import { QUEUE_POLICY } from '../infrastructure/queue/queue-policy';
 
 @Injectable()
@@ -21,8 +22,28 @@ export class ReportsService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
     @InjectQueue(REPORT_GENERATION_QUEUE) private readonly generationQueue: Queue<ReportGenerationJobData>,
   ) {}
+
+  /**
+   * Signed download URLs expire (5 minutes by default, S3 and the local
+   * fallback alike), so the one the worker minted at completion time is dead
+   * long before anyone clicks it — every finished report had a "View Report"
+   * link that 503'd unless opened within five minutes of generation. The URL
+   * is therefore re-minted per read instead of served from Report.fileUrl,
+   * whose stored value only records *that* a file exists.
+   *
+   * No schema change needed: the key is fully derived from the report row,
+   * exactly as report-generation.processor.ts derives it when uploading.
+   */
+  private async withFreshDownloadUrl<T extends { id: string; instituteId: string; status: ReportStatus; fileUrl: string | null }>(
+    report: T,
+  ): Promise<T> {
+    if (report.status !== ReportStatus.COMPLETE) return report;
+    const key = this.storage.buildKey(report.instituteId, 'reports', `${report.id}.html`);
+    return { ...report, fileUrl: await this.storage.getSignedDownloadUrl(key) };
+  }
 
   // ── Report Generation (03-FEATURE-SPECIFICATIONS.md) ──────────────────────
 
@@ -88,7 +109,7 @@ export class ReportsService {
       throw new ForbiddenException('You can only view reports you requested.');
     }
 
-    return report;
+    return this.withFreshDownloadUrl(report);
   }
 
   async findAll(instituteId: string, query: QueryReportsDto, actor: AuthenticatedUser) {
@@ -107,7 +128,10 @@ export class ReportsService {
       this.prisma.report.count({ where }),
     ]);
 
-    return { data: reports, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+    return {
+      data: await Promise.all(reports.map((r) => this.withFreshDownloadUrl(r))),
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
   }
 
   /**
