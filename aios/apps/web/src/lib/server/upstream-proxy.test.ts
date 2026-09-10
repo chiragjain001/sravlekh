@@ -30,8 +30,16 @@ describe('proxyToUpstream', () => {
 
   const opts = { upstreamBase: 'http://api.internal:4000', upstreamPrefix: '/api/v1', label: 'API' };
 
-  const sentHeaders = (): Headers => new Headers(fetchMock.mock.calls[0][1].headers);
-  const sentUrl = (): URL => new URL(String(fetchMock.mock.calls[0][0]));
+  /** The first fetch call, asserted to exist — `mock.calls[0]` is possibly-undefined. */
+  const firstCall = (): [unknown, RequestInit & { duplex?: string }] => {
+    const call = fetchMock.mock.calls[0];
+    if (!call) throw new Error('expected fetch to have been called');
+    return call as [unknown, RequestInit & { duplex?: string }];
+  };
+
+  const sentInit = () => firstCall()[1];
+  const sentHeaders = (): Headers => new Headers(sentInit().headers);
+  const sentUrl = (): URL => new URL(String(firstCall()[0]));
 
   describe('URL construction', () => {
     it('reads the upstream base per call, so runtime config actually applies', async () => {
@@ -200,7 +208,7 @@ describe('proxyToUpstream', () => {
       // a 3xx would let a misconfigured or compromised upstream steer them at an
       // arbitrary host.
       await proxyToUpstream(request('http://web/api/v1/me'), { ...opts, path: ['me'] } as never);
-      expect(fetchMock.mock.calls[0][1].redirect).toBe('manual');
+      expect(sentInit().redirect).toBe('manual');
     });
   });
 
@@ -226,7 +234,7 @@ describe('proxyToUpstream', () => {
   describe('bodies', () => {
     it('does not attach a body to GET, which fetch would reject', async () => {
       await proxyToUpstream(request('http://web/api/v1/me'), { ...opts, path: ['me'] } as never);
-      expect(fetchMock.mock.calls[0][1].body).toBeUndefined();
+      expect(sentInit().body).toBeUndefined();
     });
 
     it('streams a POST body rather than buffering it', async () => {
@@ -237,7 +245,7 @@ describe('proxyToUpstream', () => {
         { ...opts, path: ['upload'] } as never,
       );
 
-      const init = fetchMock.mock.calls[0][1];
+      const init = sentInit();
       expect(init.body).toBeInstanceOf(ReadableStream);
       // Required by the spec whenever body is a stream; without it fetch throws.
       expect(init.duplex).toBe('half');
