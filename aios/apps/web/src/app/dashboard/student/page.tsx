@@ -6,6 +6,7 @@ import { Sidebar } from '@/components/shared/Sidebar';
 import { TopHeader } from '@/components/shared/TopHeader';
 import { useDashboardStore } from '@/store/dashboard-store';
 import { studentData as d } from '@/lib/mock-data/student';
+import { RouteGuard, FullPageSkeleton } from '@/components/ui/RouteGuard';
 
 // Sections
 import { StudentOverview } from '@/components/dashboard/student/StudentOverview';
@@ -26,9 +27,11 @@ import { useNavigationHistory } from '@/hooks/useNavigationHistory';
 // ── Inner component — uses useNavigationHistory (which calls useSearchParams)
 // Must be wrapped in <Suspense> at the page level per Next.js 14 requirements.
 function StudentDashboardInner() {
-  const { logout } = useAuth();
+  const { user, logout } = useAuth();
   const { studentActiveNav, setStudentActiveNav } = useDashboardStore();
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const studentName = user?.name ?? 'Student';
+  const firstName = studentName.split(' ')[0];
+  const avatarInitials = user?.avatarInitials ?? studentName.split(' ').map((n) => n[0]).join('').toUpperCase();
   const { canGoBack, previousNav, goBack } = useNavigationHistory('student');
 
   const renderContent = () => {
@@ -58,9 +61,9 @@ function StudentDashboardInner() {
     <div className="flex h-screen overflow-hidden bg-bg">
       <Sidebar
         role="STUDENT"
-        userName={d.user.name}
-        designation={d.user.class}
-        avatarInitials={d.user.avatarInitials}
+        userName={studentName}
+        designation="Student"
+        avatarInitials={avatarInitials}
         navItems={d.navItems}
         activeNav={studentActiveNav}
         onNavChange={setStudentActiveNav}
@@ -68,10 +71,11 @@ function StudentDashboardInner() {
       />
       <div className="flex-1 overflow-y-auto min-w-0 flex flex-col">
         <TopHeader
-          greeting={studentActiveNav === 'Overview' ? `Good Morning, ${d.user.name.split(' ')[0]}! ☀️` : studentActiveNav}
-          subtitle={studentActiveNav === 'Overview' ? "Let's make today productive and impactful." : `View and manage your ${studentActiveNav.toLowerCase()}`}
-          showStreak={studentActiveNav === 'Overview'}
-          streakCount={d.user.streak}
+          greeting={studentActiveNav === 'Overview' ? `Good Morning, ${firstName}! ☀️` : studentActiveNav}
+          subtitle={studentActiveNav === 'Overview' ? "Let's make today productive and impactful." : `View and manage your ${studentActiveNav.replace(/^My\s+/i, '').toLowerCase()}`}
+          showBackButton={canGoBack}
+          previousNavLabel={previousNav}
+          onBack={goBack}
         />
         <div className="flex-1">{renderContent()}</div>
       </div>
@@ -81,12 +85,10 @@ function StudentDashboardInner() {
 
 export default function StudentDashboardPage() {
   return (
-    <Suspense fallback={
-      <div className="flex h-screen items-center justify-center bg-bg text-slate-400 text-[14px]">
-        Loading…
-      </div>
-    }>
-      <StudentDashboardInner />
-    </Suspense>
+    <RouteGuard allowedRoles={['STUDENT']}>
+      <Suspense fallback={<FullPageSkeleton />}>
+        <StudentDashboardInner />
+      </Suspense>
+    </RouteGuard>
   );
 }
