@@ -1,33 +1,40 @@
 'use client';
 
-import { useState, type ElementType } from 'react';
-import { User, Bell, Shield, Mail, Phone, BookOpen, Calendar, CheckCircle2, LogOut } from 'lucide-react';
+import { useEffect, useState, type ElementType } from 'react';
+import { User, Bell, Shield, Mail, BookOpen, CheckCircle2, LogOut, Save } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { teacherProfile } from '@/lib/mock-data/teacher';
 import { useAuth } from '@/contexts/auth.context';
+import { useMyTeacherProfile, useUpdateMyTeacherProfile, useSubjects } from '@/hooks/useApi';
 import { ConfirmDialog } from '@/components/ui/foundation';
 
 const TABS = ['Profile', 'Preferences', 'Security'] as const;
 type Tab = typeof TABS[number];
 
 export function TeacherSettings() {
-  const { logout } = useAuth();
+  const { user, logout } = useAuth();
   const [tab, setTab]           = useState<Tab>('Profile');
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [notifications, setNot] = useState(() => {
-    // Rehydrate from localStorage if previously saved
     try {
       const stored = localStorage.getItem('aios_teacher_notif_prefs');
       if (stored) return JSON.parse(stored);
     } catch { /* ignore */ }
-    return {
-      doubts:      true,
-      submissions: true,
-      testRemind:  true,
-      weeklyDigest:false,
-    };
+    return { doubts: true, submissions: true, testRemind: true, weeklyDigest: false };
   });
 
+  const { data: profile, isLoading: profileLoading } = useMyTeacherProfile();
+  const { data: subjectsResp } = useSubjects();
+  const subjects: any[] = subjectsResp?.data ?? subjectsResp ?? [];
+  const updateProfile = useUpdateMyTeacherProfile();
+
+  const [name, setName] = useState('');
+  const [qualification, setQualification] = useState('');
+  useEffect(() => {
+    if (profile) {
+      setName(profile.user?.name ?? '');
+      setQualification(profile.qualification ?? '');
+    }
+  }, [profile]);
 
   const toggle = (k: keyof typeof notifications) =>
     setNot((prev: typeof notifications) => ({ ...prev, [k]: !prev[k] }));
@@ -41,14 +48,27 @@ export function TeacherSettings() {
     }
   };
 
+  const handleSaveProfile = () => {
+    updateProfile.mutate({ name: name.trim(), qualification: qualification.trim() });
+  };
+
+  // Deduped: batchAssignments carries one row per batch, so a teacher taking
+  // the same subject across 9 batches would otherwise list it 9 times.
+  const subjectNames = Array.from(new Set(
+    (profile?.batchAssignments ?? [])
+      .filter((a: any) => !a.removedAt)
+      .map((a: any) => subjects.find((s: any) => s.id === a.subjectId)?.name)
+      .filter(Boolean),
+  ));
+  const batchNames = Array.from(new Set((profile?.batchAssignments ?? []).filter((a: any) => !a.removedAt).map((a: any) => a.batch?.name).filter(Boolean)));
+
   return (
     <div className="p-6 animate-fadein space-y-6">
-      {/* Logout Confirmation Dialog */}
       <ConfirmDialog
         isOpen={showLogoutConfirm}
-        title="Log out of all devices"
-        description="This will immediately end all active sessions across every device. You will need to log in again."
-        confirmLabel="Log Out Everywhere"
+        title="Log out"
+        description="You'll be signed out on this device and need to log in again."
+        confirmLabel="Log Out"
         variant="danger"
         onConfirm={() => { setShowLogoutConfirm(false); logout(); }}
         onCancel={() => setShowLogoutConfirm(false)}
@@ -59,7 +79,6 @@ export function TeacherSettings() {
       </div>
 
       <div className="flex flex-col lg:flex-row gap-8">
-        {/* Sidebar tabs */}
         <div className="w-full lg:w-56 flex flex-row lg:flex-col gap-2">
           {([
             { id: 'Profile',     icon: User,   sub: 'Your information'     },
@@ -81,22 +100,22 @@ export function TeacherSettings() {
         </div>
 
         <div className="flex-1 max-w-2xl">
-
-          {/* ── Profile ──────────────────────────────────────────────────── */}
           {tab === 'Profile' && (
+            profileLoading ? (
+              <div className="py-16 text-center text-slate-400 text-[13px] animate-fadein">Loading profile…</div>
+            ) : (
             <div className="space-y-6 animate-fadein">
               <div>
                 <h3 className="text-[15px] font-bold text-slate-800">Personal Information</h3>
-                <p className="text-[12.5px] text-slate-500 mt-0.5">Your profile is managed by the institute administration. Contact your admin to make changes.</p>
+                <p className="text-[12.5px] text-slate-500 mt-0.5">Name and qualification are editable. Everything else is managed by your institute admin.</p>
               </div>
 
               <div className="flex items-center gap-5 p-5 bg-slate-50 border border-slate-100 rounded-2xl">
                 <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-[22px] font-black">
-                  {teacherProfile.avatarInitials}
+                  {(profile?.user?.name ?? '?').split(' ').map((n: string) => n[0]).join('')}
                 </div>
                 <div>
-                  <p className="text-[18px] font-bold text-slate-800">{teacherProfile.name}</p>
-                  <p className="text-[13px] text-slate-500">{teacherProfile.designation}</p>
+                  <p className="text-[18px] font-bold text-slate-800">{profile?.user?.name}</p>
                   <span className="inline-flex items-center gap-1 mt-1.5 px-2.5 py-0.5 rounded bg-emerald-100 text-emerald-700 text-[11px] font-bold">
                     <CheckCircle2 className="w-3 h-3" /> Active Teacher
                   </span>
@@ -104,33 +123,44 @@ export function TeacherSettings() {
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {[
-                  { label: 'Email',            icon: Mail,     value: teacherProfile.email      },
-                  { label: 'Phone',            icon: Phone,    value: teacherProfile.phone      },
-                  { label: 'Subject',          icon: BookOpen, value: 'Physics'                 },
-                  { label: 'Employee ID',      icon: User,     value: teacherProfile.id         },
-                  { label: 'Batches Assigned', icon: BookOpen, value: '11A, 11B, 11C, 12A, 12B, 12C' },
-                  { label: 'Joined On',        icon: Calendar, value: teacherProfile.joinedOn   },
-                ].map(f => (
-                  <div key={f.label} className="space-y-1.5">
-                    <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                      <f.icon className="w-3.5 h-3.5" /> {f.label}
-                    </label>
-                    <div className="px-3.5 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-[13px] text-slate-700 font-medium">
-                      {f.value}
-                    </div>
-                  </div>
-                ))}
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Full Name</label>
+                  <input value={name} onChange={e => setName(e.target.value)}
+                    className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-[13px] font-medium focus:outline-none focus:ring-2 focus:ring-indigo-400/30" />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Qualification</label>
+                  <input value={qualification} onChange={e => setQualification(e.target.value)}
+                    placeholder="e.g. M.Sc Physics"
+                    className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-[13px] font-medium focus:outline-none focus:ring-2 focus:ring-indigo-400/30" />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 uppercase tracking-wider"><Mail className="w-3.5 h-3.5" /> Email</label>
+                  <div className="px-3.5 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-[13px] text-slate-700 font-medium">{profile?.user?.email}</div>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 uppercase tracking-wider"><BookOpen className="w-3.5 h-3.5" /> Subjects</label>
+                  <div className="px-3.5 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-[13px] text-slate-700 font-medium">{subjectNames.length > 0 ? subjectNames.join(', ') : '—'}</div>
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 uppercase tracking-wider"><BookOpen className="w-3.5 h-3.5" /> Batches Assigned</label>
+                  <div className="px-3.5 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-[13px] text-slate-700 font-medium">{batchNames.length > 0 ? batchNames.join(', ') : 'Not assigned to any batch yet'}</div>
+                </div>
               </div>
+
+              <button onClick={handleSaveProfile} disabled={updateProfile.isPending || !name.trim()}
+                className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 text-white text-[13px] font-bold rounded-xl hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-50">
+                <Save className="w-4 h-4" /> {updateProfile.isPending ? 'Saving…' : 'Save Changes'}
+              </button>
             </div>
+            )
           )}
 
-          {/* ── Preferences ──────────────────────────────────────────────── */}
           {tab === 'Preferences' && (
             <div className="space-y-5 animate-fadein">
               <div>
                 <h3 className="text-[15px] font-bold text-slate-800">Notification Preferences</h3>
-                <p className="text-[12.5px] text-slate-500 mt-0.5">Choose which events trigger notifications.</p>
+                <p className="text-[12.5px] text-slate-500 mt-0.5">Choose which events trigger notifications on this device.</p>
               </div>
 
               <div className="space-y-3">
@@ -160,15 +190,13 @@ export function TeacherSettings() {
             </div>
           )}
 
-          {/* ── Security ─────────────────────────────────────────────────── */}
           {tab === 'Security' && (
             <div className="space-y-6 animate-fadein">
               <div>
                 <h3 className="text-[15px] font-bold text-slate-800">Security Settings</h3>
-                <p className="text-[12.5px] text-slate-500 mt-0.5">Manage your connected account and active sessions.</p>
+                <p className="text-[12.5px] text-slate-500 mt-0.5">Manage your connected account and session.</p>
               </div>
 
-              {/* Google SSO */}
               <div className="border border-slate-100 rounded-2xl p-5">
                 <h4 className="text-[14px] font-bold text-slate-800 mb-3 flex items-center gap-2">
                   <Shield className="w-4 h-4 text-emerald-500" /> Authentication Provider
@@ -187,7 +215,7 @@ export function TeacherSettings() {
                   </div>
                   <div>
                     <p className="text-[13px] font-bold text-slate-800">Google Account</p>
-                    <p className="text-[12px] text-slate-500">{teacherProfile.email}</p>
+                    <p className="text-[12px] text-slate-500">{user?.email}</p>
                   </div>
                   <span className="ml-auto flex items-center gap-1 px-2.5 py-1 bg-emerald-100 text-emerald-700 text-[11px] font-bold rounded">
                     <CheckCircle2 className="w-3 h-3" /> Connected
@@ -195,19 +223,17 @@ export function TeacherSettings() {
                 </div>
               </div>
 
-              {/* Session */}
               <div className="border border-rose-100 rounded-2xl p-5 bg-rose-50/30">
                 <h4 className="text-[14px] font-bold text-rose-800 mb-2 flex items-center gap-2">
-                  <LogOut className="w-4 h-4" /> Active Sessions
+                  <LogOut className="w-4 h-4" /> Session
                 </h4>
-                <p className="text-[12.5px] text-rose-600/80 mb-4">If you notice any suspicious activity, you can log out of all other devices immediately.</p>
+                <p className="text-[12.5px] text-rose-600/80 mb-4">Sign out of your account on this device.</p>
                 <button onClick={() => setShowLogoutConfirm(true)} className="px-5 py-2 bg-rose-100 text-rose-700 border border-rose-200 hover:bg-rose-600 hover:text-white text-[12px] font-bold rounded-xl transition-colors">
-                  Log out of all devices
+                  Log Out
                 </button>
               </div>
             </div>
           )}
-
         </div>
       </div>
     </div>
