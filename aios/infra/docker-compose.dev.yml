@@ -1,0 +1,43 @@
+# Local development Redis.
+#
+#   docker compose -f infra/docker-compose.dev.yml up -d
+#   docker compose -f infra/docker-compose.dev.yml down
+#
+# Redis is not optional infrastructure for local dev, despite REDIS_URL being
+# optional in env.schema.ts. That optionality covers *caching*, which degrades
+# gracefully (09-CACHING-STRATEGY.md). The six BullMQ queues do not degrade:
+# without a broker, report generation, AI evaluation, OCR, notice dispatch,
+# score aggregation and mastery recalc accept work that is never performed.
+# Nothing provisioned Redis for dev before this file, so the default local
+# experience was a silently queue-less app.
+#
+# Port 6379 — the default, matching apps/api/.env's REDIS_URL. This is the
+# opposite choice to infra/staging/docker-compose.yml, which deliberately uses
+# 6380 so a disposable staging broker can never be mistaken for, or collide
+# with, the one a developer is actually working against. If 6379 is already
+# taken on your machine, you already have a Redis and do not need this.
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: aios-dev-redis
+    # AOF rather than the default snapshotting, matching staging and production:
+    # these queues carry a student's grade reaching them, so a broker that loses
+    # its dataset on restart drops in-flight evaluations with nothing downstream
+    # to notice. Dev rehearsing a rosier failure model than production is how
+    # that class of bug survives to staging.
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    ports:
+      - "127.0.0.1:6379:6379"   # loopback-only: never expose a passwordless broker
+    volumes:
+      - aios-dev-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+volumes:
+  # Named rather than tmpfs (staging uses tmpfs by design): a developer
+  # restarting Docker should not silently lose jobs mid-debug.
+  aios-dev-redis:

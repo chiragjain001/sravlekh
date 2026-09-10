@@ -2,6 +2,7 @@ import {
   Injectable,
   ForbiddenException,
   NotFoundException,
+  ServiceUnavailableException,
   Logger,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -11,6 +12,8 @@ import { AuditAction, ReportStatus, UserRole } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { CreateReportDto, QueryReportsDto } from './dto/report.dto';
 import { REPORT_GENERATION_QUEUE, ReportGenerationJobData } from './report-generation.constants';
+import { enqueueDeduped, jobKey } from '../infrastructure/queue/enqueue';
+import { QUEUE_POLICY } from '../infrastructure/queue/queue-policy';
 
 @Injectable()
 export class ReportsService {
@@ -44,11 +47,29 @@ export class ReportsService {
       },
     });
 
-    await this.generationQueue.add(
-      'generate',
-      { reportId: report.id },
-      { attempts: 3, backoff: { type: 'exponential', delay: 1000 } },
-    );
+    try {
+      await enqueueDeduped(
+        this.generationQueue,
+        'generate',
+        { reportId: report.id },
+        jobKey('report', report.id),
+        { attempts: 3, backoff: { type: 'exponential', delay: 1000 }, ...QUEUE_POLICY.reportGeneration.jobOptions },
+        this.logger,
+      );
+    } catch (err) {
+      // The Report row is already committed, so a failed enqueue would otherwise
+      // leave it QUEUED forever with no worker ever picking it up — indis-
+      // tinguishable, to the person waiting, from one that is merely slow.
+      // Mark it FAILED and say so, rather than reporting success for work that
+      // will never run.
+      this.logger.error(`Report ${report.id} could not be queued: ${(err as Error).message}`);
+      await this.prisma.report
+        .update({ where: { id: report.id }, data: { status: ReportStatus.FAILED } })
+        .catch(() => undefined);
+      throw new ServiceUnavailableException(
+        'Report generation is temporarily unavailable — the job queue is not reachable. Please try again shortly.',
+      );
+    }
 
     await this.writeAudit(instituteId, actor.id, AuditAction.CREATE, 'reports', report.id, null, {
       type: report.type, scope: dto.scope,
@@ -121,7 +142,7 @@ export class ReportsService {
           supersedesReportId: original.id,
         },
       });
-      await this.generationQueue.add('generate', { reportId: reissue.id }, { attempts: 3, backoff: { type: 'exponential', delay: 1000 } });
+      await enqueueDeduped(this.generationQueue, 'generate', { reportId: reissue.id }, jobKey('report', reissue.id), { attempts: 3, backoff: { type: 'exponential', delay: 1000 }, ...QUEUE_POLICY.reportGeneration.jobOptions }, this.logger);
       await this.writeAudit(instituteId, actorId, AuditAction.CREATE, 'reports', reissue.id, { supersedes: original.id }, { type: original.type });
     }
   }
