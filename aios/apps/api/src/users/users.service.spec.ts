@@ -4,10 +4,12 @@ import { UserRole, UserStatus } from '@prisma/client';
 import { UsersService } from './users.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/auth.types';
+import { RefreshTokenService } from '../auth/refresh-token.service';
 
 describe('UsersService — tenant isolation and self/founder protection (13-TESTING-STRATEGY.md §7)', () => {
   let service: UsersService;
   let prisma: { user: { findUnique: jest.Mock; findMany: jest.Mock; update: jest.Mock; count: jest.Mock }; auditLog: { create: jest.Mock } };
+  let refreshTokens: { revokeAllForUser: jest.Mock };
 
   const admin: AuthenticatedUser = { id: 'admin-1', email: 'a@x.com', name: 'Admin', role: UserRole.ADMIN, instituteId: 'inst-1' };
   const founderActor: AuthenticatedUser = { ...admin, id: 'founder-1', role: UserRole.FOUNDER };
@@ -17,8 +19,16 @@ describe('UsersService — tenant isolation and self/founder protection (13-TEST
       user: { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn(), count: jest.fn() },
       auditLog: { create: jest.fn().mockResolvedValue({}) },
     };
+    refreshTokens = { revokeAllForUser: jest.fn().mockResolvedValue(2) };
     const module: TestingModule = await Test.createTestingModule({
-      providers: [UsersService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        UsersService,
+        { provide: PrismaService, useValue: prisma },
+        // force-logout and logout-all-devices must kill refresh sessions too,
+        // or the next refresh silently re-issues a valid access token and undoes
+        // the logout. Stubbed here; asserted below.
+        { provide: RefreshTokenService, useValue: refreshTokens },
+      ],
     }).compile();
     service = module.get(UsersService);
   });
@@ -182,6 +192,51 @@ describe('UsersService — tenant isolation and self/founder protection (13-TEST
         select: { id: true, email: true, tokenVersion: true },
       });
       expect(result.id).toBe('user-2');
+    });
+  });
+
+  describe('force-logout also ends refresh sessions', () => {
+    // The correctness property: bumping tokenVersion invalidates every ACCESS
+    // token, but a live refresh token would immediately mint a new one carrying
+    // the NEW tokenVersion — and therefore valid. Without revoking refresh
+    // sessions too, "sign out everywhere" silently undoes itself within minutes,
+    // which is worse than not offering the button at all.
+
+    it('forceLogout revokes the target user’s refresh sessions', async () => {
+      prisma.user.findUnique.mockResolvedValueOnce({ id: 'user-2', instituteId: 'inst-1', email: 'u@x.com', role: UserRole.STUDENT });
+      prisma.user.update.mockResolvedValueOnce({ id: 'user-2', email: 'u@x.com', tokenVersion: 3 });
+
+      await service.forceLogout('user-2', admin);
+
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { tokenVersion: { increment: 1 } } }),
+      );
+      expect(refreshTokens.revokeAllForUser).toHaveBeenCalledWith('user-2', 'force_logout');
+    });
+
+    it('logoutAllMyDevices revokes the caller’s own refresh sessions', async () => {
+      prisma.user.update.mockResolvedValueOnce({ id: admin.id, email: admin.email, tokenVersion: 2 });
+
+      await service.logoutAllMyDevices(admin);
+
+      expect(refreshTokens.revokeAllForUser).toHaveBeenCalledWith(admin.id, 'self_logout_all_devices');
+    });
+
+    it('records how many sessions were revoked in the audit log', async () => {
+      // Answers "did that actually end anything?" during an incident review,
+      // rather than leaving the operator to guess.
+      prisma.user.update.mockResolvedValueOnce({ id: admin.id, email: admin.email, tokenVersion: 2 });
+      refreshTokens.revokeAllForUser.mockResolvedValueOnce(4);
+
+      await service.logoutAllMyDevices(admin);
+
+      expect(prisma.auditLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            newValue: expect.objectContaining({ refreshSessionsRevoked: 4 }),
+          }),
+        }),
+      );
     });
   });
 

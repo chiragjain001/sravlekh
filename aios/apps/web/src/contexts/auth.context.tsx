@@ -20,7 +20,7 @@ interface AuthContextValue {
   isLoading: boolean;
   login: (idToken: string) => Promise<void>;
   loginAsMock: (role: 'STUDENT' | 'TEACHER' | 'ADMIN' | 'FOUNDER') => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -218,7 +218,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [persistSession, redirectForRole],
   );
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    // Tell the server first. Clearing localStorage only ends the session in THIS
+    // browser — the refresh token lives in an httpOnly cookie the server issued,
+    // and until it is revoked server-side the session is still valid for anyone
+    // holding that cookie. "Log out" that only forgets locally is not a logout.
+    try {
+      await apiClient.post('/auth/logout');
+    } catch {
+      // A failed call must never trap the user in a logged-in UI. The local
+      // session is cleared either way; the server-side token then expires on its
+      // own, or is revoked from another device.
+    }
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
     setAccessToken(null);

@@ -384,11 +384,70 @@ model User {
   createdNotices     Notice[]         @relation("NoticeCreator")
   permissionGrants   UserPermissionGrant[] @relation("GrantHolder")
   permissionGrantsIssued UserPermissionGrant[] @relation("GrantIssuer")
+  refreshTokens      RefreshToken[]
 
   @@unique([instituteId, email])
   @@index([email])
   @@index([instituteId, role])
   @@map("users")
+}
+
+/// Refresh-token sessions (07-SECURITY-SPECIFICATION.md).
+///
+/// WHY THIS EXISTS: the only session credential used to be a 7-day access JWT
+/// held in localStorage. A stolen one stayed valid for up to a week, and the
+/// only revocation available was User.tokenVersion, which logs the user out of
+/// EVERY device at once — too blunt to use on a single suspicious session, so
+/// in practice it would not be used at all.
+///
+/// The token VALUE is never stored. Only its SHA-256 hash is, so a read of this
+/// table — a leaked backup, a SQL-injection, an over-broad support query — does
+/// not yield usable credentials. This is the same reasoning as never storing
+/// passwords in plaintext, and it is why `tokenHash` is what carries @unique.
+///
+/// ROTATION AND REUSE DETECTION. Every refresh mints a new token and marks the
+/// presented one `rotatedAt`. A correctly behaving client therefore never sends
+/// the same refresh token twice. If an already-rotated token is presented, there
+/// are two copies of it in the world — the legitimate client's and a thief's —
+/// and there is no way to tell which one just arrived. The whole `familyId`
+/// chain is revoked, forcing a fresh login. That converts silent, indefinite
+/// session theft into a single visible logout.
+model RefreshToken {
+  id        String   @id @default(cuid())
+  userId    String
+  /// Rotation chain. Every token descended from one login shares this, so reuse
+  /// detection can revoke the compromised session without touching the user's
+  /// other devices.
+  familyId  String
+  /// SHA-256 of the opaque token. Never the token itself — see the note above.
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  /// Set when this token is exchanged for a successor. Non-null means "already
+  /// used"; presenting it again is the reuse signal.
+  rotatedAt DateTime?
+  revokedAt DateTime?
+  /// Why it was revoked — "logout", "rotated", "reuse_detected", "force_logout".
+  /// Kept for incident review: "was this session ended by the user or by us?"
+  revokedReason String?
+  /// Coarse client fingerprint, for showing a user their own sessions and for
+  /// triage after a reuse event. Deliberately not a device identifier and not
+  /// used for any authorization decision — both are trivially spoofed by the
+  /// client that sends them.
+  userAgent String?
+  ipAddress String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Listing and bulk-revoking a user's sessions.
+  @@index([userId])
+  /// Reuse detection revokes by family, so this is on the hot path of the one
+  /// operation that has to be fast when it matters.
+  @@index([familyId])
+  /// Lets the cleanup job find expired rows without scanning the table, which
+  /// otherwise grows without bound — one row per refresh, forever.
+  @@index([expiresAt])
+  @@map("refresh_tokens")
 }
 
 /// Phase 14 (docs/33-GAP-ANALYSIS-AND-BUILD-PLAN.md) — 21-DOMAIN-MODEL-V2.md

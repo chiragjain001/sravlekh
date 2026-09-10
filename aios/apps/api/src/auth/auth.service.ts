@@ -8,6 +8,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { OAuth2Client, TokenPayload } from 'google-auth-library';
 import { PrismaService } from '../prisma/prisma.service';
+import { RefreshTokenService, RefreshTokenMetadata } from './refresh-token.service';
 import { CacheService } from '../infrastructure/cache/cache.service';
 import { allowlistCheckKey, loginFailureCountKey, loginLockoutKey } from '../shared/cache-keys';
 import { AuditAction, UserStatus, UserRole, InstituteStatus, type AllowListEntry, type Institute } from '@prisma/client';
@@ -40,6 +41,7 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
     private readonly cache: CacheService,
+    private readonly refreshTokens: RefreshTokenService,
   ) {
     this.googleClient = new OAuth2Client(
       this.config.get<string>('GOOGLE_CLIENT_ID'),
@@ -60,7 +62,13 @@ export class AuthService {
   async loginWithGoogle(
     idToken: string,
     ipAddress?: string,
-  ): Promise<{ accessToken: string; user: AuthenticatedUser }> {
+    meta: RefreshTokenMetadata = {},
+  ): Promise<{
+    accessToken: string;
+    refreshToken: string;
+    refreshExpiresAt: Date;
+    user: AuthenticatedUser;
+  }> {
     // Step 1 — Verify token with Google
     const googlePayload = await this.verifyGoogleToken(idToken);
     const email = googlePayload.email!;
@@ -215,7 +223,14 @@ export class AuthService {
       avatarUrl: user.avatarUrl,
     };
 
-    return { accessToken, user: authenticatedUser };
+    // A login starts a NEW rotation family. The refresh token is returned to the
+    // controller, which puts it in an httpOnly cookie — it deliberately never
+    // reaches the response body, because a body is readable by page JavaScript
+    // and therefore by XSS, which is the exposure this whole mechanism exists to
+    // remove.
+    const refresh = await this.refreshTokens.issue(user.id, { ipAddress: ipAddress ?? null, ...meta });
+
+    return { accessToken, refreshToken: refresh.token, refreshExpiresAt: refresh.expiresAt, user: authenticatedUser };
   }
 
   /**
@@ -233,7 +248,12 @@ export class AuthService {
    * mint publicly reachable. Now any misconfiguration disables it instead.
    * env.schema.ts additionally refuses to boot if the flag is on in production.
    */
-  async loginAsMockRole(role: UserRole): Promise<{ accessToken: string; user: AuthenticatedUser }> {
+  async loginAsMockRole(role: UserRole): Promise<{
+    accessToken: string;
+    refreshToken: string;
+    refreshExpiresAt: Date;
+    user: AuthenticatedUser;
+  }> {
     // Default-deny: `get` returning undefined (flag absent from the validated
     // config for any reason) must mean disabled, never enabled.
     const devLoginEnabled = this.config.get<boolean>('ENABLE_DEV_LOGIN') === true;
@@ -278,8 +298,16 @@ export class AuthService {
       tokenVersion: user.tokenVersion,
     };
 
+    // Same session mechanics as the real login path. Deliberately not a special
+    // case: if dev-login issued no refresh token, local development would never
+    // exercise rotation, and the refresh path would be untested in exactly the
+    // environment where it is easiest to test.
+    const refresh = await this.refreshTokens.issue(user.id);
+
     return {
       accessToken: this.jwt.sign(payload),
+      refreshToken: refresh.token,
+      refreshExpiresAt: refresh.expiresAt,
       user: {
         id: user.id,
         email: user.email,
@@ -289,6 +317,91 @@ export class AuthService {
         avatarUrl: user.avatarUrl,
       },
     };
+  }
+
+  /**
+   * Exchanges a refresh token for a fresh access token, rotating the refresh
+   * token in the process.
+   *
+   * The user is RE-READ from the database rather than trusted from the old
+   * token's claims. That is the point of a short access-token lifetime: a role
+   * change, a suspension, an institute being archived, or a force-logout must
+   * take effect within minutes, and the only place that can happen is here. A
+   * refresh that copied the previous claims forward would let a suspended user
+   * keep minting valid tokens for the full 30-day refresh lifetime.
+   */
+  async refreshSession(
+    presentedToken: string,
+    meta: RefreshTokenMetadata = {},
+  ): Promise<{
+    accessToken: string;
+    refreshToken: string;
+    refreshExpiresAt: Date;
+    user: AuthenticatedUser;
+  }> {
+    const { userId, refresh } = await this.refreshTokens.rotate(presentedToken, meta);
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { institute: { select: { status: true } } },
+    });
+
+    // Every rejection below revokes the whole family. The session is not merely
+    // unusable now — it must not become usable again if the condition is later
+    // reversed, because the credential may be the reason it was suspended.
+    if (!user) {
+      await this.refreshTokens.revokeFamily(refresh.familyId, 'user_deleted');
+      throw new UnauthorizedException('Session expired. Please sign in again.');
+    }
+
+    if (user.status !== UserStatus.ACTIVE) {
+      await this.refreshTokens.revokeFamily(refresh.familyId, 'user_not_active');
+      throw new UnauthorizedException('Your account is no longer active.');
+    }
+
+    if (
+      user.role !== UserRole.FOUNDER &&
+      (user.institute.status === InstituteStatus.SUSPENDED ||
+        user.institute.status === InstituteStatus.ARCHIVED)
+    ) {
+      await this.refreshTokens.revokeFamily(refresh.familyId, 'institute_inactive');
+      throw new UnauthorizedException('Your institute is no longer active on this platform.');
+    }
+
+    const payload: JwtPayload = {
+      sub: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      instituteId: user.instituteId,
+      // Re-read, not carried over: a Founder force-logout bumps this, and the
+      // new access token has to carry the new value or validateJwtPayload will
+      // reject the very token we just minted.
+      tokenVersion: user.tokenVersion,
+    };
+
+    return {
+      accessToken: this.jwt.sign(payload),
+      refreshToken: refresh.token,
+      refreshExpiresAt: refresh.expiresAt,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        instituteId: user.instituteId,
+        avatarUrl: user.avatarUrl,
+      },
+    };
+  }
+
+  /** Ends the presented session only. Other devices are unaffected. */
+  async logout(presentedToken: string | undefined): Promise<{ success: true }> {
+    // Idempotent, and deliberately does not distinguish "no token" from "unknown
+    // token": logout must always look like it worked, or it becomes an oracle
+    // for whether a given token is live.
+    if (presentedToken) await this.refreshTokens.revoke(presentedToken, 'logout');
+    return { success: true };
   }
 
   // ──────────────────────────────────────────────────────────────────────────

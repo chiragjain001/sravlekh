@@ -6,6 +6,7 @@ import { AuditAction, UserRole, UserStatus, InstituteStatus } from '@prisma/clie
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CacheService } from '../infrastructure/cache/cache.service';
+import { RefreshTokenService } from './refresh-token.service';
 
 /**
  * A working in-memory stand-in for the Redis-backed CacheService.
@@ -42,6 +43,7 @@ jest.mock('google-auth-library', () => ({
 describe('AuthService.loginWithGoogle (06-AUTH-AUTHORIZATION.md / 13-TESTING-STRATEGY.md §7)', () => {
   let service: AuthService;
   let cache: ReturnType<typeof createCacheDouble>;
+  const refreshTokens = { issue: jest.fn().mockResolvedValue({ token: 'refresh-token', expiresAt: new Date(Date.now() + 86_400_000), familyId: 'fam-test' }) };
   let prisma: {
     allowListEntry: { findFirst: jest.Mock };
     user: { upsert: jest.Mock; update: jest.Mock; findUnique: jest.Mock };
@@ -67,6 +69,10 @@ describe('AuthService.loginWithGoogle (06-AUTH-AUTHORIZATION.md / 13-TESTING-STR
         { provide: JwtService, useValue: jwt },
         { provide: ConfigService, useValue: { get: () => undefined } },
         { provide: CacheService, useValue: cache },
+        // Every login path now also opens a refresh session. Stubbed so these
+        // tests keep asserting login behaviour rather than token storage, which
+        // refresh-token.service.spec.ts covers directly.
+        { provide: RefreshTokenService, useValue: refreshTokens },
       ],
     }).compile();
     service = module.get(AuthService);
@@ -272,6 +278,7 @@ describe('AuthService.loginWithGoogle (06-AUTH-AUTHORIZATION.md / 13-TESTING-STR
 describe('AuthService.loginAsMockRole (dev-only mock login, 06-AUTH-AUTHORIZATION.md §1)', () => {
   let service: AuthService;
   let cache: ReturnType<typeof createCacheDouble>;
+  const refreshTokens = { issue: jest.fn().mockResolvedValue({ token: 'refresh-token', expiresAt: new Date(Date.now() + 86_400_000), familyId: 'fam-test' }) };
   let prisma: { user: { findFirst: jest.Mock; update: jest.Mock } };
   let jwt: { sign: jest.Mock };
   let configValues: Record<string, string | boolean | undefined>;
@@ -291,6 +298,10 @@ describe('AuthService.loginAsMockRole (dev-only mock login, 06-AUTH-AUTHORIZATIO
         { provide: JwtService, useValue: jwt },
         { provide: ConfigService, useValue: { get: (key: string) => configValues[key] } },
         { provide: CacheService, useValue: cache },
+        // Every login path now also opens a refresh session. Stubbed so these
+        // tests keep asserting login behaviour rather than token storage, which
+        // refresh-token.service.spec.ts covers directly.
+        { provide: RefreshTokenService, useValue: refreshTokens },
       ],
     }).compile();
     service = module.get(AuthService);
@@ -391,6 +402,7 @@ describe('AuthService.loginAsMockRole (dev-only mock login, 06-AUTH-AUTHORIZATIO
 describe('AuthService.validateJwtPayload', () => {
   let service: AuthService;
   let cache: ReturnType<typeof createCacheDouble>;
+  const refreshTokens = { issue: jest.fn().mockResolvedValue({ token: 'refresh-token', expiresAt: new Date(Date.now() + 86_400_000), familyId: 'fam-test' }) };
   let prisma: { user: { findUnique: jest.Mock } };
 
   beforeEach(async () => {
@@ -403,6 +415,10 @@ describe('AuthService.validateJwtPayload', () => {
         { provide: JwtService, useValue: { sign: jest.fn() } },
         { provide: ConfigService, useValue: { get: () => undefined } },
         { provide: CacheService, useValue: cache },
+        // Every login path now also opens a refresh session. Stubbed so these
+        // tests keep asserting login behaviour rather than token storage, which
+        // refresh-token.service.spec.ts covers directly.
+        { provide: RefreshTokenService, useValue: refreshTokens },
       ],
     }).compile();
     service = module.get(AuthService);

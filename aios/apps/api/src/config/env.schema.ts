@@ -48,7 +48,18 @@ export const envSchema = z
 
     // JWT session signing
     JWT_SECRET: z.string().min(32),
-    JWT_EXPIRES_IN: z.string().default('7d'),
+    // The ACCESS token's lifetime. Shortened from 7d to 15m when refresh tokens
+    // landed: a 7-day access token in localStorage is a credential an XSS can
+    // steal and use for a week, and User.tokenVersion was the only revocation —
+    // which logs the user out of every device at once and so never gets used.
+    // Sessions are no longer shorter as a result; REFRESH_TOKEN_TTL_DAYS (30d)
+    // now carries session length, and the client refreshes transparently.
+    //
+    // DEPLOYMENT COUPLING, stated plainly: an API on this default served to a
+    // frontend that predates the refresh work will log users out every 15
+    // minutes, because that client does not know to call /auth/refresh. Deploy
+    // both together, or set JWT_EXPIRES_IN=7d until the frontend ships.
+    JWT_EXPIRES_IN: z.string().default('15m'),
 
     // Frontend URL (for CORS)
     FRONTEND_URL: z.string().url().default('http://localhost:3000'),

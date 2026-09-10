@@ -39,10 +39,54 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
+/**
+ * In-flight refresh, shared by every caller.
+ *
+ * WHY SINGLE-FLIGHT: a dashboard fires many requests at once, so an expired
+ * access token produces a burst of simultaneous 401s. Without this, each would
+ * start its own refresh — and since every refresh ROTATES the token, the first
+ * would invalidate the cookie the others are still using. The server's grace
+ * window forgives that (it treats a just-rotated token as a benign race rather
+ * than theft), but the client should not be generating the race in the first
+ * place: N-1 of those requests would fail for no reason.
+ *
+ * Instead the first 401 starts one refresh and everyone else awaits the same
+ * promise.
+ */
+let refreshInFlight: Promise<void> | null = null;
+
+async function refreshSession(): Promise<void> {
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      try {
+        // Bare axios, not apiClient: going through apiClient would run this very
+        // interceptor on the refresh call itself.
+        //
+        // withCredentials is what actually sends the httpOnly refresh cookie —
+        // the browser attaches it, this code never sees it, and that is the
+        // point: an XSS cannot read it either.
+        const res = await axios.post<{ accessToken: string; user: unknown }>(
+          '/api/v1/auth/refresh',
+          {},
+          { withCredentials: true },
+        );
+        localStorage.setItem('aios_access_token', res.data.accessToken);
+        if (res.data.user) localStorage.setItem('aios_user', JSON.stringify(res.data.user));
+      } finally {
+        // Cleared in `finally` so a failed refresh does not leave a rejected
+        // promise cached forever, which would make every later 401 unrecoverable
+        // for the lifetime of the page.
+        refreshInFlight = null;
+      }
+    })();
+  }
+  return refreshInFlight;
+}
+
 // Response interceptor
 apiClient.interceptors.response.use(
   (response) => response,
-  (error: unknown) => {
+  async (error: unknown) => {
     const err = error as Record<string, unknown>;
     if (err['__isMock']) {
       const config = err['config'] as { url?: string };
@@ -91,7 +135,33 @@ apiClient.interceptors.response.use(
       error.response?.status === 401 &&
       typeof window !== 'undefined'
     ) {
-      // Clear stale session and redirect to login
+      const original = error.config as (typeof error.config & { _retried?: boolean }) | undefined;
+
+      // Try to refresh before giving up. The access token is now short-lived
+      // (minutes), so a 401 usually means "expired", not "logged out" — and the
+      // refresh cookie is httpOnly, so this is the only place that can find out.
+      //
+      // `_retried` makes this strictly one attempt per request. Without it, a
+      // refresh that itself 401s would re-enter this handler and recurse.
+      // The refresh endpoint is excluded outright for the same reason.
+      const isRefreshCall = original?.url?.includes('/auth/refresh');
+
+      if (original && !original._retried && !isRefreshCall) {
+        original._retried = true;
+        try {
+          await refreshSession();
+          const token = localStorage.getItem('aios_access_token');
+          if (token && original.headers) {
+            original.headers.Authorization = `Bearer ${token}`;
+          }
+          return apiClient.request(original);
+        } catch {
+          // fall through to the redirect below
+        }
+      }
+
+      // Refresh failed, or this request had already been retried: the session is
+      // genuinely over.
       localStorage.removeItem('aios_access_token');
       localStorage.removeItem('aios_user');
       window.location.href = '/login?reason=session_expired';

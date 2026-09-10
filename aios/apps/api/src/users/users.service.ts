@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { RefreshTokenService } from '../auth/refresh-token.service';
 import { UserRole, UserStatus, AuditAction, Prisma } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { QueryGlobalUsersDto } from './dto/query-global-users.dto';
@@ -19,7 +20,10 @@ const USER_LIST_SELECT = {
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly refreshTokens: RefreshTokenService,
+  ) {}
 
   /**
    * Get a user by ID.
@@ -206,7 +210,17 @@ export class UsersService {
       select: { id: true, email: true, tokenVersion: true },
     });
 
-    await this.writeAudit(user.instituteId, actor.id, AuditAction.UPDATE, userId, undefined, { action: 'force_logout' });
+    // Bumping tokenVersion alone is no longer sufficient. It invalidates every
+    // ACCESS token, but a live refresh token would let the client immediately
+    // mint a new one — carrying the NEW tokenVersion, and therefore valid —
+    // which would quietly undo the force-logout within minutes. Both halves of
+    // the session have to die.
+    const revoked = await this.refreshTokens.revokeAllForUser(userId, 'force_logout');
+
+    await this.writeAudit(user.instituteId, actor.id, AuditAction.UPDATE, userId, undefined, {
+      action: 'force_logout',
+      refreshSessionsRevoked: revoked,
+    });
     return { message: `${user.email} has been signed out of every active session.`, id: updated.id };
   }
 
@@ -221,7 +235,14 @@ export class UsersService {
       data: { tokenVersion: { increment: 1 } },
       select: { id: true, email: true, tokenVersion: true },
     });
-    await this.writeAudit(actor.instituteId, actor.id, AuditAction.UPDATE, actor.id, undefined, { action: 'self_logout_all_devices' });
+    // Same reasoning as forceLogout: without this, "sign out everywhere" would
+    // leave every device able to refresh itself straight back into a session.
+    const revoked = await this.refreshTokens.revokeAllForUser(actor.id, 'self_logout_all_devices');
+
+    await this.writeAudit(actor.instituteId, actor.id, AuditAction.UPDATE, actor.id, undefined, {
+      action: 'self_logout_all_devices',
+      refreshSessionsRevoked: revoked,
+    });
     return { message: 'You have been signed out of every device.', id: updated.id };
   }
 

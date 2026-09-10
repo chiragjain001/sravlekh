@@ -4,6 +4,7 @@ import { PassportModule } from '@nestjs/passport';
 import { ConfigService } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { AuthService } from './auth.service';
+import { RefreshTokenService } from './refresh-token.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -40,11 +41,12 @@ import { UserThrottlerGuard } from '../shared/guards/user-throttler.guard';
     // UserThrottlerGuard rate-limits — deliberately last, so req.user is already
     // populated and it can key by authenticated user rather than shared IP.
     // See 06-AUTH-AUTHORIZATION.md — every route must be authenticated by default.
+    RefreshTokenService,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
     { provide: APP_GUARD, useClass: MaintenanceGuard },
     { provide: APP_GUARD, useClass: UserThrottlerGuard },
   ],
-  exports: [AuthService, JwtModule],
+  exports: [AuthService, JwtModule, RefreshTokenService],
 })
 export class AuthModule {}
