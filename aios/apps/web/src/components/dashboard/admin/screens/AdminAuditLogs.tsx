@@ -25,6 +25,7 @@ const ACTION_STYLE: Record<string, string> = {
 interface AuditLogRow {
   id: string;
   actorId: string;
+  actor?: { name: string; email: string } | null;
   action: string;
   entity: string;
   entityId: string;
@@ -102,7 +103,7 @@ export function AdminAuditLogs() {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-[12.5px] text-slate-800">{log.entity} <span className="text-slate-400">/{log.entityId}</span></td>
-                  <td className="px-4 py-3 text-[12px] text-slate-500 font-mono">{log.actorId}</td>
+                  <td className="px-4 py-3 text-[12px] text-slate-700" title={log.actor?.email}>{log.actor?.name ?? log.actorId}</td>
                   <td className="px-4 py-3 text-[12px] text-slate-500">{new Date(log.createdAt).toLocaleString()}</td>
                 </tr>
               ))}

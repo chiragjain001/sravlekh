@@ -2,63 +2,27 @@
 
 import React from 'react';
 import { ArrowUp, ArrowDown, ArrowUpDown, MoreHorizontal, Eye, Edit2, Trash2, CheckSquare, Square, Minus } from 'lucide-react';
-import type { StudentListItem, SortDirection } from '../types/student.types';
+import type { StudentListItem, SortDirection, StudentSortField } from '../types/student.types';
 
-// ── Badge helpers ──────────────────────────────────────────────────────────────
-function PerformanceBadge({ level }: { level: string }) {
-  const label =
-    level === 'low' ? 'High' :
-    level === 'medium' ? 'Medium' :
-    level === 'high' ? 'Low' :
-    'Critical';
-
+function StatusBadge({ status }: { status: string }) {
   const cls =
-    level === 'low'      ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-    level === 'medium'   ? 'bg-amber-50 text-amber-700 border-amber-200' :
-    level === 'high'     ? 'bg-rose-50 text-rose-700 border-rose-200' :
-                           'bg-red-100 text-red-800 border-red-300';
+    status === 'ACTIVE'    ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+    status === 'SUSPENDED' ? 'bg-rose-50 text-rose-700 border-rose-200' :
+    status === 'PENDING'   ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                              'bg-slate-100 text-slate-500 border-slate-200';
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-bold border ${cls}`}>
-      <span className={`w-1.5 h-1.5 rounded-full ${
-        level === 'low' ? 'bg-emerald-500' : level === 'medium' ? 'bg-amber-500' :
-        level === 'high' ? 'bg-rose-500' : 'bg-red-700'}`} />
-      {label}
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-bold border capitalize ${cls}`}>
+      {status.toLowerCase()}
     </span>
   );
 }
 
-function FeeBadge({ status }: { status: string }) {
-  const cls =
-    status === 'paid'    ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-    status === 'partial' ? 'bg-amber-50 text-amber-700 border-amber-200' :
-    status === 'waived'  ? 'bg-blue-50 text-blue-700 border-blue-200' :
-                           'bg-rose-50 text-rose-700 border-rose-200';
-  return (
-    <span className={`px-2 py-0.5 rounded-full text-[10.5px] font-bold border ${cls} capitalize`}>
-      {status}
-    </span>
-  );
-}
-
-function AttendanceBar({ pct }: { pct: number }) {
-  const color = pct >= 80 ? '#10b981' : pct >= 65 ? '#f59e0b' : '#ef4444';
-  return (
-    <div className="flex items-center gap-2">
-      <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-        <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: color }} />
-      </div>
-      <span className="text-xs font-bold text-slate-700">{pct}%</span>
-    </div>
-  );
-}
-
-// ── Column sort header ─────────────────────────────────────────────────────────
 function SortHeader({
   label, col, sortBy, sortDir, onSort,
 }: {
-  label: string; col: keyof StudentListItem;
-  sortBy: keyof StudentListItem; sortDir: SortDirection;
-  onSort: (col: keyof StudentListItem) => void;
+  label: string; col: StudentSortField;
+  sortBy: StudentSortField; sortDir: SortDirection;
+  onSort: (col: StudentSortField) => void;
 }) {
   const active = sortBy === col;
   return (
@@ -76,11 +40,10 @@ function SortHeader({
   );
 }
 
-// ── Row Action Menu ────────────────────────────────────────────────────────────
 function RowActions({ student, onView, onEdit, onDelete }: {
   student: StudentListItem;
-  onView:   (s: StudentListItem) => void;
-  onEdit:   (s: StudentListItem) => void;
+  onView: (s: StudentListItem) => void;
+  onEdit: (s: StudentListItem) => void;
   onDelete: (s: StudentListItem) => void;
 }) {
   const [open, setOpen] = React.useState(false);
@@ -114,7 +77,7 @@ function RowActions({ student, onView, onEdit, onDelete }: {
           </button>
           <div className="h-px bg-slate-100 my-1" />
           <button onClick={() => { onDelete(student); setOpen(false); }} className="flex items-center gap-2 w-full px-3 py-2 hover:bg-rose-50 text-rose-600 font-medium">
-            <Trash2 className="w-3.5 h-3.5" /> Remove
+            <Trash2 className="w-3.5 h-3.5" /> Archive
           </button>
         </div>
       )}
@@ -122,19 +85,18 @@ function RowActions({ student, onView, onEdit, onDelete }: {
   );
 }
 
-// ── Main Table ─────────────────────────────────────────────────────────────────
 export interface StudentsTableProps {
-  students:      StudentListItem[];
-  loading:       boolean;
-  selectedIds:   Set<string>;
-  sortBy:        keyof StudentListItem;
-  sortDir:       SortDirection;
-  onSort:        (col: keyof StudentListItem) => void;
-  onSelectAll:   () => void;
-  onSelectOne:   (id: string) => void;
-  onView:        (s: StudentListItem) => void;
-  onEdit:        (s: StudentListItem) => void;
-  onDelete:      (s: StudentListItem) => void;
+  students: StudentListItem[];
+  loading: boolean;
+  selectedIds: Set<string>;
+  sortBy: StudentSortField;
+  sortDir: SortDirection;
+  onSort: (col: StudentSortField) => void;
+  onSelectAll: () => void;
+  onSelectOne: (id: string) => void;
+  onView: (s: StudentListItem) => void;
+  onEdit: (s: StudentListItem) => void;
+  onDelete: (s: StudentListItem) => void;
 }
 
 function TableSkeleton() {
@@ -142,7 +104,7 @@ function TableSkeleton() {
     <tbody>
       {Array.from({ length: 8 }).map((_, i) => (
         <tr key={i} className="animate-pulse border-b border-slate-50">
-          {Array.from({ length: 10 }).map((__, j) => (
+          {Array.from({ length: 8 }).map((__, j) => (
             <td key={j} className="px-4 py-3.5">
               <div className="h-3 bg-slate-100 rounded-full" style={{ width: `${60 + (j * 7) % 40}%` }} />
             </td>
@@ -157,7 +119,7 @@ function EmptyState() {
   return (
     <tbody>
       <tr>
-        <td colSpan={11} className="py-20 text-center">
+        <td colSpan={8} className="py-20 text-center">
           <div className="flex flex-col items-center gap-3">
             <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center">
               <CheckSquare className="w-7 h-7 text-slate-300" />
@@ -190,15 +152,13 @@ export function StudentsTable({
                                  <Square className="w-4 h-4" />}
               </button>
             </th>
-            <SortHeader label="Student"    col="name"          sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-            <SortHeader label="Roll No"    col="rollNo"        sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-            <SortHeader label="Program"    col="program"       sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-            <SortHeader label="Batch"      col="batchLabel"    sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-            <SortHeader label="Attendance" col="attendancePct" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-            <SortHeader label="Avg Score"  col="avgScore"      sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-            <SortHeader label="Fee"        col="feeStatus"     sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-            <SortHeader label="Performance" col="riskLevel"     sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-            <th className="px-4 py-3 font-semibold text-slate-600">Parent</th>
+            <SortHeader label="Student" col="name" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+            <SortHeader label="Roll No" col="rollNumber" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+            <th className="px-4 py-3 font-semibold text-slate-600">Batch</th>
+            <th className="px-4 py-3 font-semibold text-slate-600">Tags</th>
+            <th className="px-4 py-3 font-semibold text-slate-600">Status</th>
+            <th className="px-4 py-3 font-semibold text-slate-600">Guardian</th>
+            <SortHeader label="Admitted" col="admissionDate" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
             <th className="px-4 py-3 w-10" />
           </tr>
         </thead>
@@ -223,24 +183,31 @@ export function StudentsTable({
                       <div className="w-7 h-7 rounded-full bg-gradient-to-br from-indigo-500 to-blue-600 flex items-center justify-center text-white font-bold text-[10px] shrink-0">
                         {s.avatarInitials}
                       </div>
-                      <span className="font-bold text-slate-900 hover:text-indigo-600 transition-colors">{s.name}</span>
+                      <div>
+                        <span className="font-bold text-slate-900 hover:text-indigo-600 transition-colors block">{s.name}</span>
+                        <span className="text-[10px] text-slate-400">{s.email}</span>
+                      </div>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-slate-500 font-medium">{s.rollNo}</td>
-                  <td className="px-4 py-3">
-                    <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-md font-bold">{s.program}</span>
-                  </td>
+                  <td className="px-4 py-3 text-slate-500 font-medium">{s.rollNumber ?? '—'}</td>
                   <td className="px-4 py-3 text-blue-600 font-semibold max-w-[140px] truncate">{s.batchLabel}</td>
-                  <td className="px-4 py-3"><AttendanceBar pct={s.attendancePct} /></td>
-                  <td className="px-4 py-3 font-bold text-slate-900">{s.avgScore}%</td>
-                  <td className="px-4 py-3"><FeeBadge status={s.feeStatus} /></td>
-                  <td className="px-4 py-3"><PerformanceBadge level={s.riskLevel} /></td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap gap-1 max-w-[160px]">
+                      {s.tags.length === 0 && <span className="text-slate-300">—</span>}
+                      {s.tags.slice(0, 2).map((t) => (
+                        <span key={t} className="px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded text-[10px] font-medium">{t}</span>
+                      ))}
+                      {s.tags.length > 2 && <span className="text-[10px] text-slate-400">+{s.tags.length - 2}</span>}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3"><StatusBadge status={s.status} /></td>
                   <td className="px-4 py-3">
                     <div>
-                      <p className="font-medium text-slate-700">{s.parentName ?? '—'}</p>
-                      {s.parentPhone && <p className="text-[10px] text-slate-400">{s.parentPhone}</p>}
+                      <p className="font-medium text-slate-700">{s.guardianName ?? '—'}</p>
+                      {s.guardianPhone && <p className="text-[10px] text-slate-400">{s.guardianPhone}</p>}
                     </div>
                   </td>
+                  <td className="px-4 py-3 text-slate-500">{new Date(s.admissionDate).toLocaleDateString()}</td>
                   <td className="px-4 py-3">
                     <RowActions student={s} onView={onView} onEdit={onEdit} onDelete={onDelete} />
                   </td>

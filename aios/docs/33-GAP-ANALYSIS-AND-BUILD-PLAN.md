@@ -1982,6 +1982,115 @@ or provider-resolution errors), sent a real `fetch()` against the `override` end
 "deployed and working" has been consistent throughout: real code, real tests, one real live boot, honest about
 what a live boot alone can't prove.
 
+### Phase 16–23: Admin Dashboard — roster real-data rewire + Attendance domain (this session)
+
+Continuing from Phase 15's close: the Admin Dashboard's own gap analysis (this doc's earlier §5 "Admin-screens
+consolidation" and §7 item 2) had left Students/Teachers/Batches, the Academics "Operations" tab, and Admin
+Overview/Analytics/Settings on the mock `features/*` layer, and Attendance had no backend at all. This session
+closed that entire remaining surface — the last mock-vs-real fork in the app.
+
+**User's binding scope decisions, recorded before building (same "flag, don't decide unilaterally" discipline
+as every prior fork in this doc):** (1) build Attendance fully now, not deferred; (2) remove every field with no
+real backing service (fee status, risk scoring, teacher rating/appraisal/leave, revenue) rather than inventing a
+new domain for them — compute an honest equivalent only where real data already supports it; (3) Founder's 7
+remaining mock screens are explicitly out of scope (Admin-role only); (4) run all phases straight through, one
+report at the end.
+
+**A genuine environment discovery, not assumed**: unlike every prior phase's documented sandbox (no live
+Postgres), this session's environment has a real dev Postgres (Supabase) already migrated and seeded — found by
+literally hitting a live `students` endpoint and getting real rows back, not by any prior claim. This meant
+every screen below was verified against real data end-to-end (create → appears in list → real stats update →
+real audit-log entry), not just typechecked and unit-tested like Phases 1–15 had to settle for. One real, valuable
+side-fix this unlocked: `apps/api-python/.env`'s `DATABASE_URL` was still the stock `localhost:5432` placeholder
+(comment literally said "same instance as apps/api" — it wasn't). Fixed to match `apps/api/.env`'s real Supabase
+URL, which is what let the pre-existing, real `GET /analytics/batch/:id/heatmap` endpoint (pandas aggregation
+over `MasteryScore`, Phase 6.5-era code, never live-verified before) actually be exercised for the first time.
+
+**Phase 16 — Students roster.** Backend already had full CRUD (Phase 1-era `StudentsService`); the gap was
+entirely `search/sort/status filter` (added to `QueryStudentsDto`/`findAll`) and a new `GET .../students/stats`
+aggregate endpoint (real counts by batch/tag/status/enrollment-month, `students.service.spec.ts` +8). Frontend:
+rewired `AdminStudents.tsx` and all of `features/students/*` off the mock `students.mock.ts` (deleted, along with
+`services/students.service.ts`) onto real `useApi.ts` hooks; dropped `feeStatus`/`riskLevel`/`avgScore`(list-level)
+/`rank`/program entirely per the user's ruling; `StudentProfileDrawer`'s Timeline tab became a real History tab
+(`StudentHistory` rows already existed, just never surfaced). Verified live: enrolled a real student, archived
+another (status flipped to INACTIVE, stats updated), profile drawer showed real score/mastery/history.
+
+**Phase 17 — Teachers roster.** Same pattern. Backend gap: no archive endpoint at all (`DELETE :profileId`
+added) and no stats aggregate (added, by-subject/by-batch-assignment). `teachers.service.spec.ts` +11. Dropped
+rating/appraisal/leave/faculty-ranking (no HR domain exists); kept the schema's real `availability` field and
+subject/batch assignments. `TeacherProfileDrawer` gained a real Batches tab wired to the existing
+assign/remove-from-batch endpoints. Verified live against the real seeded teacher.
+
+**Phase 18 — Batches roster.** Backend gap: no archive endpoint (`Batch.isActive` already existed as a field —
+added `DELETE :batchId` as an explicit, audited action over it rather than routing through the generic PATCH,
+matching every other entity's soft-delete convention) and a stats endpoint (by-class-year, top-by-enrollment).
+`batches.service.spec.ts` +14. The list endpoint has no server-side pagination (small per-institute counts don't
+need it) — `useBatchesList` applies real search/filter/sort/pagination client-side over the actually-fetched list,
+not a mock. `BatchProfileDrawer`'s Performance tab reuses the pre-existing real `getBatchPerformance` (per-student
+avgScore/rank/status derived from `ScoreRecord`, Phase-2-era code) instead of inventing new analytics. **A real
+bug found and fixed during verification**: `toProfile()` read `studentCount`/`teacherCount` from `_count`, which
+`findBatchById` doesn't return (only `findAllBatches` does) — the drawer showed 0/0 despite listing real students
+below. Fixed to derive the count from the actual returned arrays when `_count` is absent.
+
+**Phase 19 — Academics "Operations" tab.** The Curriculum tab was already real (Phase 2). Operations was full
+of invented syllabus trends, an exam pipeline, teacher tasks, and AI insights with no real backing. Replaced with
+real counts only: subject/chapter/topic counts from the existing curriculum tree, batch count, questions-pending-
+approval and open-doubts counts (via `isApproved`/`status` filters on the already-real `useQuestions`/`useDoubts`
+list endpoints, reading `meta.total` with `limit=1` rather than fetching full pages just to count). Deleted the
+entire mock `features/academics/*` module.
+
+**Phase 20 — Attendance: new domain, built end-to-end.** Confirmed nothing existed — no Prisma model, no
+module, `AdminAttendance.tsx` was 100% hardcoded arrays. Added `AttendanceRecord`/`AttendanceStatus` (additive
+schema, migrated for real this time — `20260823214058_add_attendance_records` — since a real dev DB exists this
+session). New `apps/api/src/attendance/*`: `POST` bulk-mark (upsert, idempotent, validates every student actually
+belongs to the target batch), `PATCH :id` correction (mandatory reason, `correctedAt`/`correctionReason`,
+audit-logged — same pattern as every other after-the-fact-change gate in this app), `GET` list (batch/student/
+date-range filters, teacher-batch-scoped), `GET summary` (real per-batch/per-student percentages computed from
+actual rows — PRESENT/LATE count as attended, EXCUSED is removed from both numerator and denominator rather than
+counted against the student, ABSENT counts against; never a canned number). `attendance.service.spec.ts`, 12
+tests (RBAC, tenant isolation, enrollment validation, correction audit trail, the percentage math itself).
+Frontend: batch+date roster grid for marking (locks once a record exists for that date, routing any further
+change through the correction dialog rather than silently overwriting history), a Summary tab with a real donut
++ per-batch bar chart + weakest-attendance student list. Verified live end-to-end: marked a real student absent,
+corrected it to present with a reason, watched the audit log, stats, and donut all update correctly.
+
+**Phase 21 — Admin Overview.** `AdminOverview.tsx` (the literal dashboard landing screen) was reading from
+`@/lib/mock-data/admin` — confirmed 100% invented (₹24.8L fee collection, 1,284 fixed students, canned alerts).
+A second, unused implementation (`DashboardOverview.tsx`) existed with zero importers — confirmed orphaned and
+deleted, same as every other confirmed-dead file this project has removed rather than left behind. Rebuilt from
+real hooks only: KPI row (student/teacher/batch/exam counts), a real "Pending Actions" panel (pending questions,
+open doubts, unassigned teachers, inactive students — genuinely actionable admin to-dos, not fake alert text), a
+real audit-log tail, and the new Attendance summary's real donut. No revenue tile anywhere.
+
+**Phase 22 — Admin Analytics.** Also 100% invented (`REVENUE_DATA`/`ENROLLMENT_DATA` literals). Rebuilt around
+two genuinely real sources: institute-wide enrollment trend (from `StudentProfile.admissionDate`, already computed
+by Phase 16's stats endpoint) and a per-batch topic mastery heatmap — the pre-existing but never-live-verified
+Python `heatmap` endpoint described above, now confirmed working (returns an honest empty array for this
+session's students, who have no `MasteryScore` rows yet — not padded with anything).
+
+**Phase 23 — Institute Settings.** `AdminSystemSettings.tsx` had 4 tabs; only "Institute Profile" and "Security &
+Access" map to anything real (`PATCH /institutes/:id`, and the real `AllowListEntry` CRUD — confirmed live:
+adding an entry actually appears in the same list `AuthService`'s login allow-list check reads from, since the
+seeded demo accounts are themselves allow-list rows). "Academic Rules" and "Notification Preferences" were
+dropped outright — no schema/service backs either, and building one would repeat the exact mistake the user's
+own scope ruling (item 2 above) already steered this session away from once. Deleted `features/settings/*`.
+
+**Deliberately not touched, flagged rather than silently skipped:**
+- Founder's 7 remaining mock screens (Subscriptions/Users/Analytics/FeatureManagement/Integrations/Tickets/
+  Settings) — explicit user decision, out of scope for this Admin-only pass.
+- `admin/assignments/AssignmentsList.tsx` — same "real backend, orphaned route" shape as Papers/Doubts before
+  Phases 4–5 wired them into the nav. Not part of the user's explicit ask list; flagged as a quick-win candidate
+  for whoever picks up Admin work next, not built speculatively here.
+- Fee/billing, teacher appraisal/leave, and student risk-scoring as real domains — no service exists; the user's
+  explicit ruling was to remove the UI rather than invent the backend for it in this pass.
+
+**Verified:** `pnpm typecheck`/lint clean on both `apps/api` and `apps/web` (0 errors; only the pre-existing
+`@typescript-eslint/no-explicit-any` warning style already present everywhere else in both codebases); `apps/api`
+full suite 395/395 passing (up from 335 at Phase 15's close); `apps/api` production build (`nest build`) clean;
+`apps/web` production build (`next build`) clean, all 13 routes prerendered; Python suite 54/54 passing. Every
+rewired screen was live-verified in-browser against the real seeded Postgres data described above — not just
+typechecked, the first time every phase in this doc has been able to say that.
+
 ## 6. Definition of Done reminder
 
 Every feature built from here forward is checked against the global gate in `19-ACCEPTANCE-CRITERIA.md` /

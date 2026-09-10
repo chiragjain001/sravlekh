@@ -1,12 +1,26 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Sparkles, X, Wand2, CheckCircle2, ArrowRight } from 'lucide-react';
+import { Sparkles, X, Wand2, ArrowRight } from 'lucide-react';
+import { useGenerateBlueprintAI } from '@/hooks/useApi';
+
+export interface AiBlueprintRule {
+  topicName: string;
+  questionType: string;
+  difficulty: string;
+  count: number;
+}
+
+export interface AiBlueprintResult {
+  title: string;
+  duration: number;
+  rules: AiBlueprintRule[];
+}
 
 interface AiAssistantModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onApplyPrompt: (promptText: string) => void;
+  onApplyResult: (result: AiBlueprintResult) => void;
 }
 
 const PRESET_PROMPTS = [
@@ -16,20 +30,21 @@ const PRESET_PROMPTS = [
   'Build a 15-question DPP on Torque and Angular Momentum with high PYQ percentage.'
 ];
 
-export function AiAssistantModal({ isOpen, onClose, onApplyPrompt }: AiAssistantModalProps) {
+export function AiAssistantModal({ isOpen, onClose, onApplyResult }: AiAssistantModalProps) {
   const [prompt, setPrompt] = useState('');
-  const [isGenerating, setIsGenerating] = useState(false);
+  const generateBlueprint = useGenerateBlueprintAI();
 
   if (!isOpen) return null;
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     if (!prompt.trim()) return;
-    setIsGenerating(true);
-    setTimeout(() => {
-      onApplyPrompt(prompt);
-      setIsGenerating(false);
+    try {
+      const res = await generateBlueprint.mutateAsync({ prompt });
+      onApplyResult(res.data as AiBlueprintResult);
       onClose();
-    }, 800);
+    } catch {
+      // useGenerateBlueprintAI's onError already surfaces a toast.
+    }
   };
 
   return (
@@ -88,10 +103,10 @@ export function AiAssistantModal({ isOpen, onClose, onApplyPrompt }: AiAssistant
           </button>
           <button
             onClick={handleGenerate}
-            disabled={!prompt.trim() || isGenerating}
+            disabled={!prompt.trim() || generateBlueprint.isPending}
             className="px-6 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-bold text-[13px] rounded-xl shadow-md transition-all flex items-center gap-2 disabled:opacity-50"
           >
-            {isGenerating ? (
+            {generateBlueprint.isPending ? (
               <>
                 <Wand2 className="w-4 h-4 animate-spin" />
                 Auto-Filling Assessment...

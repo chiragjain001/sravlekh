@@ -1,175 +1,125 @@
 // ─── Students Feature: Types ──────────────────────────────────────────────────
-// These types drive the Students Module service layer.
-// The Student domain types in /types/domain/student.types.ts remain the canonical
-// entity shape. These are the "view-model" and "service-param" types consumed
-// exclusively by the Students Module.
+// Real shapes only — mirrors apps/api/src/students/dto/student.dto.ts and the
+// StudentProfile Prisma model. No field here exists without a backing endpoint.
 
-export type StudentRiskLevel = 'low' | 'medium' | 'high' | 'critical';
-export type StudentFeeStatus = 'paid' | 'partial' | 'overdue' | 'waived';
-export type StudentStatus    = 'active' | 'inactive' | 'suspended' | 'graduated';
-export type SortDirection    = 'asc' | 'desc';
+export const STUDENT_TAG_VALUES = [
+  'fast-learner',
+  'concept-weak',
+  'needs-revision',
+  'high-risk',
+  'inconsistent',
+  'absentee-sensitive',
+  'exam-anxiety',
+  'ready-for-hard-paper',
+] as const;
+export type StudentTag = (typeof STUDENT_TAG_VALUES)[number];
 
-// ── Admin-facing student list record (flat, table-optimized)
+export type StudentAccountStatus = 'ACTIVE' | 'INACTIVE' | 'PENDING' | 'SUSPENDED';
+export type SortDirection = 'asc' | 'desc';
+export type StudentSortField = 'name' | 'rollNumber' | 'admissionDate';
+
+// ── Admin-facing student list record (flat, table-optimized) — matches the
+// StudentsController.findAll → StudentProfile shape returned by the API.
 export interface StudentListItem {
-  id:           string;
-  rollNo:       string;
-  name:         string;
-  email:        string;
-  phone:        string;
+  id: string;
+  userId: string;
+  rollNumber: string | null;
+  name: string;
+  email: string;
   avatarInitials: string;
 
-  // Academic placement
-  program:      string;   // 'JEE' | 'NEET' | '11th' | '12th' | etc.
-  batchId:      string;
-  batchLabel:   string;
-  classLabel:   string;
+  batchId: string | null;
+  batchLabel: string;
 
-  // Performance (computed)
-  avgScore:     number;         // 0–100
-  attendancePct: number;        // 0–100
-  weakTopicsCount: number;
-  rank:         number | null;
-  lastActiveAt: string;         // ISO
+  tags: string[];
+  status: StudentAccountStatus;
 
-  // Status flags
-  feeStatus:    StudentFeeStatus;
-  riskLevel:    StudentRiskLevel;
-  status:       StudentStatus;
+  guardianName: string | null;
+  guardianPhone: string | null;
+  guardianEmail: string | null;
+  address: string | null;
+  dateOfBirth: string | null;
 
-  // Parent
-  parentName:   string | null;
-  parentPhone:  string | null;
-
-  // Metadata
-  enrolledAt:   string;         // ISO
+  admissionDate: string; // ISO
 }
 
-// ── Full student profile for the detail drawer
+export interface StudentScoreRecord {
+  id: string;
+  score: number;
+  maxScore: number;
+  pct: number;
+  exam: { id: string; title: string; scheduledDate: string | null; type: string } | null;
+}
+
+export interface StudentMasteryRow {
+  id: string;
+  topicName: string;
+  subjectName: string;
+  score: number; // 0-1
+  lastUpdatedAt: string;
+}
+
+export interface StudentHistoryEntry {
+  id: string;
+  eventType: string;
+  description: string;
+  oldValue: string | null;
+  newValue: string | null;
+  changedAt: string;
+  changedByUserId: string | null;
+}
+
+// ── Full student profile for the detail drawer — matches StudentsService.findById
 export interface StudentProfile extends StudentListItem {
-  // Performance history
-  testHistory: StudentTestRecord[];
-  subjectScores: StudentSubjectScore[];
-  attendanceHistory: StudentAttendanceRecord[];
-
-  // Academic intelligence
-  weakTopics: StudentWeakTopic[];
-  aiInsights: StudentAIInsight[];
-
-  // Assignments summary
-  assignmentStats: {
-    total:     number;
-    submitted: number;
-    graded:    number;
-    overdue:   number;
-  };
-
-  // Timeline
-  timeline: StudentTimelineEvent[];
+  scoreRecords: StudentScoreRecord[];
+  masteryScores: StudentMasteryRow[];
+  profileHistory: StudentHistoryEntry[];
 }
 
-export interface StudentTestRecord {
-  testId:    string;
-  testName:  string;
-  date:      string;
-  score:     number;
-  maxScore:  number;
-  pct:       number;
-  rank:      number | null;
-  batchRank: number | null;
+// ── Real roster aggregates — matches StudentsService.getStats
+export interface StudentsStats {
+  total: number;
+  active: number;
+  inactive: number;
+  newLast30Days: number;
+  byBatch: { batchId: string | null; batchName: string; count: number }[];
+  byTag: { tag: string; count: number }[];
+  enrollmentByMonth: { month: string; count: number }[];
 }
-
-export interface StudentSubjectScore {
-  subject: string;
-  score:   number;
-  color:   string;
-}
-
-export interface StudentAttendanceRecord {
-  month:    string;
-  present:  number;
-  absent:   number;
-  total:    number;
-  pct:      number;
-}
-
-export interface StudentWeakTopic {
-  topic:    string;
-  subject:  string;
-  mastery:  number;   // 0–100 (lower = weaker)
-  trend:    'up' | 'down' | 'flat';
-}
-
-export interface StudentAIInsight {
-  type:    'warning' | 'info' | 'success';
-  message: string;
-  action:  string | null;
-}
-
-export interface StudentTimelineEvent {
-  id:        string;
-  type:      'enrolled' | 'test' | 'fee' | 'attendance' | 'intervention' | 'note';
-  title:     string;
-  detail:    string | null;
-  date:      string;
-  actor:     string;
-}
-
-// ── Analytics aggregates (for the Analytics tab)
-export interface StudentsAnalytics {
-  totalStudents:   number;
-  activeStudents:  number;
-  atRiskCount:     number;
-  newAdmissions:   number;
-
-  enrollmentTrend: EnrollmentPoint[];
-  feeBreakdown:    FeeBreakdownItem[];
-  subjectGapMap:   SubjectGapItem[];
-  riskDistribution: RiskDistItem[];
-  batchPerformance: BatchPerfItem[];
-}
-
-export interface EnrollmentPoint { month: string; count: number; }
-export interface FeeBreakdownItem { label: string; value: number; color: string; }
-export interface SubjectGapItem   { subject: string; gap: number; color: string; }
-export interface RiskDistItem     { level: string; count: number; color: string; }
-export interface BatchPerfItem    { batch: string; avg: number; attendance: number; }
 
 // ── Service layer param types
 export interface GetStudentsParams {
-  page?:      number;
-  pageSize?:  number;
-  search?:    string;
-  program?:   string;
-  batch?:     string;
-  status?:    StudentStatus;
-  feeStatus?: StudentFeeStatus;
-  riskLevel?: StudentRiskLevel;
-  sortBy?:    keyof StudentListItem;
-  sortDir?:   SortDirection;
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  batchId?: string;
+  tags?: string[];
+  status?: StudentAccountStatus;
+  sortBy?: StudentSortField;
+  sortDir?: SortDirection;
 }
 
 export interface CreateStudentInput {
-  name:         string;
-  email:        string;
-  phone:        string;
-  rollNo?:      string;
-  program:      string;
-  batchId:      string;
-  classId:      string;
-  enrolledExams: string[];
-  parentName?:  string;
-  parentPhone?: string;
+  name: string;
+  email: string;
+  rollNumber?: string;
+  dateOfBirth?: string;
+  guardianName?: string;
+  guardianPhone?: string;
+  guardianEmail?: string;
+  address?: string;
+  batchId?: string;
+  tags?: string[];
 }
 
 export interface UpdateStudentInput extends Partial<CreateStudentInput> {
-  id:     string;
-  status?: StudentStatus;
+  id: string;
 }
 
 export interface PaginatedStudents {
-  data:       StudentListItem[];
-  total:      number;
-  page:       number;
-  pageSize:   number;
+  data: StudentListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
   totalPages: number;
 }

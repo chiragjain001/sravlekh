@@ -51,9 +51,6 @@ export function AcademicContextProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const isDemoMode = typeof window !== 'undefined' &&
-      localStorage.getItem('aios_demo_mode') === 'true';
-
     store.replaceCtx({
       // ── Tenant (always from user — cannot be changed by UI)
       instituteId:  user.instituteId,

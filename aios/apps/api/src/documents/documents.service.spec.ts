@@ -5,6 +5,7 @@ import { DocumentsService } from './documents.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../infrastructure/storage/storage.service';
 import { CacheService } from '../infrastructure/cache/cache.service';
+import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
 import { AuthenticatedUser } from '../auth/auth.types';
 
 describe('DocumentsService', () => {
@@ -17,7 +18,7 @@ describe('DocumentsService', () => {
   let prisma: {
     assessmentDelivery: { findUnique: jest.Mock };
     documentBundle: { create: jest.Mock; findUnique: jest.Mock };
-    document: { findUnique: jest.Mock; update: jest.Mock };
+    document: { findUnique: jest.Mock; update: jest.Mock; findMany: jest.Mock };
     page: { findUnique: jest.Mock };
     pageImage: { findUnique: jest.Mock };
     pageRegion: { create: jest.Mock; update: jest.Mock; findUnique: jest.Mock; findMany: jest.Mock };
@@ -31,6 +32,7 @@ describe('DocumentsService', () => {
   };
   let storage: { buildKey: jest.Mock; upload: jest.Mock; getSignedDownloadUrl: jest.Mock };
   let cache: { get: jest.Mock; set: jest.Mock };
+  let featureFlags: { isEnabled: jest.Mock };
 
   const teacher: AuthenticatedUser = { id: 'teacher-1', email: 't@x.com', name: 'T', role: UserRole.TEACHER, instituteId: 'inst-1' };
   const student: AuthenticatedUser = { id: 'user-student-1', email: 's@x.com', name: 'S', role: UserRole.STUDENT, instituteId: 'inst-1' };
@@ -45,7 +47,7 @@ describe('DocumentsService', () => {
     prisma = {
       assessmentDelivery: { findUnique: jest.fn() },
       documentBundle: { create: jest.fn(), findUnique: jest.fn() },
-      document: { findUnique: jest.fn(), update: jest.fn() },
+      document: { findUnique: jest.fn(), update: jest.fn(), findMany: jest.fn() },
       page: { findUnique: jest.fn() },
       pageImage: { findUnique: jest.fn() },
       pageRegion: { create: jest.fn(), update: jest.fn(), findUnique: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
@@ -74,6 +76,7 @@ describe('DocumentsService', () => {
       getSignedDownloadUrl: jest.fn().mockResolvedValue('https://signed.example/file'),
     };
     cache = { get: jest.fn().mockResolvedValue(undefined), set: jest.fn().mockResolvedValue(undefined) };
+    featureFlags = { isEnabled: jest.fn().mockResolvedValue(true) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -81,6 +84,7 @@ describe('DocumentsService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: StorageService, useValue: storage },
         { provide: CacheService, useValue: cache },
+        { provide: FeatureFlagsService, useValue: featureFlags },
       ],
     }).compile();
     service = module.get(DocumentsService);
@@ -97,6 +101,40 @@ describe('DocumentsService', () => {
         id: 'd1', assessment: { instituteId: 'inst-1' }, captureProvider: { type: CaptureProviderType.MANUAL_GRID },
       });
       await expect(service.createBundle('inst-1', { assessmentDeliveryId: 'd1' }, teacher)).rejects.toThrow(BadRequestException);
+    });
+
+    it('refuses when the documentProcessing feature flag is disabled for the institute (Founder Console Phase 3)', async () => {
+      featureFlags.isEnabled.mockResolvedValueOnce(false);
+      await expect(service.createBundle('inst-1', { assessmentDeliveryId: 'd1' }, teacher)).rejects.toThrow(ForbiddenException);
+      expect(prisma.assessmentDelivery.findUnique).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('findDocumentsForBundle', () => {
+    it('404s when the bundle does not exist', async () => {
+      prisma.documentBundle.findUnique.mockResolvedValueOnce(null);
+      await expect(service.findDocumentsForBundle('inst-1', 'b1', teacher)).rejects.toThrow(NotFoundException);
+    });
+
+    it("404s when the bundle belongs to a different institute", async () => {
+      prisma.documentBundle.findUnique.mockResolvedValueOnce({
+        id: 'b1', assessmentDelivery: { assessment: { instituteId: 'inst-OTHER' } },
+      });
+      await expect(service.findDocumentsForBundle('inst-1', 'b1', teacher)).rejects.toThrow(NotFoundException);
+    });
+
+    it('lists documents for a real bundle in this institute', async () => {
+      prisma.documentBundle.findUnique.mockResolvedValueOnce({
+        id: 'b1', assessmentDelivery: { assessment: { instituteId: 'inst-1' } },
+      });
+      prisma.document.findMany.mockResolvedValueOnce([{ id: 'doc-1', status: 'UPLOADED' }]);
+
+      const result = await service.findDocumentsForBundle('inst-1', 'b1', teacher);
+
+      expect(result).toEqual([{ id: 'doc-1', status: 'UPLOADED' }]);
+      expect(prisma.document.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { documentBundleId: 'b1' } }),
+      );
     });
   });
 

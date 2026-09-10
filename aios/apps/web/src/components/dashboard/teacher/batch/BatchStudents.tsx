@@ -2,18 +2,19 @@
 
 import { useState } from 'react';
 import { Search, ChevronRight, Sparkles, Users, AlertTriangle, TrendingUp, Minus } from 'lucide-react';
+import { useBatchPerformance } from '@/hooks/useApi';
 
 interface Student {
-  id: string; name: string; rollNo: string;
-  avgScore: number; lastTestScore: number; lastTestMax: number;
+  id: string; name: string; rollNumber: string | null;
+  avgScore: number; lastTestScore: number | null; lastTestMax: number | null;
   status: string; rank: number;
 }
 
 const statusStyle = (s: string) => ({
   excellent: 'bg-emerald-100 text-emerald-700',
-  good:      'bg-sky-100     text-sky-700',
   average:   'bg-amber-100   text-amber-700',
   weak:      'bg-rose-100    text-rose-700',
+  unscored:  'bg-slate-100   text-slate-500',
 }[s] ?? 'bg-slate-100 text-slate-500');
 
 type FilterKey = 'all' | 'ai' | 'weak' | 'average' | 'excellent';
@@ -28,9 +29,9 @@ const FILTER_CONFIG: { key: FilterKey; label: string; icon: React.ReactNode; des
   },
   {
     key: 'ai',
-    label: 'AI Priority',
+    label: 'Needs Attention',
     icon: <Sparkles className="w-3.5 h-3.5" />,
-    desc: 'Need immediate attention',
+    desc: 'Weak, or average and slipping',
     color: 'bg-indigo-600 text-white border-indigo-600',
   },
   {
@@ -56,29 +57,34 @@ const FILTER_CONFIG: { key: FilterKey; label: string; icon: React.ReactNode; des
   },
 ];
 
-export function BatchStudents({ students, onSelectStudent }: {
-  students: Student[];
+export function BatchStudents({ batchId, onSelectStudent }: {
+  batchId: string;
   onSelectStudent: (id: string) => void;
 }) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<FilterKey>('all');
+  const { data: performance, isLoading } = useBatchPerformance(batchId);
+  const students: Student[] = performance?.students ?? [];
 
   const weakCount      = students.filter(s => s.status === 'weak').length;
-  const averageCount   = students.filter(s => s.status === 'average' || s.status === 'good').length;
+  const averageCount   = students.filter(s => s.status === 'average').length;
   const excellentCount = students.filter(s => s.status === 'excellent').length;
-  // AI Priority = weak + average who need remedial attention
   const aiPriorityIds  = students.filter(s => s.status === 'weak' || (s.status === 'average' && s.avgScore < 65)).map(s => s.id);
 
   const filtered = [...students].sort((a,b) => a.name.localeCompare(b.name)).filter(s => {
-    const matchSearch = s.name.toLowerCase().includes(search.toLowerCase()) || s.rollNo.includes(search);
+    const matchSearch = s.name.toLowerCase().includes(search.toLowerCase()) || (s.rollNumber ?? '').includes(search);
     const matchFilter =
       filter === 'all'       ? true :
       filter === 'ai'        ? aiPriorityIds.includes(s.id) :
       filter === 'weak'      ? s.status === 'weak' :
-      filter === 'average'   ? (s.status === 'average' || s.status === 'good') :
+      filter === 'average'   ? s.status === 'average' :
                                s.status === 'excellent';
     return matchSearch && matchFilter;
   });
+
+  if (isLoading) {
+    return <div className="py-16 text-center text-slate-400 text-[13px] animate-fadein">Loading students…</div>;
+  }
 
   const getCounts = (key: FilterKey) => ({
     all:       students.length,
@@ -181,12 +187,12 @@ export function BatchStudents({ students, onSelectStudent }: {
                     <div>
                       <span className="font-semibold text-slate-800 group-hover:text-indigo-700 transition-colors">{s.name}</span>
                       {aiPriorityIds.includes(s.id) && filter !== 'ai' && (
-                        <span className="ml-2 text-[9px] font-bold bg-indigo-100 text-indigo-600 px-1.5 py-0.5 rounded">AI</span>
+                        <span className="ml-2 text-[9px] font-bold bg-indigo-100 text-indigo-600 px-1.5 py-0.5 rounded">Priority</span>
                       )}
                     </div>
                   </div>
                 </td>
-                <td className="py-3.5 px-3 text-slate-500 hidden sm:table-cell">{s.rollNo}</td>
+                <td className="py-3.5 px-3 text-slate-500 hidden sm:table-cell">{s.rollNumber ?? '—'}</td>
                 <td className="py-3.5 px-3 text-center font-bold">
                   <span className={s.avgScore >= 75 ? 'text-emerald-600' : s.avgScore >= 60 ? 'text-amber-600' : 'text-rose-600'}>
                     {s.avgScore}%

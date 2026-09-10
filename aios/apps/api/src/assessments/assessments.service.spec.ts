@@ -4,6 +4,8 @@ import { UserRole, ExamStatus, EvaluationPolicyMode, StakesLevel, AssessmentKind
 import { AssessmentsService } from './assessments.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiEvaluationService } from '../ai-evaluation/ai-evaluation.service';
+import { EntitlementsService } from '../entitlements/entitlements.service';
+import { EntitlementResource } from '../entitlements/plan-definitions';
 import { AuthenticatedUser } from '../auth/auth.types';
 
 describe('AssessmentsService', () => {
@@ -20,6 +22,7 @@ describe('AssessmentsService', () => {
     $transaction: jest.Mock;
   };
   let aiEvaluationService: { enqueueBatch: jest.Mock };
+  let entitlements: { assertCanCreate: jest.Mock; ensurePlanDefinitions: jest.Mock; getSnapshot: jest.Mock };
 
   const admin: AuthenticatedUser = { id: 'admin-1', email: 'a@x.com', name: 'Admin', role: UserRole.ADMIN, instituteId: 'inst-1' };
   const teacher: AuthenticatedUser = { ...admin, id: 'teacher-1', role: UserRole.TEACHER };
@@ -37,11 +40,20 @@ describe('AssessmentsService', () => {
       $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
     };
     aiEvaluationService = { enqueueBatch: jest.fn().mockResolvedValue(undefined) };
+    entitlements = {
+      assertCanCreate: jest.fn().mockResolvedValue(undefined),
+      ensurePlanDefinitions: jest.fn().mockResolvedValue(undefined),
+      getSnapshot: jest.fn(),
+    };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AssessmentsService,
         { provide: PrismaService, useValue: prisma },
         { provide: AiEvaluationService, useValue: aiEvaluationService },
+        // Permissive — the monthly assessment-rate limit itself is covered in
+        // entitlements.service.spec.ts; enforcement at this call site is
+        // asserted in the dedicated block at the bottom of this file.
+        { provide: EntitlementsService, useValue: entitlements },
       ],
     }).compile();
     service = module.get(AssessmentsService);
@@ -73,7 +85,7 @@ describe('AssessmentsService', () => {
   describe('createDelivery', () => {
     const deliveryDto = { batchId: 'b1', captureProviderId: 'cp1', evaluationPolicyId: 'ep1' };
 
-    function mockHappyPath(overrides: { assessment?: any; evaluationPolicy?: any } = {}) {
+    function mockHappyPath(overrides: { assessment?: Record<string, unknown>; evaluationPolicy?: Record<string, unknown> } = {}) {
       prisma.assessment.findUnique.mockResolvedValueOnce(
         overrides.assessment ?? { id: 'a1', instituteId: 'inst-1', stakesLevel: StakesLevel.PRACTICE },
       );
@@ -333,6 +345,24 @@ describe('AssessmentsService', () => {
         service.unlockDelivery('inst-1', 'd1', { reason: 'reason enough', version: 0 }, admin),
       ).resolves.toBeDefined();
       expect(prisma.$transaction).toHaveBeenCalled();
+    });
+  });
+  // ── Plan-limit enforcement (monthly assessment rate) ───────────────────────
+  describe('createAssessment — plan limit enforcement', () => {
+    it('consults the entitlement gate for the monthly assessment allowance', async () => {
+      prisma.assessment.create.mockResolvedValueOnce({ id: 'asmt-1', title: 'Unit Test 1' });
+      await service.createAssessment('inst-1', baseAssessmentDto as any, admin);
+      expect(entitlements.assertCanCreate).toHaveBeenCalledWith('inst-1', EntitlementResource.ASSESSMENT);
+    });
+
+    it('creates nothing once the monthly allowance is exhausted', async () => {
+      entitlements.assertCanCreate.mockRejectedValueOnce(
+        new ForbiddenException({ code: 'PLAN_LIMIT_EXCEEDED', message: 'limit' }),
+      );
+      await expect(
+        service.createAssessment('inst-1', baseAssessmentDto as any, admin),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.assessment.create).not.toHaveBeenCalled();
     });
   });
 });

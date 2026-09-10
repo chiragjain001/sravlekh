@@ -28,6 +28,16 @@ export class UsersController {
     return this.usersService.findAllByInstitute(instituteId, user);
   }
 
+  // Self-service — must be declared before ':id' so Nest doesn't try to
+  // resolve 'me' as a user id. Any authenticated role can log themselves
+  // out of every device; no @Roles() restriction needed since it only ever
+  // acts on the caller's own account.
+  @Patch('me/logout-all-devices')
+  @ApiOperation({ summary: 'Invalidate every session currently issued for the logged-in user, including this one' })
+  logoutAllMyDevices(@CurrentUser() user: AuthenticatedUser) {
+    return this.usersService.logoutAllMyDevices(user);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get a user by ID' })
   findById(
@@ -46,5 +56,15 @@ export class UsersController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.usersService.updateStatus(id, dto.status, user);
+  }
+
+  @Patch(':id/force-logout')
+  @Roles(UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Invalidate every session currently issued for this user' })
+  forceLogout(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.usersService.forceLogout(id, user);
   }
 }

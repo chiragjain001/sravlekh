@@ -73,41 +73,11 @@ const ROLE_CONFIG: Record<UserRole, { accent: string; badge: string; badgeBg: st
     badgeBg:   'bg-emerald-900/60',
     badgeText: 'text-emerald-300',
   },
-  ACADEMIC_HEAD: {
-    accent:    'bg-teal-500',
-    badge:     'Academic Head',
-    badgeBg:   'bg-teal-900/60',
-    badgeText: 'text-teal-300',
-  },
-  COORDINATOR: {
-    accent:    'bg-cyan-500',
-    badge:     'Coordinator',
-    badgeBg:   'bg-cyan-900/60',
-    badgeText: 'text-cyan-300',
-  },
   ADMIN: {
     accent:    'bg-sky-500',
     badge:     'Admin',
     badgeBg:   'bg-sky-900/60',
     badgeText: 'text-sky-300',
-  },
-  RECEPTIONIST: {
-    accent:    'bg-amber-500',
-    badge:     'Receptionist',
-    badgeBg:   'bg-amber-900/60',
-    badgeText: 'text-amber-300',
-  },
-  ACCOUNTANT: {
-    accent:    'bg-orange-500',
-    badge:     'Accountant',
-    badgeBg:   'bg-orange-900/60',
-    badgeText: 'text-orange-300',
-  },
-  PARENT: {
-    accent:    'bg-pink-500',
-    badge:     'Parent',
-    badgeBg:   'bg-pink-900/60',
-    badgeText: 'text-pink-300',
   },
   FOUNDER: {
     accent:    'bg-violet-500',
@@ -127,6 +97,8 @@ interface SidebarProps {
   activeNav: string;
   onNavChange: (item: string) => void;
   onLogout?: () => void;
+  /** Real pending-evaluation count for the "Evaluation Queue" nav badge — omit or 0 to hide it. Previously hardcoded to 3 for every role. */
+  evaluationQueueCount?: number;
 }
 
 export function Sidebar({
@@ -138,6 +110,7 @@ export function Sidebar({
   activeNav,
   onNavChange,
   onLogout,
+  evaluationQueueCount = 0,
 }: SidebarProps) {
   const { sidebarCollapsed, toggleSidebar } = useDashboardStore();
   const cfg = ROLE_CONFIG[role];
@@ -215,9 +188,9 @@ export function Sidebar({
             >
               <Icon className={`w-[18px] h-[18px] flex-shrink-0 ${isActive ? 'text-indigo-400' : ''}`} />
               {!sidebarCollapsed && <span className="truncate">{item}</span>}
-              {!sidebarCollapsed && item === 'Evaluation Queue' && (
-                <span className="ml-auto bg-rose-500 text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center font-bold">
-                  3
+              {!sidebarCollapsed && item === 'Evaluation Queue' && evaluationQueueCount > 0 && (
+                <span className="ml-auto bg-rose-500 text-white text-[10px] rounded-full min-w-4 h-4 px-1 flex items-center justify-center font-bold">
+                  {evaluationQueueCount > 99 ? '99+' : evaluationQueueCount}
                 </span>
               )}
             </button>

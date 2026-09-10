@@ -4,13 +4,14 @@ import { Job } from 'bullmq';
 import { OcrService } from './ocr.service';
 import { OCR_QUEUE, OcrJobData } from './ocr.constants';
 import { reportDeadLetter } from '../shared/logging/dead-letter';
+import { QUEUE_POLICY, workerOptions } from '../infrastructure/queue/queue-policy';
 
 /**
  * Consumes ocr jobs enqueued once a QuestionRegion is confirmed mapped to a
  * question. Retries per 08-ERROR-HANDLING.md's async job failure policy,
  * mirroring MasteryRecalcProcessor's structure exactly.
  */
-@Processor(OCR_QUEUE)
+@Processor(OCR_QUEUE, workerOptions(QUEUE_POLICY.ocr))
 export class OcrProcessor extends WorkerHost {
   private readonly logger = new Logger(OcrProcessor.name);
 

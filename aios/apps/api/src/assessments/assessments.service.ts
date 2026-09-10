@@ -7,18 +7,14 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { AuditAction, UserRole, ExamStatus, EvaluationPolicyMode, StakesLevel, QuestionType, EvaluationStatus } from '@prisma/client';
+import { AuditAction, UserRole, ExamStatus, EvaluationPolicyMode, StakesLevel, Prisma } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { AiEvaluationService } from '../ai-evaluation/ai-evaluation.service';
 import { EXAM_STATUS_TRANSITIONS as NEXT_STATUS } from '../shared/exam-status-transitions';
 import { withVersionGuard } from '../shared/version-guard';
-
-/**
- * 32-AI-GOVERNANCE-POLICY.md §2 / 27-AI-EVALUATION-ARCHITECTURE.md §7, fix #3:
- * keys off Assessment.stakesLevel, NOT assessmentKind — a graded PRACTICE_TEST
- * is gated identically to a graded SCHOOL_THEORY_EXAM.
- */
-const SUBJECTIVE_QUESTION_TYPES: QuestionType[] = [QuestionType.SHORT_ANSWER, QuestionType.LONG_ANSWER, QuestionType.PASSAGE_BASED];
+import { assertNoUnevaluatedSubjectiveResponses } from '../shared/evaluation-lock-gate';
+import { EntitlementsService } from '../entitlements/entitlements.service';
+import { EntitlementResource } from '../entitlements/plan-definitions';
 import {
   CreateAssessmentDto,
   CreateAssessmentDeliveryDto,
@@ -41,12 +37,21 @@ export class AssessmentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly aiEvaluationService: AiEvaluationService,
+    private readonly entitlements: EntitlementsService,
   ) {}
 
   // ── Assessments ───────────────────────────────────────────────────────────
 
   async createAssessment(instituteId: string, dto: CreateAssessmentDto, actor: AuthenticatedUser) {
     this.assertInstituteAccess(actor, instituteId);
+
+    // maxAssessmentsPerMonth is a rate limit, not a total — see
+    // EntitlementsService.countAssessmentsThisMonth. Not wrapped in a
+    // transaction here because this create is a single statement with no
+    // multi-write invariant to protect; the worst case is a monthly counter
+    // overshooting by one under exact-boundary concurrency, which is not worth
+    // a transaction the rest of this method doesn't need.
+    await this.entitlements.assertCanCreate(instituteId, EntitlementResource.ASSESSMENT);
 
     if (dto.paperId) {
       const paper = await this.prisma.paper.findUnique({ where: { id: dto.paperId } });
@@ -167,7 +172,7 @@ export class AssessmentsService {
     }
 
     if (dto.status === ExamStatus.LOCKED && delivery.assessment.stakesLevel === StakesLevel.GRADED) {
-      await this.assertNoUnevaluatedSubjectiveResponses(deliveryId);
+      await assertNoUnevaluatedSubjectiveResponses(this.prisma, { attempt: { assessmentDeliveryId: deliveryId } });
     }
 
     const data: Record<string, unknown> = { status: dto.status, version: { increment: 1 } };
@@ -187,7 +192,7 @@ export class AssessmentsService {
           this.prisma.auditLog.create({
             data: {
               instituteId, actorId: actor.id, action: auditAction, entity: 'assessment_deliveries', entityId: deliveryId,
-              oldValue: { status: delivery.status } as any, newValue: { status: dto.status } as any,
+              oldValue: { status: delivery.status } as Prisma.InputJsonValue, newValue: { status: dto.status } as Prisma.InputJsonValue,
             },
           }),
         ]),
@@ -241,8 +246,8 @@ export class AssessmentsService {
         this.prisma.auditLog.create({
           data: {
             instituteId, actorId: actor.id, action: AuditAction.UNLOCK, entity: 'assessment_deliveries', entityId: deliveryId,
-            oldValue: { status: ExamStatus.LOCKED } as any,
-            newValue: { status: ExamStatus.EVALUATING, reason: dto.reason } as any,
+            oldValue: { status: ExamStatus.LOCKED } as Prisma.InputJsonValue,
+            newValue: { status: ExamStatus.EVALUATING, reason: dto.reason } as Prisma.InputJsonValue,
           },
         }),
       ]),
@@ -254,39 +259,14 @@ export class AssessmentsService {
 
   // ── Private helpers ───────────────────────────────────────────────────────
 
-  /**
-   * 32-AI-GOVERNANCE-POLICY.md §2 / 27 §7 / 05-API-SPECIFICATION.md (V2 section)
-   * §11 SCHOOL_EXAM_LOCK_BLOCKED_UNEVALUATED — hard state-machine gate, not a
-   * policy document alone. A GRADED assessment's delivery cannot reach LOCKED
-   * while any subjective Response still lacks a TEACHER+ (i.e. not merely
-   * AI-suggested) current EvaluationVersion. This must hold true independent of
-   * whether AI evaluation is even in use for this delivery — an AI-suggested-
-   * but-never-reviewed response blocks LOCK exactly the same as an untouched one.
-   */
-  private async assertNoUnevaluatedSubjectiveResponses(deliveryId: string): Promise<void> {
-    const unevaluatedCount = await this.prisma.response.count({
-      where: {
-        attempt: { assessmentDeliveryId: deliveryId },
-        question: { type: { in: SUBJECTIVE_QUESTION_TYPES } },
-        OR: [
-          { evaluation: null },
-          { evaluation: { status: { in: [EvaluationStatus.PENDING, EvaluationStatus.AI_SUGGESTED] } } },
-        ],
-      },
-    });
-    if (unevaluatedCount > 0) {
-      throw new ConflictException({
-        code: 'SCHOOL_EXAM_LOCK_BLOCKED_UNEVALUATED',
-        message: `${unevaluatedCount} subjective response(s) still need a human evaluation decision before this GRADED delivery can be locked.`,
-      });
-    }
-  }
-
   private async getDeliveryWithTenantCheck(instituteId: string, deliveryId: string, actor: AuthenticatedUser) {
     this.assertInstituteAccess(actor, instituteId);
     const delivery = await this.prisma.assessmentDelivery.findUnique({
       where: { id: deliveryId },
-      include: { assessment: { select: { instituteId: true, stakesLevel: true } } },
+      include: {
+        assessment: { select: { instituteId: true, stakesLevel: true } },
+        captureProvider: { select: { id: true, type: true } },
+      },
     });
     if (!delivery || delivery.assessment.instituteId !== instituteId) throw new NotFoundException('Assessment delivery not found');
     return delivery;
@@ -300,7 +280,7 @@ export class AssessmentsService {
   private async writeAudit(instituteId: string, actorId: string, action: AuditAction, entity: string, entityId: string, oldValue: unknown, newValue: unknown) {
     try {
       await this.prisma.auditLog.create({
-        data: { instituteId, actorId, action, entity, entityId, oldValue: oldValue as any, newValue: newValue as any },
+        data: { instituteId, actorId, action, entity, entityId, oldValue: oldValue as Prisma.InputJsonValue, newValue: newValue as Prisma.InputJsonValue },
       });
     } catch (err) {
       this.logger.warn(`Failed to write audit log for ${entity}:${entityId}`, err as Error);

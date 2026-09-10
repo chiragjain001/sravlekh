@@ -59,7 +59,7 @@ export const adminData = {
 
   navItems: [
     'Dashboard', 'Students', 'Teachers', 'Batches', 'Academics', 'Question Bank',
-    'Papers', 'Exams', 'Doubts', 'Timetable', 'Attendance', 'Communication',
-    'Reports', 'System Settings', 'Audit Logs', 'Evaluation Quality',
+    'Papers', 'Assignments', 'Exams', 'Doubts', 'Timetable', 'Attendance', 'Communication',
+    'Reports', 'Analytics', 'System Settings', 'Audit Logs', 'Evaluation Quality',
   ],
 };

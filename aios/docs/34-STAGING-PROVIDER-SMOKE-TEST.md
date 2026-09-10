@@ -14,12 +14,19 @@ Every completed B1 verification — 166 Python tests, 515 Node tests, four real-
 
 ## 2. Preconditions
 
+Everything below lives in **one file**, `infra/staging/staging.env`, and every
+staging entrypoint reads it and nothing else. There is deliberately no second way
+to configure a staging process.
+
 | Requirement | Needed by |
 |---|---|
-| `AIOS_ENV=staging` | Refusal guard #1 |
-| `STAGING_DB_ALLOWLIST` naming the target `host:port` | Refusal guard #2 |
-| `OPENAI_API_KEY` — a **staging** key, exported into the environment | All checks |
-| Disposable Postgres (`infra/staging/docker-compose.yml`) | Checks 4, 8, 9 |
+| `AIOS_ENV=staging` | Smoke-test refusal guard #1, and it arms the boot guard in every service |
+| `DATABASE_URL` **and** `DIRECT_URL`, both staging | Boot guard, migrations — see §7 for why both |
+| `REDIS_URL` — the staging broker on `:6380` | Boot guard; API and worker queues |
+| `STAGING_DB_ALLOWLIST` naming the target `host:port` | Refusal guard #2, boot guard, migration wrapper |
+| `STAGING_REDIS_ALLOWLIST` naming the broker `host:port` | Boot guard |
+| `OPENAI_API_KEY` — a **staging** key | All checks |
+| Disposable Postgres + Redis (`infra/staging/docker-compose.yml`) | Checks 4, 8, 9; queues |
 | `SMOKE_OCR_IMAGE_URL` — provider-reachable image of legible printed text | Check 2 |
 
 The registry **bootstraps its own rows** on an empty database, so no seed script
@@ -47,11 +54,33 @@ cp infra/staging/staging.env.example infra/staging/staging.env   # then fill in 
 ./infra/staging/run-smoke.sh
 ```
 
-The runner starts the disposable database, applies migrations, generates both
-Prisma clients, and invokes the smoke test **unmodified**. To run it by hand
-instead, export the variables from `staging.env` and call
-`python scripts/staging_provider_smoke.py` directly — the runner is a
-convenience, never a substitute.
+That is the whole procedure, and it is the only one. The runner starts the
+disposable Postgres and Redis, **proves the targets are live and correct**,
+applies migrations **through the guarded wrapper**, generates both Prisma
+clients, invokes the smoke test **unmodified**, and verifies isolation
+afterwards.
+
+Do not assemble the steps by hand. The previous arrangement — remember to export
+the right variables on every command — is exactly what let a "staging" run come
+up attached to the shared database while looking completely normal. If you need
+a single step on its own:
+
+```bash
+./infra/staging/run-stack.sh prove     # target proof only, starts nothing
+```
+```bash
+node infra/staging/migrate-staging.js  # migrations, guarded
+```
+```bash
+node infra/staging/verify-isolation.js # post-run proof, needs the stack running
+```
+
+To run the API, worker or Python service against staging, use the launcher —
+never a hand-assembled command line:
+
+```bash
+./infra/staging/run-stack.sh api       # also: worker | python
+```
 
 `--skip-ocr` omits the vision call; `--only {evaluation,ocr,blueprint,registry,errors,governance}` runs one group. Roughly eight provider calls — cents. Run after any change to `src/providers/`, and before any release touching an AI call site.
 
@@ -82,13 +111,17 @@ convenience, never a substitute.
 
 ## 6. Infrastructure status
 
-**Not executed.** Re-checked 2026-09-04.
+**Not executed.** Re-checked 2026-09-06.
 
-### Prepared and committed
+### Prepared and verified live
 
-- `infra/staging/docker-compose.yml` — disposable Postgres on `127.0.0.1:5433`, RAM-backed so data cannot outlive the container
-- `infra/staging/staging.env.example` — template; the filled-in `staging.env` is gitignored
-- `infra/staging/run-smoke.sh` — brings the database up, applies migrations, generates both Prisma clients, runs the smoke test **unmodified**
+- `infra/staging/docker-compose.yml` — disposable Postgres on `127.0.0.1:5433` and Redis on `127.0.0.1:6380`, both RAM-backed so data cannot outlive the container
+- `infra/staging/staging.env.example` — the single source of staging configuration; the filled-in `staging.env` is gitignored
+- `infra/staging/run-stack.sh` — the only supported way to start a staging API, worker or Python service
+- `infra/staging/run-smoke.sh` — the only supported way to run the smoke procedure end to end
+- `infra/staging/migrate-staging.js` — the only supported way to migrate staging (§7)
+- `infra/staging/prove-targets.js` / `verify-isolation.js` — layers 1 and 3 of the isolation proof (§7)
+- Boot-time target guard in `apps/api/src/config/env.schema.ts` and `apps/api-python/src/config.py`
 - Prisma migrations committed (they were untracked, so no fresh environment could build the schema at all)
 - Guard #2 rewritten from a substring blocklist to an explicit allowlist
 
@@ -96,24 +129,132 @@ convenience, never a substitute.
 
 | Blocker | Needs |
 |---|---|
-| **Docker is not installed** | Docker Desktop — admin rights, ~500 MB download, licence acceptance, likely a reboot for the WSL2 backend. No `docker`/`podman` binary on this machine; no local Postgres either |
 | **No provider credential** | A staging-scoped, spend-capped key |
 | **No OCR test image** | A publicly reachable URL hosting synthetic printed text |
 
-All three need the operator's own accounts or machine privileges. Nothing was simulated.
+Both need the operator's own accounts. Nothing was simulated.
 
 ### To unblock
 
-1. Install Docker Desktop (or provide any Postgres reachable at a nominated `host:port`)
+1. `docker compose -f infra/staging/docker-compose.yml up -d`
 2. `cp infra/staging/staging.env.example infra/staging/staging.env`
 3. Fill in `OPENAI_API_KEY` (staging-scoped, spend-capped) and `SMOKE_OCR_IMAGE_URL`
-4. `./infra/staging/run-smoke.sh`
-5. Record each result as **Verified live / Verified by tests only / Unable to verify** in §7
+4. `./infra/staging/run-smoke.sh` — it performs the target proof, the guarded migration, the run and the isolation check
+5. Record each result as **Verified live / Verified by tests only / Unable to verify** in §8
 
-## 7. Results log
+## 7. Database and Redis targeting — read before migrating
+
+**Staging Postgres: `localhost:5433`, database `aios_staging`.
+Staging Redis: `localhost:6380`.** Both from
+`infra/staging/docker-compose.yml`; loopback-only and RAM-backed.
+**Required env file: `infra/staging/staging.env`** (gitignored; copy from the
+`.example`).
+
+### The trap
+
+This command looks right and is WRONG. **Do not run it.**
+
+```
+DATABASE_URL=postgresql://...localhost:5433/aios_staging  prisma migrate deploy
+```
+
+It migrates the **shared** database. `schema.prisma` declares both
+`url = env("DATABASE_URL")` and `directUrl = env("DIRECT_URL")`, and Prisma
+**migrations use `directUrl`** — which `packages/db/.env` points at the shared
+Supabase instance. Setting only `DATABASE_URL` leaves migrations aimed there,
+and nothing in the output makes that obvious.
+
+This is NOT an override problem. Verified precedence, all three runtimes:
+
+| Component | Loads | Which wins |
+|---|---|---|
+| Nest API / worker | `apps/api/.env` via `ConfigModule.forRoot` (no `envFilePath`) | **process env** |
+| Python service | `apps/api-python/.env`, now anchored to an absolute path | **process env** |
+| Prisma CLI | `packages/db/.env` | **process env** — but `migrate` reads `DIRECT_URL`, not `DATABASE_URL` |
+
+Process env wins everywhere. The trap is the *second variable*, which is why it
+is silent. `prisma 5.17` has no `--env-file` flag.
+
+Redis had the same shape of problem for a different reason: `REDIS_URL` is
+optional and falls back to `redis://localhost:6379` behind a log warning, so a
+staging process that never received it attached to the developer's **dev** broker
+and looked fine.
+
+### The three layers
+
+Configuration is checked three times, by three mechanisms that fail for
+different reasons. None of them reads an env file to decide whether it is safe.
+
+| Layer | What it proves | When |
+|---|---|---|
+| 1. `prove-targets.js` | the nominated targets pass the guards, are live, and are the database and broker they claim to be | before anything starts |
+| 2. **boot guard** — `env.schema.ts`, `config.py` | the **resolved** config of each running process is a nominated target | at every process start |
+| 3. `verify-isolation.js` | identifiable marker data landed in staging and never reached the shared database | after the run |
+
+Layer 2 is the one that matters most: layers 1 and 3 check intent and outcome,
+but only the boot guard checks what the process actually ended up with. It is
+armed by `AIOS_ENV=staging` and is completely inert for ordinary development and
+production boots.
+
+### The safe migration command
+
+```bash
+node infra/staging/migrate-staging.js
+```
+
+It reads `infra/staging/staging.env`, requires **both** `DATABASE_URL` and
+`DIRECT_URL`, then — before applying anything — asks Prisma which datasource it
+**actually resolved**, parses the reported host, and refuses unless it is
+nominated in `STAGING_DB_ALLOWLIST` and does not look like a hosted instance. It
+verifies the outcome rather than trusting the intent.
+
+It prints, and requires, a line such as:
+
+```
+Datasource "db": PostgreSQL database "aios_staging", schema "public" at "localhost:5433"
+  confirmed: localhost:5433 — proceeding.
+```
+
+If that line names a Supabase/pooler host, it aborts instead of migrating.
+
+### Starting the services
+
+```bash
+./infra/staging/run-stack.sh api       # also: worker | python | prove
+```
+
+The launcher sources `staging.env` and starts one process. Anything not in that
+file — Google OAuth client, S3, Sentry — still comes from the app's own `.env`,
+which is left untouched; `staging.env` supplies the targets and the staging
+secrets and overrides those files because process env wins. The boot guard is
+what proves the override actually happened, so a launch that silently failed to
+take effect stops rather than serving.
+
+### Proving it, rather than reading it
+
+```bash
+node infra/staging/verify-isolation.js
+```
+
+Creates a uniquely-named institute, reads it back **through the running API**,
+writes through the API, confirms the API's cache key exists on the staging broker
+and not on the dev one, has the Python service resolve a staging-only id, has the
+worker consume a staging-only job, and asserts the shared database's row counts
+are unchanged and contain no marker rows. It refuses to run if the staging and
+shared URLs resolve to the same host, and it never writes to the shared database.
+
+### What is deliberately NOT changed
+
+`apps/api/.env`, `apps/api-python/.env` and `packages/db/.env` still point at the
+shared database. They are per-machine, gitignored developer files: editing them
+would fix one clone while the next still had the footgun, and would repoint the
+configuration developers actually work against. The protection belongs in the
+launcher and the boot guard, which every clone inherits.
+
+## 8. Results log
 
 *(empty — no run has occurred)*
 
 | Date | Check | Classification | Notes |
 |---|---|---|---|
-| — | 1–9, S | Unable to verify | No staging environment or credential (§6) |
+| — | 1–9, S | Unable to verify | No provider credential or OCR image (§6) |

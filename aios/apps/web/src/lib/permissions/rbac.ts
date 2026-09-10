@@ -10,109 +10,109 @@ import type { Permission } from '@/types/permissions.types';
 export const PERMISSIONS: Record<Permission, readonly UserRole[]> = {
 
   // ── Assignments
-  'assignment:create':           ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD'],
-  'assignment:read':             ['TEACHER', 'STUDENT', 'ADMIN', 'ACADEMIC_HEAD', 'COORDINATOR'],
-  'assignment:update':           ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD'],
-  'assignment:delete':           ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD'],
-  'assignment:archive':          ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD'],
-  'assignment:restore':          ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD'],
-  'assignment:publish':          ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD'],
-  'assignment:unpublish':        ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD'],
+  'assignment:create':           ['TEACHER', 'ADMIN', 'FOUNDER'],
+  'assignment:read':             ['TEACHER', 'STUDENT', 'ADMIN', 'FOUNDER'],
+  'assignment:update':           ['TEACHER', 'ADMIN'],
+  'assignment:delete':           ['TEACHER', 'ADMIN'],
+  'assignment:archive':          ['TEACHER', 'ADMIN'],
+  'assignment:restore':          ['TEACHER', 'ADMIN'],
+  'assignment:publish':          ['TEACHER', 'ADMIN'],
+  'assignment:unpublish':        ['TEACHER', 'ADMIN'],
   'assignment:grade':            ['TEACHER', 'ADMIN'],
-  'assignment:view-submissions': ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD'],
+  'assignment:view-submissions': ['TEACHER', 'ADMIN'],
 
   // ── Tests & Exams
-  'test:create':                 ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD'],
-  'test:read':                   ['TEACHER', 'STUDENT', 'ADMIN', 'ACADEMIC_HEAD', 'COORDINATOR'],
-  'test:update':                 ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD'],
-  'test:delete':                 ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD'],
-  'test:publish':                ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD'],
-  'test:unpublish':              ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD'],
+  'test:create':                 ['TEACHER', 'ADMIN'],
+  'test:read':                   ['TEACHER', 'STUDENT', 'ADMIN'],
+  'test:update':                 ['TEACHER', 'ADMIN'],
+  'test:delete':                 ['TEACHER', 'ADMIN'],
+  'test:publish':                ['TEACHER', 'ADMIN'],
+  'test:unpublish':              ['TEACHER', 'ADMIN'],
   'test:grade':                  ['TEACHER', 'ADMIN'],
-  'test:view-results':           ['TEACHER', 'STUDENT', 'ADMIN', 'ACADEMIC_HEAD', 'PARENT'],
-  'test:view-analytics':         ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD'],
-  'test:archive':                ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD'],
+  'test:view-results':           ['TEACHER', 'STUDENT', 'ADMIN'],
+  'test:view-analytics':         ['TEACHER', 'ADMIN'],
+  'test:archive':                ['TEACHER', 'ADMIN'],
 
   // ── Papers & Question Bank
-  'paper:create':                ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD'],
-  'paper:read':                  ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD'],
-  'paper:update':                ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD'],
-  'paper:delete':                ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD'],
-  'paper:publish':               ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD'],
-  'question:create':             ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD'],
-  'question:read':               ['TEACHER', 'STUDENT', 'ADMIN', 'ACADEMIC_HEAD'],
-  'question:update':             ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD'],
-  'question:delete':             ['ADMIN', 'ACADEMIC_HEAD'],
+  'paper:create':                ['TEACHER', 'ADMIN'],
+  'paper:read':                  ['TEACHER', 'ADMIN'],
+  'paper:update':                ['TEACHER', 'ADMIN'],
+  'paper:delete':                ['TEACHER', 'ADMIN'],
+  'paper:publish':               ['TEACHER', 'ADMIN'],
+  'question:create':             ['TEACHER', 'ADMIN'],
+  'question:read':               ['TEACHER', 'STUDENT', 'ADMIN'],
+  'question:update':             ['TEACHER', 'ADMIN'],
+  'question:delete':             ['ADMIN'],
 
   // ── Students
-  'student:view-all':            ['ADMIN', 'ACADEMIC_HEAD', 'COORDINATOR', 'FOUNDER'],
-  'student:view-batch':          ['TEACHER', 'COORDINATOR'],
+  'student:view-all':            ['ADMIN', 'FOUNDER'],
+  'student:view-batch':          ['TEACHER'],
   'student:view-own':            ['STUDENT'],
-  'student:view-personal':       ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD'],  // personalized data
-  'student:enroll':              ['ADMIN', 'RECEPTIONIST', 'COORDINATOR'],
-  'student:transfer-batch':      ['ADMIN', 'COORDINATOR'],
+  'student:view-personal':       ['TEACHER', 'ADMIN'],  // personalized data
+  'student:enroll':              ['ADMIN', 'FOUNDER'],
+  'student:transfer-batch':      ['ADMIN', 'FOUNDER'],
   'student:archive':             ['ADMIN', 'FOUNDER'],
 
   // ── Teachers
-  'teacher:view-all':            ['ADMIN', 'ACADEMIC_HEAD', 'COORDINATOR', 'FOUNDER'],
+  'teacher:view-all':            ['ADMIN', 'FOUNDER'],
   'teacher:create':              ['ADMIN', 'FOUNDER'],
   'teacher:update':              ['ADMIN', 'FOUNDER'],
   'teacher:archive':             ['ADMIN', 'FOUNDER'],
-  'teacher:assign-batch':        ['ADMIN', 'ACADEMIC_HEAD', 'COORDINATOR'],
+  'teacher:assign-batch':        ['ADMIN'],
 
   // ── Batches
-  'batch:create':                ['ADMIN', 'ACADEMIC_HEAD', 'FOUNDER'],
-  'batch:update':                ['ADMIN', 'ACADEMIC_HEAD'],
+  'batch:create':                ['ADMIN', 'FOUNDER'],
+  'batch:update':                ['ADMIN'],
   'batch:archive':               ['ADMIN', 'FOUNDER'],
-  'batch:view-all':              ['ADMIN', 'ACADEMIC_HEAD', 'COORDINATOR', 'FOUNDER'],
+  'batch:view-all':              ['ADMIN', 'FOUNDER'],
   'batch:view-own':              ['TEACHER', 'STUDENT'],
 
   // ── Doubts
   'doubt:submit':                ['STUDENT'],
-  'doubt:resolve':               ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD'],
-  'doubt:assign':                ['ADMIN', 'ACADEMIC_HEAD', 'COORDINATOR'],
-  'doubt:view-batch':            ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD', 'COORDINATOR'],
+  'doubt:resolve':               ['TEACHER', 'ADMIN'],
+  'doubt:assign':                ['ADMIN'],
+  'doubt:view-batch':            ['TEACHER', 'ADMIN'],
   'doubt:view-own':              ['STUDENT'],
-  'doubt:view-all':              ['ADMIN', 'ACADEMIC_HEAD', 'FOUNDER'],
+  'doubt:view-all':              ['ADMIN', 'FOUNDER'],
 
   // ── Analytics
-  'analytics:institute':         ['ADMIN', 'ACADEMIC_HEAD', 'FOUNDER'],
-  'analytics:branch':            ['ADMIN', 'ACADEMIC_HEAD', 'COORDINATOR', 'FOUNDER'],
-  'analytics:batch':             ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD', 'COORDINATOR'],
+  'analytics:institute':         ['ADMIN', 'FOUNDER'],
+  'analytics:branch':            ['ADMIN', 'FOUNDER'],
+  'analytics:batch':             ['TEACHER', 'ADMIN'],
   'analytics:own':               ['STUDENT'],
-  'analytics:personalized':      ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD'],
+  'analytics:personalized':      ['TEACHER', 'ADMIN'],
 
   // ── Attendance
-  'attendance:mark':             ['TEACHER', 'ADMIN', 'COORDINATOR'],
-  'attendance:view-batch':       ['TEACHER', 'ADMIN', 'COORDINATOR', 'ACADEMIC_HEAD'],
-  'attendance:view-own':         ['STUDENT', 'PARENT'],
-  'attendance:edit':             ['ADMIN', 'COORDINATOR'],
+  'attendance:mark':             ['TEACHER', 'ADMIN'],
+  'attendance:view-batch':       ['TEACHER', 'ADMIN'],
+  'attendance:view-own':         ['STUDENT'],
+  'attendance:edit':             ['ADMIN'],
 
   // ── Timetable
-  'timetable:view':              ['TEACHER', 'STUDENT', 'ADMIN', 'COORDINATOR', 'PARENT'],
-  'timetable:manage':            ['ADMIN', 'COORDINATOR', 'ACADEMIC_HEAD'],
+  'timetable:view':              ['TEACHER', 'STUDENT', 'ADMIN'],
+  'timetable:manage':            ['ADMIN'],
 
   // ── Reports
-  'report:generate':             ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD'],
-  'report:view-batch':           ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD', 'COORDINATOR'],
-  'report:view-own':             ['STUDENT', 'PARENT'],
-  'report:view-all':             ['ADMIN', 'ACADEMIC_HEAD', 'FOUNDER'],
-  'report:download':             ['TEACHER', 'ADMIN', 'ACADEMIC_HEAD', 'STUDENT', 'PARENT'],
+  'report:generate':             ['TEACHER', 'ADMIN'],
+  'report:view-batch':           ['TEACHER', 'ADMIN'],
+  'report:view-own':             ['STUDENT'],
+  'report:view-all':             ['ADMIN', 'FOUNDER'],
+  'report:download':             ['TEACHER', 'ADMIN', 'STUDENT'],
 
   // ── Admin Operations
   'institute:manage':            ['FOUNDER'],
   'branch:manage':               ['ADMIN', 'FOUNDER'],
   'session:manage':              ['ADMIN', 'FOUNDER'],
-  'fee:manage':                  ['ADMIN', 'ACCOUNTANT', 'FOUNDER'],
-  'fee:view':                    ['ADMIN', 'ACCOUNTANT', 'FOUNDER', 'PARENT'],
+  'fee:manage':                  ['ADMIN', 'FOUNDER'],
+  'fee:view':                    ['ADMIN', 'FOUNDER'],
 
   // ── Audit & System
-  'audit:view':                  ['ADMIN', 'ACADEMIC_HEAD', 'FOUNDER'],
+  'audit:view':                  ['ADMIN', 'FOUNDER'],
   'feature-flag:manage':         ['FOUNDER'],
   'soft-delete:permanent':       ['FOUNDER'],
-  'notification:send-all':       ['ADMIN', 'FOUNDER', 'ACADEMIC_HEAD'],
-  'notification:send-batch':     ['TEACHER', 'ADMIN', 'COORDINATOR'],
-  'notification:send-student':   ['TEACHER', 'ADMIN', 'COORDINATOR'],
+  'notification:send-all':       ['ADMIN', 'FOUNDER'],
+  'notification:send-batch':     ['TEACHER', 'ADMIN'],
+  'notification:send-student':   ['TEACHER', 'ADMIN'],
 } as const;
 
 // ── Helper Functions ──────────────────────────────────────────────────────────
@@ -150,13 +150,8 @@ export function hasAnyPermission(role: UserRole, permissions: Permission[]): boo
 
 // ── Default permissions per role (used to populate AuthenticatedUser.permissions)
 export const DEFAULT_PERMISSIONS_BY_ROLE: Record<UserRole, Permission[]> = {
-  STUDENT:       getPermissionsForRole('STUDENT'),
-  TEACHER:       getPermissionsForRole('TEACHER'),
-  ACADEMIC_HEAD: getPermissionsForRole('ACADEMIC_HEAD'),
-  COORDINATOR:   getPermissionsForRole('COORDINATOR'),
-  ADMIN:         getPermissionsForRole('ADMIN'),
-  RECEPTIONIST:  getPermissionsForRole('RECEPTIONIST'),
-  ACCOUNTANT:    getPermissionsForRole('ACCOUNTANT'),
-  PARENT:        getPermissionsForRole('PARENT'),
-  FOUNDER:       getPermissionsForRole('FOUNDER'),
+  STUDENT: getPermissionsForRole('STUDENT'),
+  TEACHER: getPermissionsForRole('TEACHER'),
+  ADMIN:   getPermissionsForRole('ADMIN'),
+  FOUNDER: getPermissionsForRole('FOUNDER'),
 };

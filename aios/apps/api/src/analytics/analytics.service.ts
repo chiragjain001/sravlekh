@@ -1,10 +1,15 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import axios from 'axios';
+import { UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuthenticatedUser } from '../auth/auth.types';
 import { MASTERY_RECALC_QUEUE, MasteryRecalcJobData } from './mastery-recalc.constants';
+import { enqueueDeduped, jobKey, topicSetDigest } from '../infrastructure/queue/enqueue';
+import { QUEUE_POLICY } from '../infrastructure/queue/queue-policy';
+import { ensureDiagnosableMessage } from '../shared/logging/error-message';
 
 @Injectable()
 export class AnalyticsService {
@@ -23,10 +28,16 @@ export class AnalyticsService {
    */
   async enqueueMasteryRecalc(studentProfileId: string, topicIds: string[]): Promise<void> {
     if (topicIds.length === 0) return;
-    await this.masteryRecalcQueue.add(
+    // The key includes the SORTED topic set, not just the student. Keying on the
+    // student alone would silently drop a recalculation for a different topic as
+    // a "duplicate" — a change to mastery semantics, not a de-duplication.
+    await enqueueDeduped(
+      this.masteryRecalcQueue,
       'recalculate',
       { studentProfileId, topicIds },
-      { attempts: 3, backoff: { type: 'exponential', delay: 1000 } },
+      jobKey('mastery', studentProfileId, topicSetDigest(topicIds)),
+      { attempts: 3, backoff: { type: 'exponential', delay: 1000 }, ...QUEUE_POLICY.masteryRecalc.jobOptions },
+      this.logger,
     );
   }
 
@@ -59,12 +70,14 @@ export class AnalyticsService {
       // here is purely for diagnostics (12-LOGGING-MONITORING.md: log every
       // external service call's outcome), not error handling in itself.
       this.logger.warn(`Mastery recalc HTTP call failed for ${studentProfileId} after ${Date.now() - startedAt}ms`, err as Error);
-      throw err;
+      throw ensureDiagnosableMessage(err);
     }
   }
 
   // Analytics for the Dashboard
-  async getInstituteOverview(instituteId: string) {
+  async getInstituteOverview(instituteId: string, actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
+
     const [totalStudents, totalTeachers, activeExams] = await Promise.all([
       this.prisma.user.count({ where: { instituteId, role: 'STUDENT', status: 'ACTIVE' } }),
       this.prisma.user.count({ where: { instituteId, role: 'TEACHER', status: 'ACTIVE' } }),
@@ -72,5 +85,10 @@ export class AnalyticsService {
     ]);
 
     return { totalStudents, totalTeachers, activeExams };
+  }
+
+  private assertInstituteAccess(actor: AuthenticatedUser, instituteId: string) {
+    if (actor.role === UserRole.FOUNDER) return;
+    if (actor.instituteId !== instituteId) throw new ForbiddenException("You don't have access to this.");
   }
 }

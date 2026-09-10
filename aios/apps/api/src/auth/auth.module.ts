@@ -8,6 +8,7 @@ import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
+import { MaintenanceGuard } from './guards/maintenance.guard';
 import { UserThrottlerGuard } from '../shared/guards/user-throttler.guard';
 
 @Module({
@@ -34,11 +35,14 @@ import { UserThrottlerGuard } from '../shared/guards/user-throttler.guard';
     JwtStrategy,
     // Applied globally, in order: JwtAuthGuard authenticates (unless @Public()),
     // then RolesGuard authorizes (unless the route has no @Roles()), then
+    // MaintenanceGuard blocks everyone but FOUNDER when maintenance mode is on
+    // (needs req.user, so must run after the two above), then
     // UserThrottlerGuard rate-limits — deliberately last, so req.user is already
     // populated and it can key by authenticated user rather than shared IP.
     // See 06-AUTH-AUTHORIZATION.md — every route must be authenticated by default.
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
+    { provide: APP_GUARD, useClass: MaintenanceGuard },
     { provide: APP_GUARD, useClass: UserThrottlerGuard },
   ],
   exports: [AuthService, JwtModule],

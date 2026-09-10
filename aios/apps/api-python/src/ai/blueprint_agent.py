@@ -41,6 +41,7 @@ from langchain_core.output_parsers import PydanticOutputParser
 from pydantic import BaseModel, Field
 
 from src.ai.blueprint_model_registry import (
+    NoActiveBlueprintModelError,
     resolve_active_blueprint_model_version,
     resolve_blueprint_ai_model_id,
 )
@@ -127,7 +128,7 @@ async def generate_blueprint_from_prompt(user_prompt: str) -> BlueprintGeneratio
         ai_model_id = await resolve_blueprint_ai_model_id()
         ai_model_version = await resolve_active_blueprint_model_version(ai_model_id)
         if ai_model_version is None:
-            raise ValueError(
+            raise NoActiveBlueprintModelError(
                 "No active Blueprint AI model is configured. Ask an administrator to "
                 "activate one before generating blueprints."
             )

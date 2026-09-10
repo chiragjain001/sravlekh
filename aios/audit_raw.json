@@ -1,0 +1,457 @@
+[
+  {
+    "file": "\\apps\\web\\src\\components\\auth\\LoginPage.tsx",
+    "issues": [
+      {
+        "type": "Mock Data",
+        "line": 38,
+        "content": "const { login, loginAsMock, user, isLoading: authLoading } = useAuth();"
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\components\\dashboard\\admin\\papers\\CreateBlueprintModal.tsx",
+    "issues": [
+      {
+        "type": "Hardcoded Array",
+        "line": 54,
+        "content": "const { fields, append, remove } = useFieldArray({"
+      },
+      {
+        "type": "Hardcoded Array",
+        "line": 191,
+        "content": "{errors.distribution && !Array.isArray(errors.distribution) && ("
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\components\\dashboard\\admin\\screens\\AdminBatches.tsx",
+    "issues": [
+      {
+        "type": "Hardcoded Array",
+        "line": 80,
+        "content": "const classYears = Array.from(new Set(batches.map((b) => b.classYear).filter(Boolean))) as string[];"
+      },
+      {
+        "type": "Hardcoded Array",
+        "line": 224,
+        "content": "{Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {"
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\components\\dashboard\\admin\\screens\\AdminStudents.tsx",
+    "issues": [
+      {
+        "type": "Hardcoded Array",
+        "line": 296,
+        "content": "{Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {"
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\components\\dashboard\\admin\\screens\\AdminTeachers.tsx",
+    "issues": [
+      {
+        "type": "Hardcoded Array",
+        "line": 229,
+        "content": "{Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {"
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\components\\dashboard\\founder\\screens\\FounderFeatureManagement.tsx",
+    "issues": [
+      {
+        "type": "Mock Data",
+        "line": 37,
+        "content": "const FEATURES_MOCK: FeatureItem[] = ["
+      },
+      {
+        "type": "Mock Data",
+        "line": 48,
+        "content": "const CATEGORIES_MOCK = ["
+      },
+      {
+        "type": "Mock Data",
+        "line": 100,
+        "content": "const [selectedFeature, setSelectedFeat]  = useState<FeatureItem | null>(FEATURES_MOCK[0]!);"
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\components\\dashboard\\founder\\screens\\FounderIntegrations.tsx",
+    "issues": [
+      {
+        "type": "Mock Data",
+        "line": 34,
+        "content": "const INTEGRATIONS_MOCK: IntegrationItem[] = ["
+      },
+      {
+        "type": "Mock Data",
+        "line": 79,
+        "content": "const [selectedIntegration, setSelectedInt] = useState<IntegrationItem | null>(INTEGRATIONS_MOCK[0]!);"
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\components\\dashboard\\founder\\screens\\FounderOverview.tsx",
+    "issues": [
+      {
+        "type": "Hardcoded Array",
+        "line": 35,
+        "content": "const rows: InstituteRow[] = Array.isArray(institutes) ? institutes : [];"
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\components\\dashboard\\founder\\screens\\FounderSettings.tsx",
+    "issues": [
+      {
+        "type": "Mock Data",
+        "line": 21,
+        "content": "const CONFIG_CHANGES_MOCK = ["
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\components\\dashboard\\founder\\screens\\FounderSubscriptions.tsx",
+    "issues": [
+      {
+        "type": "Hardcoded Array",
+        "line": 269,
+        "content": "{Array.from({ length: pages }, (_, i) => ("
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\components\\dashboard\\founder\\screens\\FounderTickets.tsx",
+    "issues": [
+      {
+        "type": "Mock Data",
+        "line": 28,
+        "content": "const TICKETS_MOCK: Ticket[] = ["
+      },
+      {
+        "type": "Mock Data",
+        "line": 49,
+        "content": "const [selectedTicket, setSelected]   = useState<Ticket>(TICKETS_MOCK[1]!);"
+      },
+      {
+        "type": "Hardcoded Array",
+        "line": 223,
+        "content": "{Array.from({ length: pages }, (_, i) => ("
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\components\\dashboard\\founder\\screens\\FounderUsers.tsx",
+    "issues": [
+      {
+        "type": "Hardcoded Array",
+        "line": 297,
+        "content": "{Array.from({ length: pages }, (_, i) => ("
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\components\\dashboard\\student\\StudentDoubtCenter.tsx",
+    "issues": [
+      {
+        "type": "Fake Metric",
+        "line": 27,
+        "content": "id: Math.random(),"
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\components\\dashboard\\teacher\\assessment-builder\\steps\\Step3Syllabus.tsx",
+    "issues": [
+      {
+        "type": "Hardcoded Array",
+        "line": 67,
+        "content": "updatedTopics = Array.from(new Set([...state.selectedTopics, ...chapterTopicIds]));"
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\components\\dashboard\\teacher\\batch\\BatchAssignments.tsx",
+    "issues": [
+      {
+        "type": "Hardcoded Array",
+        "line": 40,
+        "content": "return Array.from(map.values()).sort((a, b) => new Date(b.dueDate).getTime() - new Date(a.dueDate).getTime());"
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\components\\dashboard\\teacher\\digital-copy\\UploadBookletModal.tsx",
+    "issues": [
+      {
+        "type": "Hardcoded Array",
+        "line": 20,
+        "content": "setFiles((prev) => [...prev, ...Array.from(list)]);"
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\components\\dashboard\\teacher\\screens\\TeacherAnalytics.tsx",
+    "issues": [
+      {
+        "type": "Hardcoded Array",
+        "line": 47,
+        "content": "() => Array.from(new Set(myAssignments.map((a: any) => a.batchId))) as string[],"
+      },
+      {
+        "type": "Hardcoded Array",
+        "line": 83,
+        "content": "const classYears = Array.from(new Set(batches.map(b => b.classYear)));"
+      },
+      {
+        "type": "Hardcoded Array",
+        "line": 115,
+        "content": "return Array.from(topicMap.entries()).map(([topic, data]) => {"
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\components\\dashboard\\teacher\\screens\\TeacherAssignments.tsx",
+    "issues": [
+      {
+        "type": "Hardcoded Array",
+        "line": 56,
+        "content": "return Array.from(map.values())"
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\components\\dashboard\\teacher\\screens\\TeacherClasses.tsx",
+    "issues": [
+      {
+        "type": "Hardcoded Array",
+        "line": 101,
+        "content": "() => Array.from(new Set(assignments.map((a: any) => a.batch.classYear).filter(Boolean))) as string[],"
+      },
+      {
+        "type": "Hardcoded Array",
+        "line": 134,
+        "content": "const subjectLabels = (Array.from(new Set(assignments.filter((a: any) => a.batch.classYear === cy).map((a: any) => a.subjectId))) as string[]).map(subjectName);"
+      },
+      {
+        "type": "Hardcoded Array",
+        "line": 157,
+        "content": "const subjectIds = Array.from(new Set(classAssignments.map((a: any) => a.subjectId))) as string[];"
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\components\\dashboard\\teacher\\screens\\TeacherPaperBuilder.tsx",
+    "issues": [
+      {
+        "type": "Hardcoded Array",
+        "line": 67,
+        "content": "const realBatches: { id: string; name: string }[] = (() => { const d = realBatchesRaw?.data ?? realBatchesRaw; return Array.isArray(d) ? d : []; })();"
+      },
+      {
+        "type": "Hardcoded Array",
+        "line": 229,
+        "content": "selectedChapters: Array.from(new Set([...assessmentState.selectedChapters, ...selectedChapters])),"
+      },
+      {
+        "type": "Hardcoded Array",
+        "line": 230,
+        "content": "selectedTopics: Array.from(new Set([...assessmentState.selectedTopics, ...selectedTopics])),"
+      },
+      {
+        "type": "Hardcoded Array",
+        "line": 772,
+        "content": "const rules: { topicId: string; difficulty: string; count: number }[] = Array.isArray(bp.distribution) ? bp.distribution : [];"
+      },
+      {
+        "type": "Hardcoded Array",
+        "line": 792,
+        "content": "selectedChapters: Array.from(selectedChapters),"
+      },
+      {
+        "type": "Hardcoded Array",
+        "line": 793,
+        "content": "selectedTopics: Array.from(selectedTopics),"
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\components\\dashboard\\teacher\\screens\\TeacherSettings.tsx",
+    "issues": [
+      {
+        "type": "Hardcoded Array",
+        "line": 59,
+        "content": "const batchNames = Array.from(new Set((profile?.batchAssignments ?? []).filter((a: any) => !a.removedAt).map((a: any) => a.batch.name)));"
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\components\\dashboard\\teacher\\screens\\TeacherToday.tsx",
+    "issues": [
+      {
+        "type": "Hardcoded Array",
+        "line": 73,
+        "content": "return Array.from(map.entries())"
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\components\\dashboard\\teacher\\shared\\ScreenSkeleton.tsx",
+    "issues": [
+      {
+        "type": "Hardcoded Array",
+        "line": 24,
+        "content": "{Array.from({ length: cardsCount }).map((_, i) => ("
+      },
+      {
+        "type": "Hardcoded Array",
+        "line": 39,
+        "content": "{Array.from({ length: 5 }).map((_, i) => ("
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\components\\ui\\ErrorBoundary.tsx",
+    "issues": [
+      {
+        "type": "TODO/FIXME",
+        "line": 45,
+        "content": "// TODO: Send to monitoring service (Sentry, etc.) in production"
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\components\\ui\\foundation.tsx",
+    "issues": [
+      {
+        "type": "Hardcoded Array",
+        "line": 23,
+        "content": "{Array.from({ length: lines }).map((_, i) => ("
+      },
+      {
+        "type": "Hardcoded Array",
+        "line": 44,
+        "content": "{Array.from({ length: count }).map((_, i) => <SkeletonCard key={i} />)}"
+      },
+      {
+        "type": "Hardcoded Array",
+        "line": 70,
+        "content": "{Array.from({ length: count }).map((_, i) => <BatchCardSkeleton key={i} />)}"
+      },
+      {
+        "type": "Hardcoded Array",
+        "line": 93,
+        "content": "{Array.from({ length: count }).map((_, i) => <StudentRowSkeleton key={i} />)}"
+      },
+      {
+        "type": "Hardcoded Array",
+        "line": 103,
+        "content": "{Array.from({ length: cols }).map((_, i) => <Pulse key={i} className=\"h-3.5 flex-1\" />)}"
+      },
+      {
+        "type": "Hardcoded Array",
+        "line": 105,
+        "content": "{Array.from({ length: rows }).map((_, ri) => ("
+      },
+      {
+        "type": "Hardcoded Array",
+        "line": 107,
+        "content": "{Array.from({ length: cols }).map((_, ci) => ("
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\components\\ui\\RouteGuard.tsx",
+    "issues": [
+      {
+        "type": "Hardcoded Array",
+        "line": 56,
+        "content": "{Array.from({ length: 8 }).map((_, i) => ("
+      },
+      {
+        "type": "Hardcoded Array",
+        "line": 64,
+        "content": "{Array.from({ length: 4 }).map((_, i) => ("
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\contexts\\auth.context.tsx",
+    "issues": [
+      {
+        "type": "Mock Data",
+        "line": 52,
+        "content": "const MOCK_USERS: Record<'STUDENT' | 'TEACHER' | 'ADMIN' | 'FOUNDER', AuthenticatedUser> = {"
+      },
+      {
+        "type": "Mock Data",
+        "line": 152,
+        "content": "const loginAsMock = useCallback("
+      },
+      {
+        "type": "Mock Data",
+        "line": 160,
+        "content": "const fixture = MOCK_USERS[role];"
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\features\\batches\\components\\BatchesTable.tsx",
+    "issues": [
+      {
+        "type": "Hardcoded Array",
+        "line": 87,
+        "content": "{Array.from({ length: 6 }).map((_, i) => ("
+      },
+      {
+        "type": "Hardcoded Array",
+        "line": 89,
+        "content": "{Array.from({ length: 7 }).map((__, j) => ("
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\features\\students\\components\\StudentsTable.tsx",
+    "issues": [
+      {
+        "type": "Hardcoded Array",
+        "line": 105,
+        "content": "{Array.from({ length: 8 }).map((_, i) => ("
+      },
+      {
+        "type": "Hardcoded Array",
+        "line": 107,
+        "content": "{Array.from({ length: 8 }).map((__, j) => ("
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\features\\teachers\\components\\TeachersTable.tsx",
+    "issues": [
+      {
+        "type": "Hardcoded Array",
+        "line": 92,
+        "content": "{Array.from({ length: 8 }).map((_, i) => ("
+      },
+      {
+        "type": "Hardcoded Array",
+        "line": 94,
+        "content": "{Array.from({ length: 7 }).map((__, j) => ("
+      }
+    ]
+  },
+  {
+    "file": "\\apps\\web\\src\\lib\\utils.ts",
+    "issues": [
+      {
+        "type": "Fake Metric",
+        "line": 32,
+        "content": "`${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;"
+      }
+    ]
+  }
+]

@@ -46,6 +46,7 @@ import { useAcademicContextStore } from './academic-context-store';
 import { useUIStore } from './ui-stores';
 import { useStudentStore, useAdminStore, useFounderStore } from './role-stores';
 import type { TeacherTopNav } from './teacher-store';
+import type { StudentNav, AdminNav, FounderNav } from './role-stores';
 
 export function useDashboardStore() {
   const teacherNav    = useTeacherStore(s => s.teacherNav);
@@ -89,12 +90,12 @@ export function useDashboardStore() {
 
     // ── Student
     studentActiveNav: studentNav,
-    setStudentActiveNav: (nav: string) => setStudentNav(nav as any),
+    setStudentActiveNav: (nav: string) => setStudentNav(nav as StudentNav),
 
     // ── Admin / Founder
     adminActiveNav:   adminNav,
     founderActiveNav: founderNav,
-    setAdminActiveNav:   (nav: string) => setAdminNav(nav as any),
-    setFounderActiveNav: (nav: string) => setFounderNav(nav as any),
+    setAdminActiveNav:   (nav: string) => setAdminNav(nav as AdminNav),
+    setFounderActiveNav: (nav: string) => setFounderNav(nav as FounderNav),
   };
 }

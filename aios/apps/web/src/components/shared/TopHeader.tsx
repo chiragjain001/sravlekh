@@ -1,7 +1,8 @@
 'use client';
 
 import React from 'react';
-import { Bell, Calendar, Flame } from 'lucide-react';
+import { Calendar, Flame, ChevronLeft } from 'lucide-react';
+import { NotificationBell } from './NotificationBell';
 
 interface TopHeaderProps {
   greeting: string;
@@ -24,10 +25,24 @@ export function TopHeader({
   streakCount,
   showDate,
   dateStr,
+  showBackButton,
+  previousNavLabel,
+  onBack,
 }: TopHeaderProps) {
   return (
     <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-white sticky top-0 z-10 transition-all duration-200">
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3">
+        {showBackButton && onBack && (
+          <button
+            onClick={onBack}
+            className="flex items-center gap-1 px-2.5 py-1.5 -ml-1 text-slate-500 hover:text-indigo-600 hover:bg-slate-50 rounded-lg transition-colors flex-shrink-0"
+            title={previousNavLabel ? `Back to ${previousNavLabel}` : 'Back'}
+            aria-label={previousNavLabel ? `Back to ${previousNavLabel}` : 'Back'}
+          >
+            <ChevronLeft className="w-4 h-4" />
+            {previousNavLabel && <span className="text-[11.5px] font-semibold hidden sm:inline">{previousNavLabel}</span>}
+          </button>
+        )}
         <div>
           <h1 className="text-[17px] font-bold text-slate-800 leading-tight">
             {greeting}
@@ -54,15 +69,7 @@ export function TopHeader({
           </div>
         )}
 
-        <button
-          className="relative p-2 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer"
-          aria-label="Notifications"
-        >
-          <Bell className="w-5 h-5 text-slate-500" />
-          <span className="absolute -top-1 -right-1 w-[18px] h-[18px] bg-rose-500 rounded-full text-white text-[9px] font-bold flex items-center justify-center">
-            4
-          </span>
-        </button>
+        <NotificationBell />
       </div>
     </div>
   );

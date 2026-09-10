@@ -3,7 +3,7 @@
 import { useAuth } from '@/contexts/auth.context';
 import { useDashboardStore } from '@/store/dashboard-store';
 import type { TeacherTopNav } from '@/store/dashboard-store';
-import { teacherProfile } from '@/lib/mock-data/teacher';
+import { useMyTeacherProfile, useTimetable, useEvaluationWorkItems } from '@/hooks/useApi';
 import { Suspense } from 'react';
 
 // Shared layout
@@ -30,6 +30,7 @@ import { TeacherReports }         from '@/components/dashboard/teacher/screens/T
 import { TeacherSettings }        from '@/components/dashboard/teacher/screens/TeacherSettings';
 import { TeacherTestsExams }      from '@/components/dashboard/teacher/screens/TeacherTestsExams';
 import { TeacherEvaluationQueue } from '@/components/dashboard/teacher/screens/TeacherEvaluationQueue';
+import { TeacherDocumentQueue } from '@/components/dashboard/teacher/screens/TeacherDocumentQueue';
 import { TeacherAnalytics }       from '@/components/dashboard/teacher/screens/TeacherAnalytics';
 import { TeacherAssignments }     from '@/components/dashboard/teacher/screens/TeacherAssignments';
 import { TeacherRemedialExtraClass } from '@/components/dashboard/teacher/screens/TeacherRemedialExtraClass';
@@ -42,6 +43,8 @@ const NAV_ITEMS: { key: TeacherTopNav; label: string }[] = [
   { key: 'question-bank',  label: 'Question Bank'          },
   { key: 'paper-builder',  label: 'Paper Builder'          },
   { key: 'tests-exams',    label: 'Tests & Exams'          },
+  { key: 'digital-copy',   label: 'Digital Answer Sheets'  },
+  { key: 'evaluation-queue', label: 'Evaluation Queue'     },
   { key: 'analytics',      label: 'Analytics'              },
   { key: 'assignments',    label: 'Assignments'            },
   { key: 'remedial-extra', label: 'Remedial & Extra Class' },
@@ -58,12 +61,26 @@ function TeacherDashboardInner() {
   const { user, logout }                            = useAuth();
   const { teacherNav, setTeacherNav, setTeacherCtx } = useDashboardStore();
   const { canGoBack, previousNav, goBack }           = useNavigationHistory('teacher');
+  const { data: profile } = useMyTeacherProfile();
 
   // Phase 1: Sync context ↔ URL (enables deep linking + browser back)
   useContextUrlSync('teacher');
 
   // Phase 1: Monitor network status for OfflineBanner
   useNetworkStatus();
+
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
+  const { data: todaySlotsResp } = useTimetable(
+    user ? { teacherUserId: user.id, dateStart: todayStart.toISOString(), dateEnd: todayEnd.toISOString() } : undefined,
+  );
+  const todaySlots: any[] = todaySlotsResp?.data ?? todaySlotsResp ?? [];
+
+  // Real pending count for the sidebar's "Evaluation Queue" badge — was
+  // hardcoded to 3 for every teacher regardless of actual queue size.
+  // pageSize:1 since only meta.total is needed, not the items themselves.
+  const { data: evalQueueResp } = useEvaluationWorkItems({ page: 1, pageSize: 1 });
+  const evaluationQueueCount = evalQueueResp?.meta?.total ?? 0;
 
   const renderScreen = () => {
     switch (teacherNav) {
@@ -72,6 +89,7 @@ function TeacherDashboardInner() {
       case 'question-bank':    return <QuestionBankManager />;
       case 'paper-builder':    return <TeacherPaperBuilder />;
       case 'tests-exams':      return <TeacherTestsExams />;
+      case 'digital-copy':     return <TeacherDocumentQueue />;
       case 'evaluation-queue': return <TeacherEvaluationQueue />;
       case 'analytics':        return <TeacherAnalytics />;
       case 'assignments':      return <TeacherAssignments />;
@@ -86,7 +104,7 @@ function TeacherDashboardInner() {
 
   const activeLabel = NAV_ITEMS.find(n => n.key === teacherNav)?.label ?? 'Overview';
   const previousNavLabel = NAV_ITEMS.find(n => n.key === previousNav)?.label ?? previousNav;
-  const teacherName = user?.name ?? teacherProfile.name;
+  const teacherName = user?.name ?? 'Teacher';
   const firstName   = teacherName.split(' ')[0];
 
   return (
@@ -97,10 +115,11 @@ function TeacherDashboardInner() {
       <Sidebar
         role="TEACHER"
         userName={teacherName}
-        designation={teacherProfile.designation}
-        avatarInitials={user?.avatarInitials ?? teacherProfile.avatarInitials}
+        designation={profile?.qualification ?? 'Teacher'}
+        avatarInitials={user?.avatarInitials ?? teacherName.split(' ').map(n => n[0]).join('').toUpperCase()}
         navItems={NAV_ITEMS.map(n => n.label)}
         activeNav={activeLabel}
+        evaluationQueueCount={evaluationQueueCount}
         onNavChange={(label) => {
           const match = NAV_ITEMS.find(n => n.label === label);
           if (match) {
@@ -123,10 +142,13 @@ function TeacherDashboardInner() {
         <TopHeader
           greeting={`Good Morning, ${firstName} Sir! ☀️`}
           subtitle="Here's what's happening in your classes."
+          showBackButton={canGoBack}
+          previousNavLabel={previousNavLabel}
+          onBack={goBack}
           rightContent={
             <div className="flex items-center gap-1.5 bg-indigo-50 rounded-lg px-3 py-1.5">
               <Calendar className="w-4 h-4 text-indigo-500" />
-              <span className="text-[13px] font-bold text-indigo-700">08</span>
+              <span className="text-[13px] font-bold text-indigo-700">{todaySlots.length}</span>
               <span className="text-[11px] text-indigo-500">Classes Today</span>
             </div>
           }
@@ -144,7 +166,7 @@ function TeacherDashboardInner() {
 // ─── Page Export ──────────────────────────────────────────────────────────────
 export default function TeacherDashboardPage() {
   return (
-    <RouteGuard allowedRoles={['TEACHER', 'ADMIN', 'ACADEMIC_HEAD']}>
+    <RouteGuard allowedRoles={['TEACHER', 'ADMIN']}>
       <Suspense fallback={<FullPageSkeleton />}>
         <TeacherDashboardInner />
       </Suspense>

@@ -1,31 +1,27 @@
 'use client';
 
 import { useState } from 'react';
-import { Plus, Calendar, MapPin, Users, CheckCircle2 } from 'lucide-react';
-import toast from 'react-hot-toast';
+import { Plus, Calendar, MapPin } from 'lucide-react';
+import { useTimetable } from '@/hooks/useApi';
 import { ScheduleExtraClassModal } from '@/components/dashboard/teacher/shared/ScheduleExtraClassModal';
 
-interface Session {
-  id: string; topic: string; date: string; time: string;
-  room: string; enrolled: number; capacity: number; status: string;
-}
-
-export function BatchExtraClasses({ sessions: initialSessions }: { sessions: Session[] }) {
-  const [sessions, setSessions] = useState<Session[]>(initialSessions);
+export function BatchExtraClasses({ batchId }: { batchId: string }) {
   const [showCreate, setShowCreate] = useState(false);
+  const { data: slotsResp, isLoading, refetch } = useTimetable({ batchId });
+  const slots: any[] = slotsResp?.data ?? slotsResp ?? [];
 
-  const upcoming  = sessions.filter(s => s.status === 'upcoming');
-  const completed = sessions.filter(s => s.status === 'completed');
+  const extraSlots = slots.filter((s: any) => s.type === 'EXTRA_CLASS' || s.type === 'REMEDIAL');
+  const now = Date.now();
+  const upcoming = extraSlots.filter((s: any) => new Date(s.startTime).getTime() >= now);
+  const completed = extraSlots.filter((s: any) => new Date(s.startTime).getTime() < now);
 
   return (
     <div className="space-y-5 animate-fadein">
       <ScheduleExtraClassModal
         isOpen={showCreate}
         onClose={() => setShowCreate(false)}
-        onSchedule={(newSession) => {
-          setSessions(prev => [newSession, ...prev]);
-          toast.success('Session scheduled successfully!');
-        }}
+        initialBatchId={batchId}
+        onScheduled={() => refetch()}
       />
 
       <div className="flex items-center justify-between">
@@ -36,50 +32,53 @@ export function BatchExtraClasses({ sessions: initialSessions }: { sessions: Ses
         </button>
       </div>
 
-      {upcoming.length > 0 && (
-        <div>
-          <h4 className="text-[12px] font-bold text-slate-500 uppercase tracking-wide mb-3">Upcoming</h4>
-          <div className="space-y-3">
-            {upcoming.map(s => (
-              <div key={s.id} className="border border-slate-100 rounded-2xl p-5 hover:shadow-sm transition-all">
-                <p className="text-[14px] font-bold text-slate-800 mb-3">{s.topic}</p>
-                <div className="flex flex-wrap items-center gap-5 text-[12px] text-slate-600">
-                  <span className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5 text-indigo-400" /><span className="font-semibold text-slate-800">{s.date}</span> · {s.time}</span>
-                  <span className="flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-indigo-400" />{s.room}</span>
-                  <span className="flex items-center gap-1.5"><Users className="w-3.5 h-3.5 text-indigo-400" />{s.enrolled} / {s.capacity} enrolled</span>
-                </div>
-                <div className="mt-3 w-full bg-slate-100 rounded-full h-1.5">
-                  <div className="h-1.5 rounded-full bg-indigo-500" style={{ width: `${(s.enrolled/s.capacity)*100}%` }} />
-                </div>
+      {isLoading ? (
+        <div className="py-12 text-center text-slate-400 text-[13px]">Loading sessions…</div>
+      ) : (
+        <>
+          {upcoming.length > 0 && (
+            <div>
+              <h4 className="text-[12px] font-bold text-slate-500 uppercase tracking-wide mb-3">Upcoming</h4>
+              <div className="space-y-3">
+                {upcoming.map((s: any) => (
+                  <div key={s.id} className="border border-slate-100 rounded-2xl p-5 hover:shadow-sm transition-all">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className={`text-[9px] font-bold px-2 py-0.5 rounded uppercase ${s.type === 'REMEDIAL' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}`}>{s.type.replace('_', ' ')}</span>
+                    </div>
+                    <p className="text-[14px] font-bold text-slate-800 mb-3">{s.title}</p>
+                    <div className="flex flex-wrap items-center gap-5 text-[12px] text-slate-600">
+                      <span className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5 text-indigo-400" /><span className="font-semibold text-slate-800">{new Date(s.startTime).toLocaleDateString()}</span> · {new Date(s.startTime).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
+                      {s.roomRef && <span className="flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-indigo-400" />{s.roomRef}</span>}
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        </div>
-      )}
+            </div>
+          )}
 
-      {completed.length > 0 && (
-        <div>
-          <h4 className="text-[12px] font-bold text-slate-500 uppercase tracking-wide mb-3">Completed</h4>
-          <div className="space-y-2">
-            {completed.map(s => (
-              <div key={s.id} className="flex items-center justify-between p-4 border border-slate-100 rounded-xl opacity-70">
-                <div>
-                  <p className="text-[13px] font-bold text-slate-700">{s.topic}</p>
-                  <p className="text-[11px] text-slate-500">{s.date} · {s.room} · {s.enrolled} attended</p>
-                </div>
-                <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+          {completed.length > 0 && (
+            <div>
+              <h4 className="text-[12px] font-bold text-slate-500 uppercase tracking-wide mb-3">Past</h4>
+              <div className="space-y-2">
+                {completed.map((s: any) => (
+                  <div key={s.id} className="flex items-center justify-between p-4 border border-slate-100 rounded-xl opacity-70">
+                    <div>
+                      <p className="text-[13px] font-bold text-slate-700">{s.title}</p>
+                      <p className="text-[11px] text-slate-500">{new Date(s.startTime).toLocaleDateString()}{s.roomRef ? ` · ${s.roomRef}` : ''}</p>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        </div>
-      )}
+            </div>
+          )}
 
-      {sessions.length === 0 && (
-        <div className="py-12 text-center border-2 border-dashed border-slate-200 rounded-2xl text-slate-400">
-          <p className="text-[13px] font-semibold">No extra classes scheduled yet.</p>
-        </div>
+          {extraSlots.length === 0 && (
+            <div className="py-12 text-center border-2 border-dashed border-slate-200 rounded-2xl text-slate-400">
+              <p className="text-[13px] font-semibold">No extra classes scheduled yet.</p>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
 }
-

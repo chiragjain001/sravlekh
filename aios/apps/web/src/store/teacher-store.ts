@@ -10,6 +10,7 @@ export type TeacherTopNav =
   | 'question-bank'
   | 'paper-builder'
   | 'tests-exams'
+  | 'digital-copy'
   | 'evaluation-queue'
   | 'analytics'
   | 'assignments'

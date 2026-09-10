@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { DeliveryStatus, NoticeChannel } from '@prisma/client';
 import { NOTICE_DISPATCH_QUEUE, NoticeDispatchJobData } from './notice-dispatch.constants';
 import { reportDeadLetter } from '../shared/logging/dead-letter';
+import { QUEUE_POLICY, workerOptions } from '../infrastructure/queue/queue-policy';
 
 /**
  * Picks up a notice's QUEUED EMAIL/SMS/WHATSAPP deliveries. No real
@@ -14,7 +15,7 @@ import { reportDeadLetter } from '../shared/logging/dead-letter';
  * real delivery. IN_APP deliveries never reach this queue — they're marked
  * SENT synchronously in NoticesService since they need no external provider.
  */
-@Processor(NOTICE_DISPATCH_QUEUE)
+@Processor(NOTICE_DISPATCH_QUEUE, workerOptions(QUEUE_POLICY.noticeDispatch))
 export class NoticeDispatchProcessor extends WorkerHost {
   private readonly logger = new Logger(NoticeDispatchProcessor.name);
 

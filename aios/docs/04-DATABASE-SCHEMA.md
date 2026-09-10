@@ -383,3 +383,28 @@ The v1 `Exam` table is **not dropped**. It becomes a view (or a thin table kept 
 
 ## 6. Prisma Dual-Client Parity
 Unchanged discipline from v1 §9 — all 23 new models are added to the single `schema.prisma`; both NestJS and FastAPI clients are regenerated together on every schema change, deployed together, per `14-DEPLOYMENT-ARCHITECTURE.md` v1 §6 (unchanged).
+
+---
+
+# PART 3 — FOUNDER CONSOLE EXTENSIONS
+
+Additive-only tables backing the Founder/Super-Admin dashboard's remaining screens (see the "Founder Console" implementation phases in `33-GAP-ANALYSIS-AND-BUILD-PLAN.md`). No v1/V2 table is touched or renamed; `Institute` gains only new nullable/relation fields.
+
+### 3.1 `PlanDefinition` (table: `plan_definitions`) — Founder Console Phase 2
+| plan (PK, enum InstitutePlan) | maxUsers (nullable) | maxStudents (nullable) | maxTeachers (nullable) | maxStorageGb (nullable) | maxAssessmentsPerMonth (nullable) | trialDurationDays (nullable) | defaultFeatureFlags (json) | updatedAt |
+
+Limits are advisory/informational — surfaced on the Founder dashboard as usage-vs-limit. Write-time enforcement (blocking growth past a limit) is explicitly out of scope for this build; nothing fabricates an enforced limit that doesn't exist.
+
+### 3.2 `InstitutePlanHistory` (table: `institute_plan_history`) — Founder Console Phase 2
+| id (PK) | instituteId (FK) | fromPlan (nullable enum) | toPlan (enum) | changedByUserId | reason (nullable) | createdAt |
+Append-only. Kept separate from the generic `AuditLog` so plan-change history can be rendered as a timeline without parsing generic old/new JSON.
+
+`Institute` additions: `trialEndsAt` (nullable DateTime, set when plan moves to `TRIAL`).
+
+### 3.3 `SupportTicket` (table: `support_tickets`) — Founder Console Phase 8
+| id (PK) | instituteId (FK) | subject | description | status (enum: OPEN/IN_PROGRESS/RESOLVED/CLOSED) | priority (enum: LOW/MEDIUM/HIGH/URGENT) | createdByUserId | assignedToUserId (nullable) | createdAt | updatedAt | resolvedAt (nullable) |
+
+A genuinely new subsystem — no prior backend existed, only a mock UI. ADMIN creates/replies within their own institute; FOUNDER has cross-tenant status/priority/assignment control.
+
+### 3.4 `SupportTicketMessage` (table: `support_ticket_messages`) — Founder Console Phase 8
+| id (PK) | ticketId (FK) | authorUserId | body | createdAt |

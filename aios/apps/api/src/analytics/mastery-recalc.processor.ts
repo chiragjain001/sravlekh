@@ -4,6 +4,7 @@ import { Job } from 'bullmq';
 import { AnalyticsService } from './analytics.service';
 import { MASTERY_RECALC_QUEUE, MasteryRecalcJobData } from './mastery-recalc.constants';
 import { reportDeadLetter } from '../shared/logging/dead-letter';
+import { QUEUE_POLICY, workerOptions } from '../infrastructure/queue/queue-policy';
 
 /**
  * Consumes mastery-recalc jobs enqueued on marks-capture commit (11-PERFORMANCE-
@@ -13,6 +14,7 @@ import { reportDeadLetter } from '../shared/logging/dead-letter';
  * dead-letter — see FounderHealth/AdminAuditLogs surfacing per 12-LOGGING-MONITORING.md).
  */
 @Processor(MASTERY_RECALC_QUEUE, {
+  ...workerOptions(QUEUE_POLICY.masteryRecalc),
   // 08-ERROR-HANDLING.md: 3 attempts, exponential backoff (~1s/5s/25s intent — approximated
   // here with BullMQ's built-in exponential strategy; exact intervals can be tuned via a
   // custom backoff strategy later if the precise curve matters).

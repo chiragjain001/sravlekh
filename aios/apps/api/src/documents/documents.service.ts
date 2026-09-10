@@ -22,6 +22,7 @@ import {
 import { AuthenticatedUser } from '../auth/auth.types';
 import { syncPageRegionResponses } from '../shared/sync-page-region-responses';
 import { CreateDocumentBundleDto, ReprocessDocumentDto, CreatePageRegionDto, UpdatePageRegionDto } from './dto/document.dto';
+import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
 
 /**
  * 23-DOCUMENT-PROCESSING-ARCHITECTURE.md §9 upload rules (photo capture row):
@@ -87,12 +88,19 @@ export class DocumentsService {
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly cache: CacheService,
+    private readonly featureFlags: FeatureFlagsService,
   ) {}
 
   // ── DocumentBundle ───────────────────────────────────────────────────────
 
   async createBundle(instituteId: string, dto: CreateDocumentBundleDto, actor: AuthenticatedUser) {
     this.assertInstituteAccess(actor, instituteId);
+
+    // Founder Console Phase 3 — gated at bundle creation, the single entry
+    // point into the whole document-processing pipeline for this institute.
+    if (!(await this.featureFlags.isEnabled(instituteId, 'documentProcessing'))) {
+      throw new ForbiddenException('Document processing is not enabled for this institute.');
+    }
 
     const delivery = await this.prisma.assessmentDelivery.findUnique({
       where: { id: dto.assessmentDeliveryId },
@@ -204,6 +212,36 @@ export class DocumentsService {
   }
 
   // ── Document reads ───────────────────────────────────────────────────────
+
+  /** Lists Documents (booklets) in a bundle with lightweight status info —
+   * the read the Teacher Document Queue UI needs; GET /documents/:id already
+   * covers the single-document detail view, this is purely the missing list. */
+  async findDocumentsForBundle(instituteId: string, bundleId: string, actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
+
+    const bundle = await this.prisma.documentBundle.findUnique({
+      where: { id: bundleId },
+      include: { assessmentDelivery: { include: { assessment: { select: { instituteId: true } } } } },
+    });
+    if (!bundle || bundle.assessmentDelivery.assessment.instituteId !== instituteId) {
+      throw new NotFoundException('Document bundle not found');
+    }
+
+    return this.prisma.document.findMany({
+      where: { documentBundleId: bundleId },
+      select: {
+        id: true,
+        status: true,
+        layoutType: true,
+        expectedPageCount: true,
+        attemptId: true,
+        createdAt: true,
+        pages: { select: { id: true } },
+        identityResolution: { select: { status: true, resolvedStudentProfileId: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
 
   async findById(instituteId: string, documentId: string, actor: AuthenticatedUser) {
     this.assertInstituteAccess(actor, instituteId);

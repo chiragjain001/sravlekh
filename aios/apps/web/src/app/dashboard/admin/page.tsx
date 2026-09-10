@@ -22,6 +22,7 @@ import { QuestionBankManager } from '@/components/dashboard/questions/QuestionBa
 import { PapersList }         from '@/components/dashboard/admin/papers/PapersList';
 import { AdminExams }         from '@/components/dashboard/admin/screens/AdminExams';
 import { DoubtsList }         from '@/components/dashboard/admin/doubts/DoubtsList';
+import { AssignmentsList }    from '@/components/dashboard/admin/assignments/AssignmentsList';
 import { AdminTimetable }     from '@/components/dashboard/admin/screens/AdminTimetable';
 import { AdminAttendance }    from '@/components/dashboard/admin/screens/AdminAttendance';
 import { AdminCommunication } from '@/components/dashboard/admin/screens/AdminCommunication';
@@ -30,8 +31,6 @@ import { AdminSystemSettings }from '@/components/dashboard/admin/screens/AdminSy
 import { AdminAuditLogs }     from '@/components/dashboard/admin/screens/AdminAuditLogs';
 import { AdminAnalytics }     from '@/components/dashboard/admin/screens/AdminAnalytics';
 import { AdminEvaluationQualityDashboard } from '@/components/dashboard/admin/screens/AdminEvaluationQualityDashboard';
-
-import { ChevronDown, MapPin, CalendarDays } from 'lucide-react';
 
 import { useNavigationHistory } from '@/hooks/useNavigationHistory';
 
@@ -51,6 +50,7 @@ function AdminDashboardInner() {
       case 'Papers':          return <div className="p-6"><PapersList /></div>;
       case 'Exams':           return <AdminExams />;
       case 'Doubts':          return <div className="p-6"><DoubtsList /></div>;
+      case 'Assignments':     return <div className="p-6"><AssignmentsList /></div>;
       case 'Timetable':       return <AdminTimetable />;
       case 'Attendance':      return <AdminAttendance />;
       case 'Communication':   return <AdminCommunication />;
@@ -70,6 +70,8 @@ function AdminDashboardInner() {
   };
 
   const adminName = user?.name ?? d.user.name;
+  const adminDesignation = user?.role === 'FOUNDER' ? 'Founder' : 'Institute Admin';
+  const todayStr = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
   return (
     <div className="flex h-screen overflow-hidden bg-bg">
@@ -78,7 +80,7 @@ function AdminDashboardInner() {
       <Sidebar
         role="ADMIN"
         userName={adminName}
-        designation={d.user.designation}
+        designation={adminDesignation}
         avatarInitials={user?.avatarInitials ?? d.user.avatarInitials}
         navItems={d.navItems}
         activeNav={adminNav}
@@ -91,21 +93,10 @@ function AdminDashboardInner() {
           greeting={adminNav === 'Dashboard' ? `Welcome back, ${adminName.split(' ')[0]}! ☀️` : adminNav}
           subtitle={adminNav === 'Dashboard' ? "Here's an overview of your institute." : `Manage your institute ${adminNav.toLowerCase()}`}
           showDate={adminNav === 'Dashboard'}
-          dateStr={d.user.today}
-          rightContent={
-            <div className="flex items-center gap-3 mr-2">
-              <button className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg shadow-sm hover:bg-slate-50 transition-colors">
-                <MapPin className="w-3.5 h-3.5 text-indigo-500" />
-                <span className="text-[12px] font-bold text-slate-700">South Delhi Branch</span>
-                <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
-              </button>
-              <button className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg shadow-sm hover:bg-slate-50 transition-colors">
-                <CalendarDays className="w-3.5 h-3.5 text-emerald-500" />
-                <span className="text-[12px] font-bold text-slate-700">Session 2026-27</span>
-                <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
-              </button>
-            </div>
-          }
+          dateStr={todayStr}
+          showBackButton={canGoBack}
+          previousNavLabel={previousNav}
+          onBack={goBack}
         />
 
         <div className="flex-1 min-w-0">
@@ -120,7 +111,7 @@ function AdminDashboardInner() {
 
 export default function AdminDashboardPage() {
   return (
-    <RouteGuard allowedRoles={['ADMIN', 'FOUNDER', 'ACADEMIC_HEAD']}>
+    <RouteGuard allowedRoles={['ADMIN', 'FOUNDER']}>
       <Suspense fallback={<FullPageSkeleton />}>
         <AdminDashboardInner />
       </Suspense>

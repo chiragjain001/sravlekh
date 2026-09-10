@@ -59,6 +59,25 @@ export class PermissionsService {
   }
 
   /** Institute-wide grant (batchId=null, subjectId=null) covers everything; a scoped grant only covers a matching scope. FOUNDER/ADMIN role alone never implies a permission — callers check role bypass separately if intended. */
+  // Self-check — any authenticated role. Returns the caller's own grants
+  // (not the full institute list, which stays ADMIN/FOUNDER-only) so the
+  // frontend can locally decide whether to show/hide an action gated by a
+  // dynamic grant (e.g. the Evaluation Queue's "Override" button) instead of
+  // showing it to everyone and discovering the answer from a 403.
+  async findMyGrants(instituteId: string, actor: AuthenticatedUser) {
+    if (actor.role === UserRole.FOUNDER) {
+      // FOUNDER bypasses every dynamic grant check server-side (see
+      // EvaluationsService.override) — reflect that here so the frontend
+      // doesn't need its own separate "am I FOUNDER" special case.
+      return { bypassesAllGrants: true, grants: [] };
+    }
+    const grants = await this.prisma.userPermissionGrant.findMany({
+      where: { userId: actor.id, user: { instituteId } },
+      select: { permission: true, batchId: true, subjectId: true },
+    });
+    return { bypassesAllGrants: false, grants };
+  }
+
   async hasPermission(userId: string, permission: string, scope: { batchId?: string; subjectId?: string } = {}): Promise<boolean> {
     const grant = await this.prisma.userPermissionGrant.findFirst({
       where: {

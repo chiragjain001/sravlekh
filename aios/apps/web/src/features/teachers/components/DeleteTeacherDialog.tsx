@@ -44,12 +44,12 @@ export function DeleteTeacherDialog({
             <AlertTriangle className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
             <span>
               {isBulk
-                ? `Deactivating ${teacherNames.length} teachers will unassign them from their active batches and revoke portal access.`
-                : `Deactivating ${teacherNames[0]} will unassign them from active batches and revoke portal access.`}
+                ? `Deactivating ${teacherNames.length} teachers will revoke their portal access. Their existing batch assignments are kept — remove those separately if needed.`
+                : `Deactivating ${teacherNames[0]} will revoke portal access. Existing batch assignments are kept — remove those separately if needed.`}
             </span>
           </div>
 
-          <p className="text-[11px] text-slate-400">Soft-delete: Historical teaching logs & paper blueprints are preserved.</p>
+          <p className="text-[11px] text-slate-400">Soft-delete: historical records (audit log, batch assignment history) are preserved.</p>
         </div>
 
         <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-slate-100 bg-slate-50 rounded-b-2xl">

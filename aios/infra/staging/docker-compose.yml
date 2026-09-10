@@ -1,12 +1,14 @@
-# Disposable Postgres for the staging real-provider smoke test.
+# Disposable Postgres + Redis for staging verification.
 #
 #   docker compose -f infra/staging/docker-compose.yml up -d
 #
-# Deliberately NOT a full platform stack. The smoke test imports the Python
-# modules directly and needs only a database — apps/api-python has no Redis
-# dependency and makes no outbound HTTP to the Node service, so the Node API,
-# Redis, and the web app are not required to execute any of the nine checks.
-# Adding them would be setup cost with no verification benefit.
+# Deliberately NOT a full platform stack — backing services only. The API,
+# worker, web and Python services run from the repo against these.
+#
+# Postgres alone covers the provider smoke test (docs/34): it imports the Python
+# modules directly, and apps/api-python has no Redis dependency. Redis is here
+# for the SEPARATE job of exercising the six BullMQ queues, which have never
+# executed against a real broker.
 #
 # Port 5433, not 5432, so this can never collide with a local Postgres someone
 # is already running — and so the host:port nominated in STAGING_DB_ALLOWLIST is
@@ -35,6 +37,25 @@ services:
                                    # volume if a run needs to survive a restart.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U aios_staging -d aios_staging"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  staging-redis:
+    image: redis:7-alpine
+    container_name: aios-staging-redis
+    # AOF, not the default snapshotting. These queues carry a student's grade
+    # reaching them: a Redis that loses its dataset on restart silently drops
+    # in-flight evaluations, and nothing downstream would ever notice. Matches
+    # the persistence requirement production needs, so staging actually
+    # rehearses production's failure modes rather than a rosier version.
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    ports:
+      - "127.0.0.1:6380:6379"   # 6380 so it cannot collide with a local Redis
+    tmpfs:
+      - /data                   # disposable by construction, like the database
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 3s
       timeout: 3s
       retries: 20

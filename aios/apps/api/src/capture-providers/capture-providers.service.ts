@@ -1,17 +1,28 @@
 import { Injectable, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { AuditAction, UserRole } from '@prisma/client';
+import { AuditAction, UserRole, CaptureProviderType } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { CreateCaptureProviderDto } from './dto/capture-provider.dto';
 import { validateCaptureProviderConfig } from './capture-provider-config.validator';
+import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
 
 @Injectable()
 export class CaptureProvidersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly featureFlags: FeatureFlagsService,
+  ) {}
 
   async create(instituteId: string, dto: CreateCaptureProviderDto, actor: AuthenticatedUser) {
     this.assertInstituteAccess(actor, instituteId);
     validateCaptureProviderConfig(dto.type, dto.config);
+
+    // Founder Console Phase 3 — the one flag this codebase's own docs named
+    // as an example (Institute.featureFlags comment: "e.g. omrCapture"),
+    // finally actually enforced rather than merely storable.
+    if (dto.type === CaptureProviderType.OMR && !(await this.featureFlags.isEnabled(instituteId, 'omrCapture'))) {
+      throw new ForbiddenException('OMR capture is not enabled for this institute.');
+    }
 
     const provider = await this.prisma.captureProvider.create({
       data: { instituteId, type: dto.type, config: dto.config as any },

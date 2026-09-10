@@ -5,7 +5,7 @@ import {
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { TeachersService } from './teachers.service';
 import {
-  CreateTeacherDto, UpdateTeacherDto, AssignBatchDto, QueryTeachersDto,
+  CreateTeacherDto, UpdateTeacherDto, UpdateMyProfileDto, AssignBatchDto, QueryTeachersDto,
 } from './dto/teacher.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -38,6 +38,40 @@ export class TeachersController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.teachersService.findAll(instituteId, query, user);
+  }
+
+  // Real roster aggregates for the Admin overview/analytics screens
+  @Get('stats')
+  @Roles(UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Aggregate roster stats (counts by subject/status/batch-assignment)' })
+  getStats(
+    @Param('instituteId') instituteId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.teachersService.getStats(instituteId, user);
+  }
+
+  // Registered ahead of the ':profileId' routes below — otherwise Nest would
+  // match the literal segment 'me' as a :profileId param instead.
+  @Get('me')
+  @Roles(UserRole.TEACHER)
+  @ApiOperation({ summary: 'Teacher: get my own profile' })
+  getMyProfile(
+    @Param('instituteId') instituteId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.teachersService.findMyProfile(instituteId, user);
+  }
+
+  @Patch('me')
+  @Roles(UserRole.TEACHER)
+  @ApiOperation({ summary: 'Teacher: update my own profile (name, qualification)' })
+  updateMyProfile(
+    @Param('instituteId') instituteId: string,
+    @Body() dto: UpdateMyProfileDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.teachersService.updateMyProfile(instituteId, dto, user);
   }
 
   @Get(':profileId')
@@ -73,6 +107,18 @@ export class TeachersController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.teachersService.assignToBatch(instituteId, profileId, dto, user);
+  }
+
+  @Delete(':profileId')
+  @Roles(UserRole.ADMIN, UserRole.FOUNDER)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Archive a teacher (soft-delete, preserves all history)' })
+  archive(
+    @Param('instituteId') instituteId: string,
+    @Param('profileId') profileId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.teachersService.archive(instituteId, profileId, user);
   }
 
   @Delete(':profileId/batches/:batchTeacherId')

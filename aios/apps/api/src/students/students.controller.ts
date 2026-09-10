@@ -54,9 +54,33 @@ export class StudentsController {
     return this.studentsService.findAll(instituteId, query, user);
   }
 
+  // Real roster aggregates for the Admin overview/analytics screens
+  @Get('stats')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Aggregate roster stats (counts by batch/tag/status)' })
+  getStats(
+    @Param('instituteId') instituteId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.studentsService.getStats(instituteId, user);
+  }
+
+  // Own profile — must be declared before the ':profileId' route below so
+  // Nest's route matching doesn't try to resolve 'me' as a profileId.
+  @Get('me')
+  @Roles(UserRole.STUDENT)
+  @ApiOperation({ summary: "The logged-in student's own profile, mastery scores, and exam history" })
+  findMyProfile(
+    @Param('instituteId') instituteId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.studentsService.findMyProfile(instituteId, user);
+  }
+
   // B-01: Get one
   @Get(':profileId')
-  @ApiOperation({ summary: 'Get a student profile (with history and scores)' })
+  @Roles(UserRole.STUDENT, UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Get a student profile (with history and scores) — a STUDENT may only fetch their own' })
   findById(
     @Param('instituteId') instituteId: string,
     @Param('profileId') profileId: string,

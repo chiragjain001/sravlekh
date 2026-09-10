@@ -55,8 +55,7 @@ export function useMinRole(minRole: UserRole): boolean {
   const { user } = useAuth();
   if (!user) return false;
   const ROLE_LEVEL: Record<UserRole, number> = {
-    STUDENT: 1, PARENT: 1, RECEPTIONIST: 2, ACCOUNTANT: 2,
-    COORDINATOR: 3, TEACHER: 3, ACADEMIC_HEAD: 4, ADMIN: 5, FOUNDER: 10,
+    STUDENT: 1, TEACHER: 3, ADMIN: 5, FOUNDER: 10,
   };
   return (ROLE_LEVEL[user.role] ?? 0) >= (ROLE_LEVEL[minRole] ?? 99);
 }

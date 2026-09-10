@@ -1,0 +1,78 @@
+# Docker build-context exclusions.
+#
+# WHY THIS FILE MATTERS MORE THAN IT LOOKS: without it, `docker build` sends the
+# whole working tree, and the Dockerfiles' `COPY apps/api apps/api` /
+# `COPY packages/db packages/db` then copy it into the image. Two concrete
+# consequences, both verified by building:
+#
+#  1. SECRETS. apps/api/.env, apps/api-python/.env and infra/staging/staging.env
+#     hold DATABASE_URL, JWT_SECRET, OPENAI_API_KEY and INTERNAL_SERVICE_TOKEN.
+#     They are correctly gitignored and have never been committed — but .gitignore
+#     has no bearing on a Docker build context, so every image was being built with
+#     those files baked into a layer, readable by anyone who can pull the image.
+#     The env-var discipline in the Dockerfiles is pointless while this is true.
+#
+#  2. THE BUILD ACTUALLY BREAKS. The host's node_modules (built on the developer's
+#     OS, full of symlinks and native binaries) was copied over the Linux
+#     dependencies installed in the `deps` stage, so `prisma generate` failed with
+#     "Cannot find module /repo/packages/db/node_modules/prisma/build/index.js".
+#     No image built at all until this file existed.
+#
+# Keep the ignore list ahead of the Dockerfiles' COPY lines: anything genuinely
+# needed at build time must NOT be listed here.
+
+# --- Dependencies: always reinstalled inside the image, never copied in -------
+node_modules
+**/node_modules
+
+# --- Secrets and local configuration ------------------------------------------
+# Deliberately broad. The .example templates are re-included below because the
+# images do not need them, but excluding a template by accident is harmless
+# while including a real secret by accident is not.
+.env
+.env.*
+**/.env
+**/.env.*
+infra/staging/staging.env
+*.pem
+*.key
+*.p12
+*.pfx
+
+# --- Build output: regenerated inside the image -------------------------------
+dist
+**/dist
+.next
+**/.next
+build
+**/build
+*.tsbuildinfo
+.turbo
+.pnpm-store
+
+# --- Local runtime state -------------------------------------------------------
+.local-storage
+coverage
+**/coverage
+*.log
+
+# --- Python ---------------------------------------------------------------------
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.venv
+.venv-ci
+
+# --- VCS, tooling and docs: nothing at build time reads these -------------------
+.git
+.github
+.claude
+.vscode
+.idea
+docs
+load-tests
+*.md
+audit_raw.json
+audit_script.js

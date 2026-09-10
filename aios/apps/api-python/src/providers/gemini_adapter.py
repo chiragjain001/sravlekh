@@ -92,4 +92,15 @@ class GeminiAdapter(ModelProviderAdapter):
 
         if not response.text:
             raise AdapterProviderError("Gemini returned no text in its response.")
-        return GenerateResult(text=response.text)
+
+        # Gemini's equivalent of OpenAI's finish_reason == "length". Compared by
+        # NAME rather than by importing the FinishReason enum: the google-genai
+        # SDK has moved this symbol between modules across versions, and an
+        # ImportError here would break every generation call to protect against a
+        # truncation that mostly does not happen. Every access is defensive for
+        # the same reason — an unreadable finish reason means "assume complete",
+        # which is exactly today's behaviour.
+        candidates = getattr(response, "candidates", None) or []
+        finish_reason = getattr(candidates[0], "finish_reason", None) if candidates else None
+        truncated = getattr(finish_reason, "name", str(finish_reason)) == "MAX_TOKENS"
+        return GenerateResult(text=response.text, truncated=truncated)

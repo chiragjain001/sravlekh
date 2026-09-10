@@ -1,26 +1,36 @@
 """24-OCR-HANDWRITING-ARCHITECTURE.md §4: extraction strategy by block type.
 
-Uses the same real, already-proven LLM pattern as src/ai/blueprint_agent.py
-(ChatOpenAI, gated on OPENAI_API_KEY) rather than inventing a separate
-integration — gpt-4o is multimodal and can read an image directly. This is
-NOT a calibrated OCR/HWR confidence score in the traditional sense; it is
-the model's own self-reported confidence, which is a real but imperfect
-signal — documented here rather than presented as more rigorous than it is.
+The vendor model is multimodal — it reads the page image directly alongside the
+instruction text. This is NOT a calibrated OCR/HWR confidence score in the
+traditional sense; it is the model's own self-reported confidence, which is a
+real but imperfect signal — documented here rather than presented as more
+rigorous than it is.
 
 DIAGRAM_SKETCH/TABLE never reach the LLM at all: §3.3 says no text
 extraction is attempted for those block types, so calling a vision model
 for them would be spending a real API call on work the architecture
 explicitly says not to do.
+
+P1 B1 Stage 3: the vendor SDK is reached only through
+providers/openai_adapter.py (27 §8a) — this module no longer imports
+langchain_openai/openai. The model is now a required parameter supplied by the
+caller from the OCR registry, replacing the hardcoded "gpt-4o" literal that
+previously made that registry decorative for OCR.
 """
 
-from langchain_core.messages import HumanMessage
 from langchain_core.output_parsers import PydanticOutputParser
-from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from src.config import get_settings
+from src.providers.openai_adapter import OpenAIAdapter
+from src.providers.types import GenerateRequest, ImagePart, TextPart
 
 NO_EXTRACTION_BLOCK_TYPES = {"DIAGRAM_SKETCH", "TABLE"}
+
+# Unchanged from the pre-adapter call — transcription is a deterministic task,
+# not a creative one. Named rather than inlined so the request-shape test can
+# assert it by reference.
+OCR_TEMPERATURE = 0.0
 
 PROMPT_BY_BLOCK_TYPE = {
     "PRINTED_TEXT": (
@@ -53,7 +63,10 @@ class NoExtractionResult(BaseModel):
     requires_visual_evaluation: bool = True
 
 
-async def extract_text(image_url: str, block_type: str) -> OCRExtractionResult | NoExtractionResult:
+async def extract_text(image_url: str, block_type: str, model: str) -> OCRExtractionResult | NoExtractionResult:
+    """`model` is the registry-resolved AIModelVersion.versionLabel, supplied by
+    the caller (routers/ocr.py). Required, not defaulted: a default would
+    reintroduce exactly the hardcoded fallback P1 B1 Stage 3 removes."""
     if block_type in NO_EXTRACTION_BLOCK_TYPES:
         return NoExtractionResult()
 
@@ -65,15 +78,22 @@ async def extract_text(image_url: str, block_type: str) -> OCRExtractionResult |
     if not settings.OPENAI_API_KEY:
         raise ValueError("OPENAI_API_KEY is not configured in the environment.")
 
-    llm = ChatOpenAI(api_key=settings.OPENAI_API_KEY, model="gpt-4o", temperature=0.0)
     parser = PydanticOutputParser(pydantic_object=OCRExtractionResult)
 
-    message = HumanMessage(
+    # Multimodal: instruction text first, then the page image — the same ordering
+    # and the same combined "prompt + format instructions" text as before, now
+    # expressed in the adapter's content-part vocabulary rather than a raw
+    # langchain HumanMessage. temperature 0.0 unchanged; max_tokens deliberately
+    # not set, matching the previous call exactly (it never passed one).
+    request = GenerateRequest(
         content=[
-            {"type": "text", "text": f"{prompt_text}\n\n{parser.get_format_instructions()}"},
-            {"type": "image_url", "image_url": {"url": image_url}},
-        ]
+            TextPart(f"{prompt_text}\n\n{parser.get_format_instructions()}"),
+            ImagePart(image_url),
+        ],
+        model=model,
+        temperature=OCR_TEMPERATURE,
     )
 
-    response = await llm.ainvoke([message])
-    return parser.parse(response.content)
+    adapter = OpenAIAdapter(api_key=settings.OPENAI_API_KEY)
+    generated = await adapter.generate(request)
+    return parser.parse(generated.text)

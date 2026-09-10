@@ -7,8 +7,11 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { AuditAction, UserRole } from '@prisma/client';
+import { AuditAction, UserRole, UserStatus } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
+import { getTeacherBatchIds } from '../shared/teacher-scope';
+import { EntitlementsService } from '../entitlements/entitlements.service';
+import { EntitlementResource } from '../entitlements/plan-definitions';
 import {
   CreateStudentDto,
   UpdateStudentDto,
@@ -22,7 +25,10 @@ import {
 export class StudentsService {
   private readonly logger = new Logger(StudentsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly entitlements: EntitlementsService,
+  ) {}
 
   // ── B-01: Create student ─────────────────────────────────────────────────
 
@@ -47,6 +53,13 @@ export class StudentsService {
 
     // Create user + student profile in a transaction
     const result = await this.prisma.$transaction(async (tx) => {
+      // Plan enforcement runs INSIDE the transaction, sharing `tx` with the
+      // insert below, so the count and the create are one atomic decision.
+      // Checking before the transaction would be a TOCTOU race: two concurrent
+      // enrolments at the plan boundary would both read the same count, both
+      // pass, and both write — silently overshooting the customer's plan.
+      await this.entitlements.assertCanCreate(instituteId, EntitlementResource.STUDENT, tx);
+
       const user = await tx.user.create({
         data: {
           email: dto.email,
@@ -89,12 +102,25 @@ export class StudentsService {
     const limit = query.limit ?? 20;
     const skip = (page - 1) * limit;
 
-    // Build where clause
+    // Build where clause.
+    //
+    // status ACTIVE excludes archived students. Without it, `archive()` (which
+    // sets User.status = INACTIVE) left the student in this list forever, while
+    // the stats endpoint below already counted only ACTIVE — so the dashboard
+    // total and the list it links to disagreed, and a "deleted" student still
+    // appeared on the roster.
     const where: Record<string, unknown> = {
-      user: { instituteId },
+      user: { instituteId, status: 'ACTIVE' },
     };
 
-    if (query.batchId) {
+    // Teachers only see students in their own batches — ADMIN/FOUNDER keep
+    // institute-wide visibility, unaffected by this branch.
+    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor);
+    if (teacherBatchIds !== null) {
+      where['batchId'] = query.batchId
+        ? { in: teacherBatchIds.includes(query.batchId) ? [query.batchId] : [] }
+        : { in: teacherBatchIds };
+    } else if (query.batchId) {
       where['batchId'] = query.batchId;
     }
 
@@ -111,6 +137,16 @@ export class StudentsService {
       where['tags'] = { hasEvery: query.tags };
     }
 
+    if (query.status) {
+      where['user'] = { ...(where['user'] as object), status: query.status };
+    }
+
+    const sortDir = query.sortDir ?? 'asc';
+    const orderBy =
+      query.sortBy === 'rollNumber' ? { rollNumber: sortDir }
+      : query.sortBy === 'admissionDate' ? { admissionDate: sortDir }
+      : { user: { name: sortDir } };
+
     const [profiles, total] = await Promise.all([
       this.prisma.studentProfile.findMany({
         where,
@@ -120,7 +156,7 @@ export class StudentsService {
         },
         skip,
         take: limit,
-        orderBy: { user: { name: 'asc' } },
+        orderBy,
       }),
       this.prisma.studentProfile.count({ where }),
     ]);
@@ -131,10 +167,112 @@ export class StudentsService {
     };
   }
 
+  // ── Roster stats — real aggregates for the Admin overview/analytics screens ─
+
+  async getStats(instituteId: string, actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
+
+    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor);
+    const scopeWhere: Record<string, unknown> = { user: { instituteId } };
+    if (teacherBatchIds !== null) {
+      scopeWhere['batchId'] = { in: teacherBatchIds };
+    }
+
+    // The enrollment histogram below only plots the last 6 months, so bound the
+    // query to that window instead of reading every admissionDate ever recorded.
+    // Previously one findMany pulled { tags, admissionDate } for EVERY student in
+    // the institute on each dashboard load and discarded all but 6 months of the
+    // dates in application memory — invisible on a demo tenant, linear in student
+    // count in production.
+    // Exactly the earliest bucket the histogram builds below: 5 months back,
+    // first of that month. Kept in step with that loop deliberately — a wider
+    // window would refetch rows the loop discards, a narrower one would drop
+    // rows it wants to count.
+    const statsNow = new Date();
+    const enrollmentWindowStart = new Date(statsNow.getFullYear(), statsNow.getMonth() - 5, 1);
+
+    // Roster-facing aggregates count only ACTIVE students, matching findAll and
+    // the dashboard cards. `total` stays unfiltered so `inactive: total - active`
+    // below remains meaningful — it is the one figure that is *about* archived
+    // students rather than a roster the admin can click through to.
+    const activeScope = { ...scopeWhere, user: { instituteId, status: UserStatus.ACTIVE } };
+
+    const [total, active, byBatch, recentlyAdmitted, tagRows, enrollmentRows] = await Promise.all([
+      this.prisma.studentProfile.count({ where: scopeWhere }),
+      this.prisma.studentProfile.count({ where: activeScope }),
+      this.prisma.studentProfile.groupBy({
+        by: ['batchId'],
+        where: activeScope,
+        _count: { _all: true },
+      }),
+      this.prisma.studentProfile.count({
+        where: { ...activeScope, admissionDate: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } },
+      }),
+      // Tag frequency still needs every row — tags is a scalar array, so Postgres
+      // can aggregate it only via unnest, which cannot express the teacher batch
+      // scoping above without hand-written SQL. Narrowed to the single small
+      // column; see the scalability note in the audit report for the raw-SQL
+      // follow-up if institutes grow past a few thousand students.
+      this.prisma.studentProfile.findMany({ where: activeScope, select: { tags: true } }),
+      this.prisma.studentProfile.findMany({
+        where: { ...activeScope, admissionDate: { gte: enrollmentWindowStart } },
+        select: { admissionDate: true },
+      }),
+    ]);
+
+    const batchIds = byBatch.map((b) => b.batchId).filter((id): id is string => !!id);
+    const batches = batchIds.length
+      ? await this.prisma.batch.findMany({ where: { id: { in: batchIds } }, select: { id: true, name: true } })
+      : [];
+    const batchNameById = new Map(batches.map((b) => [b.id, b.name]));
+
+    const tagCounts = new Map<string, number>();
+    for (const p of tagRows) {
+      for (const tag of p.tags) tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+    }
+
+    const enrollmentByMonth = new Map<string, number>();
+    const now = new Date();
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      enrollmentByMonth.set(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, 0);
+    }
+    for (const p of enrollmentRows) {
+      const d = p.admissionDate;
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      if (enrollmentByMonth.has(key)) enrollmentByMonth.set(key, (enrollmentByMonth.get(key) ?? 0) + 1);
+    }
+
+    return {
+      total,
+      active,
+      inactive: total - active,
+      newLast30Days: recentlyAdmitted,
+      byBatch: byBatch.map((b) => ({
+        batchId: b.batchId,
+        batchName: b.batchId ? (batchNameById.get(b.batchId) ?? 'Unknown batch') : 'Unassigned',
+        count: b._count._all,
+      })),
+      byTag: Array.from(tagCounts.entries()).map(([tag, count]) => ({ tag, count })),
+      enrollmentByMonth: Array.from(enrollmentByMonth.entries()).map(([month, count]) => ({ month, count })),
+    };
+  }
+
   // ── B-01: Get single student ──────────────────────────────────────────────
 
   async findById(instituteId: string, profileId: string, actor: AuthenticatedUser) {
     this.assertInstituteAccess(actor, instituteId);
+    await this.assertTeacherOwnsStudentIfTeacher(actor, profileId);
+    await this.assertStudentOwnsProfileIfStudent(actor, profileId);
+
+    // 32-AI-GOVERNANCE-POLICY.md §5: a student sees only finalized results — never a
+    // provisional ScoreRecord. ScoreAggregationService recomputes on every evaluation
+    // write, so a v2 attempt mid-review carries a real but incomplete percentage
+    // (isFinalized=false until every subjective response is human-approved); showing
+    // it to the student would present work-in-progress as their result. Staff keep
+    // full visibility — reviewing in-progress scoring is their job. This method backs
+    // both GET /students/me and GET /students/:profileId, so it is the one chokepoint.
+    const scoreRecordsWhere = actor.role === UserRole.STUDENT ? { isFinalized: true } : undefined;
 
     const profile = await this.prisma.studentProfile.findUnique({
       where: { id: profileId },
@@ -148,6 +286,7 @@ export class StudentsService {
           take: 10,
         },
         scoreRecords: {
+          where: scoreRecordsWhere,
           include: { exam: { select: { id: true, title: true, scheduledDate: true, type: true } } },
           orderBy: { createdAt: 'desc' },
           take: 10,
@@ -299,6 +438,7 @@ export class StudentsService {
     actor: AuthenticatedUser,
   ) {
     this.assertInstituteAccess(actor, instituteId);
+    await this.assertTeacherOwnsStudentIfTeacher(actor, profileId);
     this.validateTags(dto.tags);
 
     const existing = await this.getProfileWithTenantCheck(profileId, instituteId);
@@ -388,6 +528,40 @@ export class StudentsService {
     }
 
     return profile;
+  }
+
+  private async assertTeacherOwnsStudentIfTeacher(actor: AuthenticatedUser, profileId: string) {
+    if (actor.role !== UserRole.TEACHER) return;
+    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor);
+    const student = await this.prisma.studentProfile.findUnique({
+      where: { id: profileId },
+      select: { batchId: true },
+    });
+    if (!student?.batchId || !teacherBatchIds?.includes(student.batchId)) {
+      throw new ForbiddenException('You can only access students in batches you are assigned to.');
+    }
+  }
+
+  // Fixes a real pre-existing gap: GET :profileId had no @Roles() decorator
+  // and no own-record check, so any authenticated STUDENT could view any
+  // other student's profile/mastery/scores by profileId alone (audit-adjacent
+  // finding — the code's own comment on assertInstituteAccess claimed this
+  // was "handled at controller level," which it was not).
+  private async assertStudentOwnsProfileIfStudent(actor: AuthenticatedUser, profileId: string) {
+    if (actor.role !== UserRole.STUDENT) return;
+    const own = await this.prisma.studentProfile.findUnique({ where: { userId: actor.id }, select: { id: true } });
+    if (own?.id !== profileId) {
+      throw new ForbiddenException('You can only access your own profile.');
+    }
+  }
+
+  // ── GET /students/me — a Student's own profile, same shape as findById ────
+
+  async findMyProfile(instituteId: string, actor: AuthenticatedUser) {
+    if (actor.role !== UserRole.STUDENT) throw new ForbiddenException('Only students have a self-profile.');
+    const own = await this.prisma.studentProfile.findUnique({ where: { userId: actor.id }, select: { id: true } });
+    if (!own) throw new NotFoundException('No student profile found for this account.');
+    return this.findById(instituteId, own.id, actor);
   }
 
   private async assertBatchBelongsToInstitute(batchId: string, instituteId: string) {

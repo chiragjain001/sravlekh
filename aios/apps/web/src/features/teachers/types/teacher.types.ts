@@ -1,165 +1,76 @@
 // ─── Teachers Feature: Types ──────────────────────────────────────────────────
-// These types drive the Teachers Module service layer.
+// Real shapes only — mirrors apps/api/src/teachers/dto/teacher.dto.ts and the
+// TeacherProfile Prisma model. No appraisal/rating/leave fields — no such
+// domain exists in the backend.
 
-export type TeacherAvailability = 'available' | 'busy' | 'on_leave';
-export type TeacherRole         = 'teacher' | 'head_of_dept' | 'adjunct_faculty';
-export type SortDirection       = 'asc' | 'desc';
+export type TeacherAccountStatus = 'ACTIVE' | 'INACTIVE' | 'PENDING' | 'SUSPENDED';
+export type SortDirection = 'asc' | 'desc';
+export type TeacherSortField = 'name' | 'qualification';
 
-// ── Admin-facing teacher list record (flat, table-optimized)
-export interface TeacherListItem {
-  id:              string;
-  empId:           string;
-  name:            string;
-  email:           string;
-  phone:           string;
-  avatarInitials:  string;
-  designation:     string;
-  role:            TeacherRole;
-
-  // Academic scope
-  subject:         string;          // e.g. 'Physics', 'Chemistry'
-  subjects:        string[];        // multi-subject support
-  assignedBatches: number;          // count
-  batchLabels:     string[];        // e.g. ['JEE 2025 Star', 'NEET Target']
-  weeklyClasses:   number;          // hours/week
-
-  // Operational metrics
-  pendingEvaluations: number;      // pending test grading count
-  avgStudentScore:    number;      // 0–100%
-  workloadPct:        number;      // 0–100% capacity utilization
-  availability:       TeacherAvailability;
-  rating:             number;      // 1.0 - 5.0 appraisal score
-
-  // Metadata
-  joinedOn:        string;          // ISO
-  status:          'active' | 'inactive' | 'on_leave';
-}
-
-// ── Full teacher profile for detail drawer
-export interface TeacherProfile extends TeacherListItem {
-  qualification:      string;
-  experienceYears:    number;
-  bio:                string;
-
-  // Schedule & Batches
-  schedule:           TeacherScheduleSlot[];
-  batchDetails:       TeacherBatchDetail[];
-
-  // Appraisals & Evaluations
-  appraisals:         TeacherAppraisalRecord[];
-  pendingPapers:      PendingPaperApproval[];
-
-  // Replacement & leave logs
-  leaveRequests:      TeacherLeaveRequest[];
-  timeline:           TeacherTimelineEvent[];
-}
-
-export interface TeacherScheduleSlot {
-  id:        string;
-  day:       'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat';
-  timeSlot:  string;
+export interface TeacherBatchAssignment {
+  id: string; // BatchTeacher id — needed to remove the assignment
+  batchId: string;
   batchName: string;
-  roomNo:    string;
-  subject:   string;
+  subjectId: string | null;
 }
 
-export interface TeacherBatchDetail {
-  batchId:        string;
-  batchName:      string;
-  studentCount:   number;
-  avgBatchScore:  number;
-  attendanceRate: number;
+// ── Admin-facing teacher list record (flat, table-optimized) — matches the
+// TeachersController.findAll → TeacherProfile shape returned by the API.
+export interface TeacherListItem {
+  id: string;
+  userId: string;
+  name: string;
+  email: string;
+  avatarInitials: string;
+  qualification: string | null;
+  subjectIds: string[];
+  status: TeacherAccountStatus;
+  batchAssignments: TeacherBatchAssignment[];
+  joinedOn: string; // ISO — from user.createdAt if available, else profile.createdAt
 }
 
-export interface TeacherAppraisalRecord {
-  id:           string;
-  period:       string;        // e.g. 'Q1 2025'
-  rating:       number;        // out of 5
-  feedback:     string;        // HOD comments
-  evaluatedBy:  string;
-  date:         string;
+// ── Full teacher profile for the detail drawer
+export interface TeacherProfile extends TeacherListItem {
+  availability: Record<string, unknown> | null;
 }
 
-export interface PendingPaperApproval {
-  id:          string;
-  paperTitle:  string;
-  batchName:   string;
-  totalQuestions: number;
-  submittedAt: string;
-  status:      'pending' | 'approved' | 'rejected';
+// ── Real roster aggregates — matches TeachersService.getStats
+export interface TeachersStats {
+  total: number;
+  active: number;
+  inactive: number;
+  unassignedToSubject: number;
+  withBatchAssignment: number;
+  withoutBatchAssignment: number;
+  bySubject: { subject: string; count: number }[];
 }
 
-export interface TeacherLeaveRequest {
-  id:         string;
-  reason:     string;
-  fromDate:   string;
-  toDate:     string;
-  status:     'pending' | 'approved' | 'rejected';
-  substitute: string | null;
-}
-
-export interface TeacherTimelineEvent {
-  id:     string;
-  type:   'joined' | 'batch_assigned' | 'paper_submitted' | 'appraisal' | 'leave';
-  title:  string;
-  detail: string | null;
-  date:   string;
-  actor:  string;
-}
-
-// ── Analytics aggregates (for the Analytics tab)
-export interface TeachersAnalytics {
-  totalTeachers:       number;
-  activeToday:         number;
-  avgWorkloadHours:    number;
-  pendingAppraisals:   number;
-
-  subjectCoverage:     SubjectCoverageItem[];
-  workloadDistribution: WorkloadDistItem[];
-  topPerformers:       FacultyRankingItem[];
-  departmentBreakdown: DepartmentBreakdownItem[];
-}
-
-export interface SubjectCoverageItem     { subject: string; teacherCount: number; color: string; }
-export interface WorkloadDistItem        { range: string; count: number; color: string; }
-export interface FacultyRankingItem      { rank: number; name: string; subject: string; score: string; avatar: string; }
-export interface DepartmentBreakdownItem { dept: string; totalHours: number; avgRating: number; }
-
-// ── Service params
+// ── Service layer param types
 export interface GetTeachersParams {
-  page?:         number;
-  pageSize?:     number;
-  search?:       string;
-  subject?:      string;
-  availability?: TeacherAvailability;
-  status?:       'active' | 'inactive' | 'on_leave';
-  sortBy?:       keyof TeacherListItem;
-  sortDir?:      SortDirection;
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  subjectId?: string;
+  status?: TeacherAccountStatus;
+  sortBy?: TeacherSortField;
+  sortDir?: SortDirection;
 }
 
 export interface CreateTeacherInput {
-  name:            string;
-  email:           string;
-  phone:           string;
-  empId?:          string;
-  subject:         string;
-  subjects?:       string[];
-  designation?:    string;
-  role?:           TeacherRole;
-  qualification?:  string;
-  experienceYears?: number;
+  name: string;
+  email: string;
+  qualification?: string;
+  subjectIds?: string[];
 }
 
 export interface UpdateTeacherInput extends Partial<CreateTeacherInput> {
-  id:            string;
-  availability?: TeacherAvailability;
-  status?:       'active' | 'inactive' | 'on_leave';
+  id: string;
 }
 
 export interface PaginatedTeachers {
-  data:       TeacherListItem[];
-  total:      number;
-  page:       number;
-  pageSize:   number;
+  data: TeacherListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
   totalPages: number;
 }

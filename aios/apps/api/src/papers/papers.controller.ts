@@ -57,6 +57,16 @@ export class PapersController {
     return this.papersService.generatePaper(instituteId, dto, user);
   }
 
+  @Get('papers')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'List all generated papers for this institute — lightweight (no items/questions), pick one then GET papers/:paperId for detail' })
+  findAllPapers(
+    @Param('instituteId') instituteId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.papersService.findAllPapers(instituteId, user);
+  }
+
   @Get('papers/:paperId')
   @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
   @ApiOperation({ summary: 'Get a generated paper and its questions' })

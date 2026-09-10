@@ -12,6 +12,7 @@ import { Throttle } from '@nestjs/throttler';
 import { Request } from 'express';
 import { AuthService } from './auth.service';
 import { GoogleLoginDto } from './dto/google-login.dto';
+import { DevLoginDto } from './dto/dev-login.dto';
 import { Public } from './decorators/public.decorator';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { AuthenticatedUser } from './auth.types';
@@ -40,6 +41,18 @@ export class AuthController {
   ) {
     const ipAddress = req.ip ?? req.socket.remoteAddress;
     return this.authService.loginWithGoogle(dto.idToken, ipAddress);
+  }
+
+  /**
+   * 06-AUTH-AUTHORIZATION.md §1: dev/test-only mock login, disabled in production
+   * (enforced in AuthService, not just here — see loginAsMockRole).
+   */
+  @Public()
+  @Post('dev-login')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'DEV ONLY: sign in as a seeded mock user by role' })
+  async devLogin(@Body() dto: DevLoginDto) {
+    return this.authService.loginAsMockRole(dto.role);
   }
 
   /**

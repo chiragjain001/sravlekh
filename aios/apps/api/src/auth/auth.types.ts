@@ -10,6 +10,7 @@ export interface JwtPayload {
   name: string;
   role: UserRole;
   instituteId: string;
+  tokenVersion: number; // Founder Console Phase 4 — must match User.tokenVersion or the session is invalid
   iat?: number;
   exp?: number;
 }

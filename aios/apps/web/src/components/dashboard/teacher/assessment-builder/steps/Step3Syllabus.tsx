@@ -19,113 +19,32 @@ interface Step3SyllabusProps {
   onChange: (updates: Partial<AssessmentState>) => void;
   onNext: () => void;
   onPrev: () => void;
+  chapters: SyllabusChapter[];
+  isLoading?: boolean;
 }
 
 export interface SyllabusChapter {
   id: string;
   name: string;
-  totalQuestions: number;
+  totalQuestions?: number;
   topics: {
     id: string;
     name: string;
-    subtopics: string[];
+    subtopics?: string[];
   }[];
 }
 
-export const PHYSICS_SYLLABUS_TREE: SyllabusChapter[] = [
-  {
-    id: 'ch_rotational',
-    name: 'Rotational Motion & Rigid Body Dynamics',
-    totalQuestions: 1420,
-    topics: [
-      {
-        id: 'top_torque',
-        name: 'Torque & Angular Equilibrium',
-        subtopics: ['Vector Product', 'Equilibrium of Rigid Bodies', 'Couple Moment'],
-      },
-      {
-        id: 'top_moi',
-        name: 'Moment of Inertia',
-        subtopics: ['Parallel Axes Theorem', 'Perpendicular Axes Theorem', 'Radius of Gyration'],
-      },
-      {
-        id: 'top_angular_momentum',
-        name: 'Angular Momentum & Conservation',
-        subtopics: ['Conservation of Angular Momentum', 'Keplerian Analogy'],
-      },
-      {
-        id: 'top_rolling',
-        name: 'Rolling Motion without Slipping',
-        subtopics: ['Kinetic Energy of Rolling Body', 'Instantaneous Centre of Rotation'],
-      },
-    ],
-  },
-  {
-    id: 'ch_gravitation',
-    name: 'Gravitation & Satellite Motion',
-    totalQuestions: 980,
-    topics: [
-      {
-        id: 'top_escape_velocity',
-        name: 'Escape Velocity & Energy',
-        subtopics: ['Gravitational Potential Energy', 'Escape Velocity Calculation'],
-      },
-      {
-        id: 'top_orbital_motion',
-        name: 'Orbital Motion & Satellites',
-        subtopics: ['Kepler’s Three Laws', 'Geostationary Satellites', 'Binding Energy'],
-      },
-      {
-        id: 'top_gravitational_field',
-        name: 'Gravitational Field Intensity',
-        subtopics: ['Field due to Solid Sphere', 'Acceleration due to Gravity Variation'],
-      },
-    ],
-  },
-  {
-    id: 'ch_electricity',
-    name: 'Current Electricity & Circuits',
-    totalQuestions: 1250,
-    topics: [
-      {
-        id: 'top_ohms_law',
-        name: 'Ohm’s Law & Resistance Drift',
-        subtopics: ['Drift Velocity', 'Temperature Dependence of Resistance'],
-      },
-      {
-        id: 'top_kirchhoff',
-        name: 'Kirchhoff’s Laws & Network Analysis',
-        subtopics: ['Loop Rule & Junction Rule', 'Wheatstone Bridge Symmetry'],
-      },
-      {
-        id: 'top_potentiometer',
-        name: 'Potentiometer & Meter Bridge',
-        subtopics: ['Comparison of EMFs', 'Internal Resistance Measurement'],
-      },
-    ],
-  },
-  {
-    id: 'ch_thermo',
-    name: 'Thermodynamics & Kinetic Theory',
-    totalQuestions: 1100,
-    topics: [
-      {
-        id: 'top_carnot',
-        name: 'Carnot Engine & Efficiency',
-        subtopics: ['First & Second Laws', 'Carnot Cycle Efficiency'],
-      },
-      {
-        id: 'top_isothermal',
-        name: 'Thermodynamic Processes',
-        subtopics: ['Isothermal & Adiabatic Processes', 'Work Done in Expansion'],
-      },
-    ],
-  },
-];
-
-export function Step3Syllabus({ state, onChange, onNext, onPrev }: Step3SyllabusProps) {
+export function Step3Syllabus({ state, onChange, onNext, onPrev, chapters, isLoading }: Step3SyllabusProps) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [expandedChapters, setExpandedChapters] = useState<string[]>(['ch_rotational', 'ch_gravitation']);
+  const [expandedChapters, setExpandedChapters] = useState<string[]>([]);
+
+  // Auto-expand the first couple of chapters once real data arrives — the
+  // fixture used to hardcode which two chapters started expanded.
+  React.useEffect(() => {
+    if (chapters.length > 0) {
+      setExpandedChapters((prev) => (prev.length > 0 ? prev : chapters.slice(0, 2).map((c) => c.id)));
+    }
+  }, [chapters]);
 
   const toggleChapterExpand = (chapterId: string) => {
     setExpandedChapters((prev) =>
@@ -170,7 +89,7 @@ export function Step3Syllabus({ state, onChange, onNext, onPrev }: Step3Syllabus
     onChange({ selectedChapters: updatedChapters, selectedTopics: updatedTopics });
   };
 
-  const filteredTree = PHYSICS_SYLLABUS_TREE.filter((ch) => {
+  const filteredTree = chapters.filter((ch) => {
     const matchesChapter = ch.name.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesTopics = ch.topics.some((t) => t.name.toLowerCase().includes(searchTerm.toLowerCase()));
     return matchesChapter || matchesTopics;
@@ -206,7 +125,7 @@ export function Step3Syllabus({ state, onChange, onNext, onPrev }: Step3Syllabus
 
         <div className="flex items-center gap-2 text-[12px]">
           <button
-            onClick={() => setExpandedChapters(PHYSICS_SYLLABUS_TREE.map((c) => c.id))}
+            onClick={() => setExpandedChapters(chapters.map((c) => c.id))}
             className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-colors"
           >
             Expand All
@@ -221,6 +140,16 @@ export function Step3Syllabus({ state, onChange, onNext, onPrev }: Step3Syllabus
       </div>
 
       {/* Tree Accordion Container */}
+      {isLoading ? (
+        <div className="p-8 text-center text-[13px] font-semibold text-slate-400 bg-white rounded-2xl border border-slate-200">
+          Loading curriculum…
+        </div>
+      ) : chapters.length === 0 ? (
+        <div className="p-8 text-center text-[13px] font-semibold text-slate-500 bg-white rounded-2xl border border-slate-200 space-y-1">
+          <p>No chapters found for {state.subject} yet.</p>
+          <p className="text-[11.5px] text-slate-400 font-medium">Add chapters and topics from the Question Bank first.</p>
+        </div>
+      ) : (
       <div className="space-y-3">
         {filteredTree.map((chapter) => {
           const isExpanded = expandedChapters.includes(chapter.id);
@@ -260,9 +189,11 @@ export function Step3Syllabus({ state, onChange, onNext, onPrev }: Step3Syllabus
                   <span className="text-[11.5px] font-semibold text-slate-500">
                     {selectedTopicsCount}/{chapter.topics.length} Topics
                   </span>
-                  <span className="text-[11px] font-bold bg-indigo-50 text-indigo-700 px-2.5 py-0.5 rounded-full border border-indigo-100">
-                    {chapter.totalQuestions} Qs Available
-                  </span>
+                  {typeof chapter.totalQuestions === 'number' && (
+                    <span className="text-[11px] font-bold bg-indigo-50 text-indigo-700 px-2.5 py-0.5 rounded-full border border-indigo-100">
+                      {chapter.totalQuestions} Qs Available
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -295,7 +226,7 @@ export function Step3Syllabus({ state, onChange, onNext, onPrev }: Step3Syllabus
 
                         {/* Subtopics Chips */}
                         <div className="flex flex-wrap gap-1.5 pl-6 pt-1">
-                          {topic.subtopics.map((sub, idx) => (
+                          {(topic.subtopics ?? []).map((sub, idx) => (
                             <span
                               key={idx}
                               className="text-[10.5px] font-semibold px-2 py-0.5 bg-slate-100 text-slate-600 rounded-md"
@@ -313,6 +244,7 @@ export function Step3Syllabus({ state, onChange, onNext, onPrev }: Step3Syllabus
           );
         })}
       </div>
+      )}
 
       {/* Footer Navigation */}
       <div className="flex items-center justify-between border-t border-slate-200 pt-5">

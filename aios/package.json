@@ -17,6 +17,27 @@
   },
   "engines": {
     "node": ">=20.0.0",
-    "pnpm": ">=9.0.0"
-  }
+    "pnpm": ">=10.0.0"
+  },
+  "//packageManager": [
+    "The single source of truth for which pnpm runs anywhere: corepack reads this",
+    "field, so local shells, CI (pnpm/action-setup resolves it) and the Docker",
+    "images all get the same version without three places to keep in sync.",
+    "",
+    "It is not cosmetic. pnpm-workspace.yaml carries 23 security `overrides`, and",
+    "only pnpm >=10 reads overrides from that file — pnpm 9 reads them from this",
+    "package.json's `pnpm.overrides`, sees none, compares against the 23 recorded",
+    "in pnpm-lock.yaml and aborts with ERR_PNPM_LOCKFILE_CONFIG_MISMATCH. All three",
+    "Dockerfiles pinned `corepack prepare pnpm@9`, so every image build failed at",
+    "the install step — verified by building them. engines.pnpm is raised to >=10",
+    "to match, since >=9 advertised a version that cannot install this workspace.",
+    "",
+    "Pinned to 10.x rather than the 11.x a developer may have locally: pnpm 11",
+    "requires Node >=22.13 and every image is node:20-alpine, so 11 aborts with",
+    "ERR_UNKNOWN_BUILTIN_MODULE mid-install (also verified by building). 10.34.5",
+    "supports Node >=18.12, reads the workspace overrides, and speaks the same",
+    "lockfileVersion 9.0 already committed. Bumping the runtime to Node 22 is a",
+    "separate decision that needs its own testing, not a side effect of this fix."
+  ],
+  "packageManager": "pnpm@10.34.5"
 }

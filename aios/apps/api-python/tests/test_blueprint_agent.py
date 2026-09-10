@@ -16,6 +16,7 @@ from src.ai.blueprint_agent import (
 from src.config import Settings
 from src.providers.errors import AdapterAuthError, AdapterRateLimitError
 from src.providers.types import TextPart
+from src.ai.blueprint_model_registry import NoActiveBlueprintModelError
 
 SETTINGS_WITH_KEY = Settings(DATABASE_URL="postgresql://x", JWT_SECRET="x" * 32, OPENAI_API_KEY="sk-test")
 SETTINGS_GEMINI_ONLY = Settings(DATABASE_URL="postgresql://x", JWT_SECRET="x" * 32, GEMINI_API_KEY="gem-test")
@@ -96,7 +97,7 @@ async def test_no_active_blueprint_model_fails_explicitly_without_calling_the_pr
     adapter = fake_adapter()
     a, b, c, d = patch_agent(adapter, version=None)
     with a, b, c, d:
-        with pytest.raises(ValueError, match="No active Blueprint AI model is configured"):
+        with pytest.raises(NoActiveBlueprintModelError, match="No active Blueprint AI model is configured"):
             await generate_blueprint_from_prompt("A hard chemistry test")
 
     adapter.assert_not_called()

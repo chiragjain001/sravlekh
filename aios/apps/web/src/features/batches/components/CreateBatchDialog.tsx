@@ -2,64 +2,53 @@
 // ─── Create / Edit Batch Dialog ───────────────────────────────────────────────
 
 import React, { useState, useEffect } from 'react';
-import { X, Layers, User, Calendar, Loader2 } from 'lucide-react';
-import type { BatchListItem, CreateBatchInput, UpdateBatchInput, BatchProgram } from '../types/batch.types';
-
-const PROGRAMS: BatchProgram[] = ['JEE', 'NEET', 'Class 11', 'Class 12', 'Foundation'];
-const TARGET_YEARS = ['2025', '2026', '2027', '2024-25', '2025-26'];
-const MENTORS = ['Rahul Verma', 'Pooja Sharma', 'Amit Singh', 'Devendra Pal', 'Sunidhi Mehta', 'Vikram Rao'];
+import { X, Layers, Loader2 } from 'lucide-react';
+import type { BatchListItem, CreateBatchInput, UpdateBatchInput } from '../types/batch.types';
 
 interface FormState {
-  name:        string;
-  code:        string;
-  program:     BatchProgram;
-  targetYear:  string;
-  maxCapacity: number;
-  leadMentor:  string;
-  roomNo:      string;
-  startDate:   string;
-  endDate:     string;
+  name: string;
+  classYear: string;
+  section: string;
+  academicYear: string;
 }
 
-const EMPTY_FORM: FormState = {
-  name: '', code: '', program: 'JEE', targetYear: '2025',
-  maxCapacity: 40, leadMentor: 'Rahul Verma', roomNo: 'Hall A',
-  startDate: '', endDate: '',
-};
+const EMPTY_FORM: FormState = { name: '', classYear: '', section: '', academicYear: '' };
 
 function toFormState(b: BatchListItem): FormState {
-  return {
-    name:        b.name,
-    code:        b.code,
-    program:     b.program,
-    targetYear:  b.targetYear,
-    maxCapacity: b.maxCapacity,
-    leadMentor:  b.leadMentor,
-    roomNo:      'Hall A',
-    startDate:   b.startDate,
-    endDate:     b.endDate,
-  };
+  return { name: b.name, classYear: b.classYear ?? '', section: b.section ?? '', academicYear: b.academicYear ?? '' };
 }
 
 interface CreateBatchDialogProps {
-  isOpen:     boolean;
-  onClose:    () => void;
+  isOpen: boolean;
+  onClose: () => void;
   editTarget?: BatchListItem | null;
-  onSubmit:   (data: CreateBatchInput | UpdateBatchInput) => Promise<void>;
+  onSubmit: (data: CreateBatchInput | UpdateBatchInput) => Promise<void>;
+}
+
+function Field({ label, id, value, onChange, placeholder, required }: {
+  label: string; id: string; value: string; onChange: (v: string) => void; placeholder?: string; required?: boolean;
+}) {
+  return (
+    <div>
+      <label htmlFor={id} className="block text-xs font-semibold text-slate-600 mb-1">
+        {label}{required && <span className="text-rose-500 ml-0.5">*</span>}
+      </label>
+      <input
+        id={id} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} required={required}
+        className="w-full pl-3 pr-3 py-2 text-xs border border-slate-200 rounded-lg bg-white text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent transition-shadow"
+      />
+    </div>
+  );
 }
 
 export function CreateBatchDialog({ isOpen, onClose, editTarget, onSubmit }: CreateBatchDialogProps) {
   const isEditMode = !!editTarget;
-  const [form, setForm]       = useState<FormState>(EMPTY_FORM);
-  const [errors, setErrors]   = useState<Partial<Record<keyof FormState, string>>>({});
+  const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (editTarget) {
-      setForm(toFormState(editTarget));
-    } else {
-      setForm(EMPTY_FORM);
-    }
+    setForm(editTarget ? toFormState(editTarget) : EMPTY_FORM);
     setErrors({});
   }, [editTarget, isOpen]);
 
@@ -70,13 +59,13 @@ export function CreateBatchDialog({ isOpen, onClose, editTarget, onSubmit }: Cre
     return () => document.removeEventListener('keydown', handler);
   }, [isOpen, onClose]);
 
+  function set<K extends keyof FormState>(key: K) {
+    return (v: FormState[K]) => { setForm((f) => ({ ...f, [key]: v })); setErrors((e) => ({ ...e, [key]: '' })); };
+  }
+
   function validate(): boolean {
     const errs: Partial<Record<keyof FormState, string>> = {};
-    if (!form.name.trim())       errs.name       = 'Batch name is required';
-    if (!form.program)           errs.program    = 'Program is required';
-    if (!form.targetYear)        errs.targetYear = 'Target year is required';
-    if (form.maxCapacity <= 0)  errs.maxCapacity= 'Capacity must be > 0';
-    if (!form.leadMentor)        errs.leadMentor = 'Lead mentor is required';
+    if (!form.name.trim()) errs.name = 'Batch name is required';
     setErrors(errs);
     return Object.keys(errs).length === 0;
   }
@@ -84,31 +73,16 @@ export function CreateBatchDialog({ isOpen, onClose, editTarget, onSubmit }: Cre
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!validate()) return;
-
     setLoading(true);
     try {
-      if (isEditMode && editTarget) {
-        await onSubmit({
-          id:          editTarget.id,
-          name:        form.name,
-          program:     form.program,
-          targetYear:  form.targetYear,
-          maxCapacity: form.maxCapacity,
-          leadMentor:  form.leadMentor,
-        } as UpdateBatchInput);
-      } else {
-        await onSubmit({
-          name:        form.name,
-          code:        form.code || undefined,
-          program:     form.program,
-          targetYear:  form.targetYear,
-          maxCapacity: form.maxCapacity,
-          leadMentor:  form.leadMentor,
-          roomNo:      form.roomNo,
-          startDate:   form.startDate || undefined,
-          endDate:     form.endDate || undefined,
-        } as CreateBatchInput);
-      }
+      const payload = {
+        name: form.name,
+        classYear: form.classYear || undefined,
+        section: form.section || undefined,
+        academicYear: form.academicYear || undefined,
+      };
+      if (isEditMode && editTarget) await onSubmit({ id: editTarget.id, ...payload } as UpdateBatchInput);
+      else await onSubmit(payload as CreateBatchInput);
       onClose();
     } finally {
       setLoading(false);
@@ -118,106 +92,35 @@ export function CreateBatchDialog({ isOpen, onClose, editTarget, onSubmit }: Cre
   if (!isOpen) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(15,23,42,0.55)', backdropFilter: 'blur(6px)' }}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-    >
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg border border-slate-100 flex flex-col overflow-hidden">
-        {/* Header */}
-        <div className="flex items-center justify-between p-5 border-b border-slate-100 bg-gradient-to-r from-blue-50 to-white">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(15,23,42,0.55)', backdropFilter: 'blur(6px)' }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden border border-slate-100" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+        <div className="flex items-center justify-between p-5 border-b border-slate-100 bg-gradient-to-r from-indigo-50 to-white">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center">
-              <Layers className="w-5 h-5 text-white" />
-            </div>
+            <div className="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center"><Layers className="w-5 h-5 text-white" /></div>
             <div>
-              <h3 className="text-sm font-bold text-slate-900">{isEditMode ? 'Edit Cohort / Batch' : 'Create New Cohort / Batch'}</h3>
-              <p className="text-[11px] text-slate-500 mt-0.5">{isEditMode ? `Editing ${editTarget!.name}` : 'Setup batch details & capacity'}</p>
+              <h3 id="dialog-title" className="text-sm font-bold text-slate-900">{isEditMode ? 'Edit Batch' : 'Create New Batch'}</h3>
+              <p className="text-[11px] text-slate-500 mt-0.5">{isEditMode ? `Editing ${editTarget!.name}` : 'Fill in batch details to create a cohort'}</p>
             </div>
           </div>
-          <button onClick={onClose} className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500">
-            <X className="w-4 h-4" />
-          </button>
+          <button onClick={onClose} className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 transition-colors" aria-label="Close dialog"><X className="w-4 h-4" /></button>
         </div>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit}>
-          <div className="p-5 space-y-4 max-h-[65vh] overflow-y-auto">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="col-span-2">
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Batch Name *</label>
-                <input
-                  type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  placeholder="e.g. JEE 2025 Star Batch" className="w-full pl-3 pr-3 py-2 text-xs border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-400"
-                />
-                {errors.name && <p className="text-[10px] text-rose-500 mt-0.5">{errors.name}</p>}
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Program *</label>
-                <select
-                  value={form.program} onChange={(e) => setForm({ ...form, program: e.target.value as BatchProgram })}
-                  className="w-full pl-3 pr-3 py-2 text-xs border border-slate-200 rounded-lg bg-white"
-                >
-                  {PROGRAMS.map((p) => <option key={p} value={p}>{p}</option>)}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Target Year *</label>
-                <select
-                  value={form.targetYear} onChange={(e) => setForm({ ...form, targetYear: e.target.value })}
-                  className="w-full pl-3 pr-3 py-2 text-xs border border-slate-200 rounded-lg bg-white"
-                >
-                  {TARGET_YEARS.map((y) => <option key={y} value={y}>{y}</option>)}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Max Student Capacity *</label>
-                <input
-                  type="number" value={form.maxCapacity} onChange={(e) => setForm({ ...form, maxCapacity: Number(e.target.value) })}
-                  placeholder="40" className="w-full pl-3 pr-3 py-2 text-xs border border-slate-200 rounded-lg"
-                />
-                {errors.maxCapacity && <p className="text-[10px] text-rose-500 mt-0.5">{errors.maxCapacity}</p>}
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Lead Faculty Mentor *</label>
-                <select
-                  value={form.leadMentor} onChange={(e) => setForm({ ...form, leadMentor: e.target.value })}
-                  className="w-full pl-3 pr-3 py-2 text-xs border border-slate-200 rounded-lg bg-white"
-                >
-                  {MENTORS.map((m) => <option key={m} value={m}>{m}</option>)}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Batch Code</label>
-                <input
-                  type="text" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })}
-                  placeholder="Auto-generated if empty" className="w-full pl-3 pr-3 py-2 text-xs border border-slate-200 rounded-lg"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Assigned Room</label>
-                <input
-                  type="text" value={form.roomNo} onChange={(e) => setForm({ ...form, roomNo: e.target.value })}
-                  placeholder="e.g. Hall A" className="w-full pl-3 pr-3 py-2 text-xs border border-slate-200 rounded-lg"
-                />
-              </div>
+        <form onSubmit={handleSubmit} noValidate>
+          <div className="p-5 space-y-4">
+            <div>
+              <Field label="Batch Name" id="b-name" value={form.name} onChange={set('name')} placeholder="e.g. JEE Advanced 2026 — Batch A" required />
+              {errors.name && <p className="text-[10px] text-rose-500 mt-0.5">{errors.name}</p>}
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Class / Year" id="b-classyear" value={form.classYear} onChange={set('classYear')} placeholder="e.g. Class 11" />
+              <Field label="Section" id="b-section" value={form.section} onChange={set('section')} placeholder="e.g. A" />
+            </div>
+            <Field label="Academic Year" id="b-academicyear" value={form.academicYear} onChange={set('academicYear')} placeholder="e.g. 2025-2026" />
           </div>
 
-          <div className="flex items-center justify-between px-5 py-4 border-t border-slate-100 bg-slate-50">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50">
-              Cancel
-            </button>
-            <button
-              type="submit" disabled={loading}
-              className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60"
-            >
+          <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-slate-100 bg-slate-50">
+            <button type="button" onClick={onClose} className="px-4 py-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">Cancel</button>
+            <button type="submit" disabled={loading} className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors shadow-sm shadow-indigo-200">
               {loading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
               {loading ? 'Saving…' : isEditMode ? 'Save Changes' : 'Create Batch'}
             </button>

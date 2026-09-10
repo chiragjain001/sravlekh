@@ -8,7 +8,6 @@ import {
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { TimetableSlotType } from '@prisma/client';
-import { Type } from 'class-transformer';
 
 export class CreateTimetableSlotDto {
   @ApiPropertyOptional({ description: 'Batch ID if this is for a specific batch' })

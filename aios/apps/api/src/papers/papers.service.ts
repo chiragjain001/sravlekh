@@ -13,6 +13,7 @@ import {
   GeneratePaperDto,
   BlueprintDistributionRuleDto,
 } from './dto/paper.dto';
+import { sampleWithoutReplacement } from '../shared/random-sample';
 
 @Injectable()
 export class PapersService {
@@ -77,8 +78,13 @@ export class PapersService {
     
     let orderCounter = 1;
 
-    // TODO: In a production scenario with millions of questions, we'd use raw SQL for efficient random sampling.
-    // For this architecture, we fetch candidates and randomize in memory.
+    // Candidates are fetched per rule and sampled in memory. That is a deliberate
+    // trade, not an oversight: `rules` is a blueprint's distribution list (single
+    // digits in practice), and each query is narrowed by topic + type + difficulty
+    // and selects `id` only, so the working set is a few hundred ids per rule rather
+    // than the whole bank. Revisit with a DB-side sample only if a real bank makes
+    // the per-rule candidate set large — the previous TODO here implied a severity
+    // the query shape does not actually have.
     for (const rule of rules) {
       const candidates = await this.prisma.question.findMany({
         where: {
@@ -99,9 +105,10 @@ export class PapersService {
         );
       }
 
-      // Shuffle candidates
-      const shuffled = candidates.sort(() => 0.5 - Math.random());
-      const selected = shuffled.slice(0, rule.count);
+      // Uniform draw. This was `candidates.sort(() => 0.5 - Math.random())`, which
+      // is not a shuffle — see sampleWithoutReplacement's comment for the measured
+      // bias (first candidate picked 1.87x too often) and why it matters here.
+      const selected = sampleWithoutReplacement(candidates, rule.count);
 
       for (const q of selected) {
         selectedQuestionIds.push(q.id);
@@ -148,6 +155,15 @@ export class PapersService {
   }
 
   // ── Retrieve Papers ──────────────────────────────────────────────────────
+
+  async findAllPapers(instituteId: string, actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
+    return this.prisma.paper.findMany({
+      where: { instituteId },
+      select: { id: true, title: true, status: true, isPersonalized: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
 
   async getPaper(instituteId: string, paperId: string, actor: AuthenticatedUser) {
     this.assertInstituteAccess(actor, instituteId);

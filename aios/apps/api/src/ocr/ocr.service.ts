@@ -8,6 +8,9 @@ import { StorageService } from '../infrastructure/storage/storage.service';
 import { UserRole } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { OCR_QUEUE, OcrJobData } from './ocr.constants';
+import { enqueueDeduped, jobKey } from '../infrastructure/queue/enqueue';
+import { QUEUE_POLICY } from '../infrastructure/queue/queue-policy';
+import { ensureDiagnosableMessage } from '../shared/logging/error-message';
 
 /**
  * 24-OCR-HANDWRITING-ARCHITECTURE.md. Only ever enqueues blockType=
@@ -54,10 +57,16 @@ export class OcrService {
       if (alreadyExtracted) continue;
 
       const imageKey = region.pageImage.processedImageUrl ?? region.pageImage.rawImageUrl;
-      await this.ocrQueue.add(
+      // The dedupe that matters most: OCRResult is append-only by design
+      // (24-OCR-HANDWRITING-ARCHITECTURE.md §6), so a duplicate job writes a
+      // second machine reading for the same region that nothing collapses.
+      await enqueueDeduped(
+        this.ocrQueue,
         'extract',
         { instituteId, questionRegionId: region.id, imageKey, blockType: 'HANDWRITTEN_TEXT' },
-        { attempts: 3, backoff: { type: 'exponential', delay: 1000 } },
+        jobKey('ocr', region.id, 'HANDWRITTEN_TEXT'),
+        { attempts: 3, backoff: { type: 'exponential', delay: 1000 }, ...QUEUE_POLICY.ocr.jobOptions },
+        this.logger,
       );
       enqueuedCount++;
     }
@@ -85,7 +94,7 @@ export class OcrService {
       this.logger.debug(`OCR extraction for region ${job.questionRegionId} completed in ${Date.now() - startedAt}ms`);
     } catch (err) {
       this.logger.warn(`OCR extraction HTTP call failed for region ${job.questionRegionId} after ${Date.now() - startedAt}ms`, err as Error);
-      throw err;
+      throw ensureDiagnosableMessage(err);
     }
   }
 

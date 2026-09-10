@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Brings up disposable staging Postgres, applies migrations, and runs the smoke
-# test. The smoke test itself is NOT modified by this script — it stays the
-# source of truth and is invoked exactly as docs/34 §3 documents.
+# Brings up disposable staging Postgres + Redis, proves the targets, applies
+# migrations through the guarded wrapper, and runs the smoke test. The smoke
+# test itself is NOT modified by this script — it stays the source of truth and
+# is invoked exactly as docs/34 §3 documents.
 #
 #   ./infra/staging/run-smoke.sh [--skip-ocr] [--only NAME]
 #
@@ -22,31 +23,51 @@ fi
 # shellcheck disable=SC1090
 set -a; source "$ENV_FILE"; set +a
 
-for required in AIOS_ENV DATABASE_URL STAGING_DB_ALLOWLIST OPENAI_API_KEY; do
+# Fail closed on every target and secret. DIRECT_URL is in this list because
+# Prisma migrations resolve directUrl, not url — a run with DATABASE_URL alone
+# would migrate the shared database, and would do it silently.
+for required in AIOS_ENV NODE_ENV DATABASE_URL DIRECT_URL REDIS_URL \
+                STAGING_DB_ALLOWLIST STAGING_REDIS_ALLOWLIST OPENAI_API_KEY; do
   if [ -z "${!required:-}" ]; then
     echo "$required is empty in $ENV_FILE — refusing to continue." >&2
     exit 1
   fi
 done
 
-echo "==> Starting disposable Postgres (loopback only, RAM-backed)"
+echo "==> Starting disposable Postgres + Redis (loopback only, RAM-backed)"
 docker compose -f "$COMPOSE_FILE" up -d --wait
 
-echo "==> Applying migrations to the staging database"
-# migrate deploy applies committed migrations only; it never generates new ones
-# and never prompts, so it cannot drift the schema the way `migrate dev` can.
-(cd "$REPO_ROOT" && pnpm --filter @aios/db exec prisma migrate deploy)
+echo
+echo "==> Proving the targets before touching them"
+node "$REPO_ROOT/infra/staging/prove-targets.js"
 
+echo
+echo "==> Applying migrations to the staging database"
+# NOT `prisma migrate deploy`. That command resolves DIRECT_URL, which
+# packages/db/.env points at the shared Supabase instance — so the obvious
+# invocation migrates the wrong database and says nothing about it. This wrapper
+# asks Prisma which datasource it ACTUALLY resolved and refuses unless it is a
+# nominated staging host. It also applies committed migrations only: it never
+# generates new ones and never prompts, so it cannot drift the schema the way
+# `migrate dev` can.
+node "$REPO_ROOT/infra/staging/migrate-staging.js"
+
+echo
 echo "==> Generating Prisma clients (the Python client comes from the Node CLI)"
 (cd "$REPO_ROOT" && pnpm db:generate)
 
+echo
 echo "==> Running the smoke test (unmodified)"
 cd "$REPO_ROOT/apps/api-python"
 python scripts/staging_provider_smoke.py "$@"
 status=$?
 
 echo
+echo "==> Verifying isolation after the run"
+node "$REPO_ROOT/infra/staging/verify-isolation.js" || echo "    (isolation verification reported failures — see above)"
+
+echo
 echo "==> Done (exit $status). Tear down with:"
 echo "    docker compose -f infra/staging/docker-compose.yml down"
-echo "    (the database is RAM-backed, so stopping the container discards all data)"
+echo "    (Postgres and Redis are RAM-backed, so stopping the containers discards all data)"
 exit $status

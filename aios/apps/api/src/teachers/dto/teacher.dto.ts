@@ -4,6 +4,7 @@ import {
   IsOptional,
   IsEmail,
   IsArray,
+  IsEnum,
   MaxLength,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -57,6 +58,20 @@ export class UpdateTeacherDto {
   subjectIds?: string[];
 }
 
+export class UpdateMyProfileDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  name?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  qualification?: string;
+}
+
 export class AssignBatchDto {
   @ApiProperty()
   @IsString()
@@ -69,6 +84,9 @@ export class AssignBatchDto {
   subjectId?: string;
 }
 
+export const TEACHER_SORT_FIELDS = ['name', 'qualification'] as const;
+export type TeacherSortField = (typeof TEACHER_SORT_FIELDS)[number];
+
 export class QueryTeachersDto {
   @ApiPropertyOptional()
   @IsOptional()
@@ -79,6 +97,21 @@ export class QueryTeachersDto {
   @IsOptional()
   @IsString()
   subjectId?: string;
+
+  @ApiPropertyOptional({ enum: ['ACTIVE', 'INACTIVE', 'SUSPENDED'], description: 'Filter by account status' })
+  @IsOptional()
+  @IsString()
+  status?: string;
+
+  @ApiPropertyOptional({ enum: TEACHER_SORT_FIELDS, default: 'name' })
+  @IsOptional()
+  @IsEnum(TEACHER_SORT_FIELDS)
+  sortBy?: TeacherSortField = 'name';
+
+  @ApiPropertyOptional({ enum: ['asc', 'desc'], default: 'asc' })
+  @IsOptional()
+  @IsEnum(['asc', 'desc'])
+  sortDir?: 'asc' | 'desc' = 'asc';
 
   @ApiPropertyOptional({ default: 1 })
   @IsOptional()

@@ -48,11 +48,24 @@ export class HealthController {
     try {
       // Queue.client is typed as a narrower IRedisClient by bullmq, but the underlying
       // connection is always the ioredis instance QueueModule constructed.
-      const client = (await this.masteryRecalcQueue.client) as unknown as Redis;
-      const pong = await client.ping();
+      //
+      // Queue.client only resolves once the connection is "ready" — with
+      // QueueModule's infinite exponential-backoff retry, an unreachable
+      // Redis means it never settles. Without racing a timeout here this
+      // whole health check (and every caller polling it for liveness) would
+      // hang instead of correctly reporting redis: 'down'.
+      const client = (await this.raceTimeout(this.masteryRecalcQueue.client, 2000)) as unknown as Redis;
+      const pong = await this.raceTimeout(client.ping(), 2000);
       return pong === 'PONG';
     } catch {
       return false;
     }
+  }
+
+  private raceTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+    return Promise.race([
+      promise,
+      new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`Timed out after ${ms}ms`)), ms)),
+    ]);
   }
 }

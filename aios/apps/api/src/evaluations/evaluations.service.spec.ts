@@ -10,6 +10,7 @@ import { CacheService } from '../infrastructure/cache/cache.service';
 import { AiEvaluationService } from '../ai-evaluation/ai-evaluation.service';
 import { PermissionsService } from '../permissions/permissions.service';
 import { ReportsService } from '../reports/reports.service';
+import { AnalyticsService } from '../analytics/analytics.service';
 import { AuthenticatedUser } from '../auth/auth.types';
 
 describe('EvaluationsService', () => {
@@ -25,6 +26,7 @@ describe('EvaluationsService', () => {
   let aiEvaluationService: { enqueueSingle: jest.Mock };
   let permissionsService: { hasPermission: jest.Mock };
   let reportsService: { reissueForStudent: jest.Mock };
+  let analyticsService: { enqueueMasteryRecalc: jest.Mock };
 
   const teacher: AuthenticatedUser = { id: 'teacher-1', email: 't@x.com', name: 'T', role: UserRole.TEACHER, instituteId: 'inst-1' };
   const otherTeacher: AuthenticatedUser = { ...teacher, id: 'teacher-2', instituteId: 'inst-2' };
@@ -43,6 +45,7 @@ describe('EvaluationsService', () => {
     aiEvaluationService = { enqueueSingle: jest.fn().mockResolvedValue(undefined) };
     permissionsService = { hasPermission: jest.fn().mockResolvedValue(false) };
     reportsService = { reissueForStudent: jest.fn().mockResolvedValue(undefined) };
+    analyticsService = { enqueueMasteryRecalc: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -52,6 +55,7 @@ describe('EvaluationsService', () => {
         { provide: AiEvaluationService, useValue: aiEvaluationService },
         { provide: PermissionsService, useValue: permissionsService },
         { provide: ReportsService, useValue: reportsService },
+        { provide: AnalyticsService, useValue: analyticsService },
         { provide: getQueueToken(SCORE_AGGREGATION_QUEUE), useValue: queue },
       ],
     }).compile();
@@ -63,7 +67,7 @@ describe('EvaluationsService', () => {
     attemptId: 'att-1',
     marksAvailable: 5,
     attempt: { studentProfileId: 'sp-1', assessmentDelivery: { batchId: 'batch-1', status: 'EVALUATING', assessment: { instituteId: 'inst-1' } } },
-    question: { type: QuestionType.SHORT_ANSWER, rubric: null, subjectId: 'sub-1' },
+    question: { type: QuestionType.SHORT_ANSWER, rubric: null, subjectId: 'sub-1', topicId: 'topic-1' },
     evaluation: null,
   };
 
@@ -135,6 +139,17 @@ describe('EvaluationsService', () => {
       expect(queue.add).toHaveBeenCalledWith('recalculate', { attemptId: 'att-1' }, expect.any(Object));
       expect(result).toEqual({ id: 'ev-1', marksAwarded: 3 });
     });
+
+    // V2 Analytics/Mastery Integration phase.
+    it('triggers a mastery recalc for the response student+topic', async () => {
+      prisma.response.findUnique.mockResolvedValueOnce(baseResponse);
+      prisma.evaluation.create.mockResolvedValueOnce({ id: 'eval-1' });
+      prisma.evaluationVersion.create.mockResolvedValueOnce({ id: 'ev-1', marksAwarded: 3 });
+
+      await service.decide('inst-1', 'resp-1', { decision: EvaluationDecision.ADJUST, marksAwarded: 3 }, teacher);
+
+      expect(analyticsService.enqueueMasteryRecalc).toHaveBeenCalledWith('sp-1', ['topic-1']);
+    });
   });
 
   describe('decide — ACCEPT_AI', () => {
@@ -166,6 +181,24 @@ describe('EvaluationsService', () => {
           }),
         }),
       );
+    });
+
+    // V2 Analytics/Mastery Integration phase: ACCEPT_AI still creates a real
+    // TEACHER-sourced version (25 §4.2) — mastery must treat it as finalized
+    // exactly like any other decide() outcome, not skip it as "just AI".
+    it('still triggers a mastery recalc — accepting AI is a real human-authored finalization', async () => {
+      prisma.response.findUnique.mockResolvedValueOnce({
+        ...baseResponse,
+        evaluation: {
+          id: 'eval-1',
+          currentVersion: { id: 'ev-ai', source: EvaluationSource.AI, marksAwarded: 4, criterionScores: [] },
+        },
+      });
+      prisma.evaluationVersion.create.mockResolvedValueOnce({ id: 'ev-2', marksAwarded: 4 });
+
+      await service.decide('inst-1', 'resp-1', { decision: EvaluationDecision.ACCEPT_AI }, teacher);
+
+      expect(analyticsService.enqueueMasteryRecalc).toHaveBeenCalledWith('sp-1', ['topic-1']);
     });
   });
 
@@ -218,6 +251,26 @@ describe('EvaluationsService', () => {
       );
 
       expect(prisma.evaluationVersion.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ marksAwarded: 5 }) }));
+    });
+
+    // 26 §4.1: the ceiling is the response's own marksAvailable, not the rubric's
+    // maxMarks. A rubric reused across questions (or a question edited after its
+    // rubric was authored) can carry a higher maxMarks than this response offers —
+    // capping on the rubric would silently over-award on an official evaluation.
+    it('caps the total at response.marksAvailable, not rubric.maxMarks, when the two diverge', async () => {
+      prisma.response.findUnique.mockResolvedValueOnce({ ...rubricResponse, marksAvailable: 4 });
+      prisma.evaluation.create.mockResolvedValueOnce({ id: 'eval-1' });
+      prisma.evaluationVersion.create.mockResolvedValueOnce({ id: 'ev-1', marksAwarded: 4 });
+
+      await service.decide(
+        'inst-1', 'resp-1',
+        { decision: EvaluationDecision.ADJUST, criterionScores: [{ rubricCriterionId: 'c1', marksAwarded: 3 }, { rubricCriterionId: 'c2', marksAwarded: 2 }] },
+        teacher,
+      );
+
+      expect(prisma.evaluationVersion.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ marksAwarded: 4 }) }),
+      );
     });
   });
 
@@ -370,6 +423,18 @@ describe('EvaluationsService', () => {
       );
       expect(reportsService.reissueForStudent).toHaveBeenCalledWith('inst-1', 'sp-1', 'teacher-1');
     });
+
+    // V2 Analytics/Mastery Integration phase.
+    it('triggers a mastery recalc for the response student+topic', async () => {
+      prisma.response.findUnique.mockResolvedValueOnce(baseResponse);
+      permissionsService.hasPermission.mockResolvedValueOnce(true);
+      prisma.evaluation.create.mockResolvedValueOnce({ id: 'eval-1' });
+      prisma.evaluationVersion.create.mockResolvedValueOnce({ id: 'ev-reviewer-1', marksAwarded: 4 });
+
+      await service.override('inst-1', 'resp-1', { marksAwarded: 4, disputeReason: 'Re-graded per moderation policy' }, teacher);
+
+      expect(analyticsService.enqueueMasteryRecalc).toHaveBeenCalledWith('sp-1', ['topic-1']);
+    });
   });
 
   describe('getHistory', () => {
@@ -420,6 +485,28 @@ describe('EvaluationsService', () => {
           where: expect.objectContaining({
             attempt: { assessmentDelivery: { assessment: { instituteId: 'inst-1' }, batchId: 'batch-1' } },
             question: expect.objectContaining({ subjectId: 'sub-1' }),
+          }),
+        }),
+      );
+    });
+
+    it('includes questionRegion -> pageImage -> page (documentId) and the latest OCR result, so the frontend can render the source image + transcript (doc 28 §2)', async () => {
+      prisma.response.findMany.mockResolvedValueOnce([]);
+      prisma.response.count.mockResolvedValueOnce(0);
+
+      await service.getWorkItems('inst-1', {}, teacher);
+
+      expect(prisma.response.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: expect.objectContaining({
+            questionRegion: {
+              select: {
+                id: true,
+                boundingBox: true,
+                pageImage: { select: { id: true, page: { select: { id: true, documentId: true, pageNumber: true } } } },
+                ocrBlocks: { select: { results: { orderBy: { processedAt: 'desc' }, take: 1 } } },
+              },
+            },
           }),
         }),
       );

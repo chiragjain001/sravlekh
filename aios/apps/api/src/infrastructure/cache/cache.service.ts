@@ -62,6 +62,43 @@ export class CacheService {
     }
   }
 
+  /**
+   * Atomic counter with a TTL applied on first increment — the primitive behind
+   * every counting security control that has to hold across instances (login
+   * lockout, request throttling).
+   *
+   * Returns `undefined` when Redis is unreachable, deliberately rather than
+   * throwing or returning 0. Those two would be silent failures in opposite
+   * directions: 0 disables the control, an exception fails the user's request.
+   * `undefined` says "no distributed answer available" and lets the caller
+   * decide — both current callers fall back to per-instance counting, which is
+   * weaker than distributed but far stronger than nothing.
+   *
+   * INCR and EXPIRE run in one pipeline so two racing instances cannot both see
+   * a fresh counter and both set a new TTL, which would let the window slide
+   * forward indefinitely under sustained load.
+   */
+  async incrWithTtl(key: string, ttlSeconds: number): Promise<{ count: number; ttlMs: number } | undefined> {
+    try {
+      const [[, count], , [, pttl]] = (await this.client
+        .multi()
+        .incr(key)
+        .expire(key, ttlSeconds, 'NX') // NX: only when no TTL is set, i.e. first hit of the window
+        .pttl(key)
+        .exec()) as [[Error | null, number], [Error | null, number], [Error | null, number]];
+
+      return { count, ttlMs: pttl > 0 ? pttl : ttlSeconds * 1000 };
+    } catch (err) {
+      this.logger.warn(`Distributed counter unavailable for "${key}" — caller will fall back`, err as Error);
+      return undefined;
+    }
+  }
+
+  /** Clears a counter — e.g. a successful login resetting its failure count. */
+  async resetCounter(key: string): Promise<void> {
+    await this.del(key);
+  }
+
   /** Prefix-scan delete, per doc 09 §3's key-format convention (e.g. a full-tenant flush on institute archival). */
   async delByPrefix(prefix: string): Promise<void> {
     try {

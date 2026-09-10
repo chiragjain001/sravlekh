@@ -59,6 +59,17 @@ export class DocumentsController {
     return this.documentsService.uploadDocument(instituteId, bundleId, files, idempotencyKey, user);
   }
 
+  @Get('document-bundles/:bundleId/documents')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'List documents (booklets) in a bundle with lightweight status info' })
+  findDocumentsForBundle(
+    @Param('instituteId') instituteId: string,
+    @Param('bundleId') bundleId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.documentsService.findDocumentsForBundle(instituteId, bundleId, user);
+  }
+
   @Get('documents/:documentId')
   @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER, UserRole.STUDENT)
   @ApiOperation({ summary: 'Full document status — pages, regions, processing job statuses, identity resolution' })

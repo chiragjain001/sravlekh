@@ -4,8 +4,9 @@ import { Job } from 'bullmq';
 import { AiEvaluationService } from './ai-evaluation.service';
 import { AI_EVALUATION_QUEUE, AiEvaluationJobData } from './ai-evaluation.constants';
 import { reportDeadLetter } from '../shared/logging/dead-letter';
+import { QUEUE_POLICY, workerOptions } from '../infrastructure/queue/queue-policy';
 
-@Processor(AI_EVALUATION_QUEUE)
+@Processor(AI_EVALUATION_QUEUE, workerOptions(QUEUE_POLICY.aiEvaluation))
 export class AiEvaluationProcessor extends WorkerHost {
   private readonly logger = new Logger(AiEvaluationProcessor.name);
 

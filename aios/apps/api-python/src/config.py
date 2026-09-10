@@ -73,6 +73,19 @@ class Settings(BaseSettings):
     # credential: a short token is a guessable one.
     MIN_INTERNAL_TOKEN_LENGTH: int = 32
 
+    # Browser origins allowed to call this service directly, comma-separated.
+    # Was hardcoded as ["http://localhost:3000"] in main.py — environment-specific
+    # config compiled into source, so a deployed engine trusted a developer laptop
+    # and nothing else. The normal path is now same-origin through the web app's
+    # /api/py rewrite (next.config.js), which needs no CORS at all; this exists for
+    # deployments that expose the engine directly, and defaults to the dev origin
+    # so local work is unchanged.
+    CORS_ALLOWED_ORIGINS: str = "http://localhost:3000"
+
+    @property
+    def cors_allowed_origins(self) -> list[str]:
+        return [o.strip() for o in self.CORS_ALLOWED_ORIGINS.split(",") if o.strip()]
+
     # ── Disposable local staging stack ────────────────────────────────────
     #
     # AIOS_ENV is NOT NODE_ENV. NODE_ENV=staging is a legitimate value for a
@@ -115,6 +128,27 @@ class Settings(BaseSettings):
             raise RuntimeError(
                 f"INTERNAL_SERVICE_TOKEN must be at least {self.MIN_INTERNAL_TOKEN_LENGTH} "
                 "characters in production. Refusing to start."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _reject_wildcard_cors_in_production(self) -> "Settings":
+        """A wildcard origin plus credentials is not a valid CORS configuration.
+
+        Starlette will happily accept allow_origins=["*"] together with
+        allow_credentials=True, but the combination is meaningless-to-dangerous:
+        it either breaks credentialed requests outright or, where a framework
+        "helpfully" echoes the caller's Origin back, turns every website into a
+        trusted origin for an authenticated API. Refuse it at boot rather than
+        discover it from a browser console. Development is untouched.
+        """
+        if self.NODE_ENV != "production":
+            return self
+        if "*" in self.cors_allowed_origins:
+            raise RuntimeError(
+                "CORS_ALLOWED_ORIGINS must not contain '*' when NODE_ENV=production — this "
+                "service serves authenticated requests, so a wildcard origin would let any "
+                "site call it with the caller's credentials. Set explicit origins. Refusing to start."
             )
         return self
 

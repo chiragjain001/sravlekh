@@ -1,8 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { getQueueToken } from '@nestjs/bullmq';
+import { ForbiddenException } from '@nestjs/common';
+import { UserRole } from '@prisma/client';
 import axios from 'axios';
 import { AnalyticsService } from './analytics.service';
+import { AuthenticatedUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
 import { MASTERY_RECALC_QUEUE } from './mastery-recalc.constants';
 
@@ -69,5 +72,55 @@ describe('AnalyticsService.requestMasteryRecalc', () => {
     mockedAxios.post.mockRejectedValueOnce(new Error('ECONNREFUSED'));
 
     await expect(service.requestMasteryRecalc('student-1', ['topic-1'])).rejects.toThrow('ECONNREFUSED');
+  });
+});
+
+// 07-SECURITY-SPECIFICATION.md / AGENTS.md §5: instituteId is derived from the
+// authenticated actor, never trusted from the request URL. This endpoint took the
+// path param straight to Prisma with no ownership check.
+describe('AnalyticsService.getInstituteOverview — tenant isolation', () => {
+  let service: AnalyticsService;
+  let prisma: { user: { count: jest.Mock }; exam: { count: jest.Mock } };
+
+  const actor = (role: UserRole, instituteId: string) =>
+    ({ id: 'u-1', role, instituteId }) as AuthenticatedUser;
+
+  beforeEach(async () => {
+    prisma = { user: { count: jest.fn().mockResolvedValue(0) }, exam: { count: jest.fn().mockResolvedValue(0) } };
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        AnalyticsService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: ConfigService, useValue: { get: () => undefined } },
+        { provide: getQueueToken(MASTERY_RECALC_QUEUE), useValue: { add: jest.fn() } },
+      ],
+    }).compile();
+    service = module.get(AnalyticsService);
+  });
+
+  it('rejects a TEACHER requesting a different institute, without querying', async () => {
+    await expect(
+      service.getInstituteOverview('inst-other', actor(UserRole.TEACHER, 'inst-mine')),
+    ).rejects.toThrow(ForbiddenException);
+    expect(prisma.user.count).not.toHaveBeenCalled();
+  });
+
+  it('rejects an ADMIN requesting a different institute, without querying', async () => {
+    await expect(
+      service.getInstituteOverview('inst-other', actor(UserRole.ADMIN, 'inst-mine')),
+    ).rejects.toThrow(ForbiddenException);
+    expect(prisma.user.count).not.toHaveBeenCalled();
+  });
+
+  it('allows a TEACHER requesting their own institute', async () => {
+    await expect(
+      service.getInstituteOverview('inst-mine', actor(UserRole.TEACHER, 'inst-mine')),
+    ).resolves.toEqual({ totalStudents: 0, totalTeachers: 0, activeExams: 0 });
+  });
+
+  it('allows a FOUNDER cross-tenant — its documented, intended scope', async () => {
+    await expect(
+      service.getInstituteOverview('inst-other', actor(UserRole.FOUNDER, 'inst-mine')),
+    ).resolves.toEqual({ totalStudents: 0, totalTeachers: 0, activeExams: 0 });
   });
 });

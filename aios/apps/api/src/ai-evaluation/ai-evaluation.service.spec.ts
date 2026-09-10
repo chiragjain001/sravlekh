@@ -1,8 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getQueueToken } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
+import { ForbiddenException } from '@nestjs/common';
 import { AiEvaluationService } from './ai-evaluation.service';
 import { AI_EVALUATION_QUEUE } from './ai-evaluation.constants';
+import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
 
 jest.mock('axios');
 import axios from 'axios';
@@ -11,15 +13,18 @@ describe('AiEvaluationService', () => {
   let service: AiEvaluationService;
   let queue: { add: jest.Mock };
   let config: { get: jest.Mock };
+  let featureFlags: { isEnabled: jest.Mock };
 
   beforeEach(async () => {
     queue = { add: jest.fn().mockResolvedValue({}) };
     config = { get: jest.fn((key: string) => (key === 'PYTHON_SERVICE_URL' ? 'http://python:8000' : 'internal-token-1')) };
+    featureFlags = { isEnabled: jest.fn().mockResolvedValue(true) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AiEvaluationService,
         { provide: ConfigService, useValue: config },
+        { provide: FeatureFlagsService, useValue: featureFlags },
         { provide: getQueueToken(AI_EVALUATION_QUEUE), useValue: queue },
       ],
     }).compile();
@@ -63,6 +68,12 @@ describe('AiEvaluationService', () => {
       { instituteId: 'inst-1', assessmentDeliveryId: 'delivery-1', requestedByUserId: 'user-1' },
       expect.objectContaining({ timeout: 20 * 60_000 }),
     );
+  });
+
+  it('refuses to enqueue when the aiEvaluation feature flag is disabled for the institute (Founder Console Phase 3)', async () => {
+    featureFlags.isEnabled.mockResolvedValueOnce(false);
+    await expect(service.enqueueSingle('inst-1', 'resp-1', 'user-1')).rejects.toThrow(ForbiddenException);
+    expect(queue.add).not.toHaveBeenCalled();
   });
 
   it('rethrows on failure so the queue retries', async () => {

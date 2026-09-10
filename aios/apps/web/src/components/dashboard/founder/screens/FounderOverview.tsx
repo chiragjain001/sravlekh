@@ -32,9 +32,9 @@ export function FounderOverview() {
     return <EmptyState icon={<Building2 className="w-6 h-6" />} title="Couldn't load the platform overview" className="p-6" />;
   }
 
-  const rows: InstituteRow[] = institutes ?? [];
-  const totalUsers = rows.reduce((sum, i) => sum + i._count.users, 0);
-  const totalBatches = rows.reduce((sum, i) => sum + i._count.batches, 0);
+  const rows: InstituteRow[] = Array.isArray(institutes) ? institutes : [];
+  const totalUsers = rows.reduce((sum, i) => sum + (i._count?.users ?? 0), 0);
+  const totalBatches = rows.reduce((sum, i) => sum + (i._count?.batches ?? 0), 0);
   const activeCount = rows.filter((i) => i.status === 'ACTIVE').length;
 
   return (
@@ -49,8 +49,8 @@ export function FounderOverview() {
           <StatCard
             icon={<Activity className="w-4 h-4" />}
             label="Platform Health"
-            value={health ? (health.postgres.status === 'up' ? 'Healthy' : 'Degraded') : '—'}
-            sub={health ? `DB ${health.postgres.latencyMs ?? '—'}ms` : undefined}
+            value={health ? (health.postgres?.status === 'up' ? 'Healthy' : 'Degraded') : '—'}
+            sub={health ? `DB ${health.postgres?.latencyMs ?? '—'}ms` : undefined}
           />
         </div>
       )}
@@ -79,7 +79,7 @@ export function FounderOverview() {
                   <td className="px-4 py-2.5">
                     <span className={`text-[10.5px] font-bold px-2 py-0.5 rounded-md ${STATUS_STYLE[i.status] ?? 'bg-slate-100 text-slate-600'}`}>{i.status}</span>
                   </td>
-                  <td className="px-4 py-2.5 text-[12px] text-slate-500">{i._count.users}</td>
+                  <td className="px-4 py-2.5 text-[12px] text-slate-500">{i._count?.users ?? 0}</td>
                 </tr>
               ))}
             </tbody>

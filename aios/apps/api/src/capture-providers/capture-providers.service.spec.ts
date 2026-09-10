@@ -3,6 +3,7 @@ import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { UserRole, CaptureProviderType } from '@prisma/client';
 import { CaptureProvidersService } from './capture-providers.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
 import { AuthenticatedUser } from '../auth/auth.types';
 
 describe('CaptureProvidersService', () => {
@@ -11,6 +12,7 @@ describe('CaptureProvidersService', () => {
     captureProvider: { create: jest.Mock; findMany: jest.Mock };
     auditLog: { create: jest.Mock };
   };
+  let featureFlags: { isEnabled: jest.Mock };
 
   const admin: AuthenticatedUser = { id: 'admin-1', email: 'a@x.com', name: 'Admin', role: UserRole.ADMIN, instituteId: 'inst-1' };
   const otherAdmin: AuthenticatedUser = { ...admin, id: 'admin-2', instituteId: 'inst-2' };
@@ -20,8 +22,13 @@ describe('CaptureProvidersService', () => {
       captureProvider: { create: jest.fn(), findMany: jest.fn() },
       auditLog: { create: jest.fn().mockResolvedValue({}) },
     };
+    featureFlags = { isEnabled: jest.fn().mockResolvedValue(true) };
     const module: TestingModule = await Test.createTestingModule({
-      providers: [CaptureProvidersService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        CaptureProvidersService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: FeatureFlagsService, useValue: featureFlags },
+      ],
     }).compile();
     service = module.get(CaptureProvidersService);
   });
@@ -56,6 +63,18 @@ describe('CaptureProvidersService', () => {
           admin,
         ),
       ).resolves.toBeDefined();
+    });
+
+    it('OMR rejects when the omrCapture feature flag is disabled for the institute (Founder Console Phase 3)', async () => {
+      featureFlags.isEnabled.mockResolvedValueOnce(false);
+      await expect(
+        service.create(
+          'inst-1',
+          { type: CaptureProviderType.OMR, config: { answerKeyReference: 'ref-1', bubbleSheetTemplateId: 'tpl-1' } },
+          admin,
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.captureProvider.create).not.toHaveBeenCalled();
     });
 
     it('CSV_IMPORT requires expectedColumnMapping', async () => {

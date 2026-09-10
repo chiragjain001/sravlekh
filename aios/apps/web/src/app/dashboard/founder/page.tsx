@@ -68,6 +68,9 @@ function FounderDashboardInner() {
         <TopHeader
           greeting={founderActiveNav === 'Overview' ? `Welcome Founder! 👑` : founderActiveNav}
           subtitle={founderActiveNav === 'Overview' ? 'Platform performance, multi-tenant telemetry & global controls' : `Super Admin management for ${founderActiveNav.toLowerCase()}`}
+          showBackButton={canGoBack}
+          previousNavLabel={previousNav}
+          onBack={goBack}
         />
 
         <div className="flex-1 min-w-0">

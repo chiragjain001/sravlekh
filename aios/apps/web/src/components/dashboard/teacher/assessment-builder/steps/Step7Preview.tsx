@@ -1,104 +1,32 @@
 'use client';
 
-import React, { useState } from 'react';
-import {
-  Eye,
-  RefreshCw,
-  AlertTriangle,
-  CheckCircle2,
-  Sparkles,
-  Shuffle,
-  Trash2,
-  RotateCcw,
-  FileText,
-  Award,
-  Clock
-} from 'lucide-react';
+import React from 'react';
+import { AlertTriangle } from 'lucide-react';
 import { AssessmentState } from '../AssessmentSummaryPanel';
+
+export interface PreviewQuestion {
+  id: string;
+  num: number;
+  text: string;
+  topic: string;
+  difficulty: 'Easy' | 'Medium' | 'Hard';
+  marks: number;
+  isApproved: boolean;
+}
 
 interface Step7PreviewProps {
   state: AssessmentState;
   onChange: (updates: Partial<AssessmentState>) => void;
   onNext: () => void;
   onPrev: () => void;
+  questions: PreviewQuestion[];
+  totalAvailable: number;
+  isLoading?: boolean;
 }
 
-export function Step7Preview({ state, onChange, onNext, onPrev }: Step7PreviewProps) {
-  const [sampleQuestions, setSampleQuestions] = useState([
-    {
-      id: 'Q101',
-      num: 1,
-      text: 'A thin uniform rod of length L and mass M is free to rotate about a horizontal axis passing through one end. Calculate its angular acceleration when released from horizontal position.',
-      topic: 'Rotational Motion',
-      subtopic: 'Moment of Inertia',
-      difficulty: 'Hard',
-      marks: 4,
-      source: 'PYQ (JEE Main 2023)',
-    },
-    {
-      id: 'Q102',
-      num: 2,
-      text: 'Find torque required to stop a wheel having moment of inertia 3 kg m² rotating at 20 rad/s in 10 seconds.',
-      topic: 'Rotational Motion',
-      subtopic: 'Torque',
-      difficulty: 'Medium',
-      marks: 4,
-      source: 'NCERT Ex 7.4',
-    },
-    {
-      id: 'Q103',
-      num: 3,
-      text: 'A solid cylinder of mass 2 kg and radius 0.2 m rolls down an inclined plane of 30° without slipping. Find acceleration.',
-      topic: 'Rotational Motion',
-      subtopic: 'Rolling Motion',
-      difficulty: 'Medium',
-      marks: 4,
-      source: 'Institute Module',
-    },
-    {
-      id: 'Q104',
-      num: 4,
-      text: 'Derive relation between Angular Momentum (L) and Moment of Inertia (I).',
-      topic: 'Rotational Motion',
-      subtopic: 'Angular Momentum',
-      difficulty: 'Easy',
-      marks: 4,
-      source: 'DPP #14',
-    },
-    {
-      id: 'Q105',
-      num: 5,
-      text: 'Calculate the escape velocity of a body thrown from Earth surface given radius of Earth is 6400 km.',
-      topic: 'Gravitation',
-      subtopic: 'Escape Velocity',
-      difficulty: 'Easy',
-      marks: 4,
-      source: 'NCERT Exemplar',
-    },
-  ]);
-
-  const handleRegenerateQuestion = (qId: string) => {
-    setSampleQuestions((prev) =>
-      prev.map((q) =>
-        q.id === qId
-          ? {
-              ...q,
-              text: `[Re-generated Variant] ${q.text}`,
-              source: 'AI Smart Swap',
-            }
-          : q
-      )
-    );
-  };
-
-  const handleRegenerateAll = () => {
-    setSampleQuestions((prev) =>
-      prev.map((q) => ({
-        ...q,
-        text: `[Regenerated Paper Set] ${q.text}`,
-      }))
-    );
-  };
+export function Step7Preview({ state, onChange, onNext, onPrev, questions, totalAvailable, isLoading }: Step7PreviewProps) {
+  const sampleQuestions = questions.slice(0, 5);
+  const shortfall = state.selectedTopics.length > 0 && totalAvailable < 1;
 
   return (
     <div className="space-y-6 animate-fadein">
@@ -112,45 +40,40 @@ export function Step7Preview({ state, onChange, onNext, onPrev }: Step7PreviewPr
             <h2 className="text-[18px] font-bold text-slate-800">Paper Preview & Quality Check</h2>
           </div>
           <p className="text-[12.5px] text-slate-500 pl-9">
-            Review questions, balance index, warnings, and fine-tune questions before final publishing
+            Review a sample of the questions your blueprint will draw from before final publishing
           </p>
         </div>
-
-        <button
-          onClick={handleRegenerateAll}
-          className="flex items-center gap-2 px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-[12px] rounded-xl border border-indigo-200 transition-all"
-        >
-          <Shuffle className="w-4 h-4" />
-          Regenerate Entire Paper
-        </button>
       </div>
 
-      {/* Warnings / Smart Check Alert */}
-      <div className="p-4 bg-amber-50/90 border border-amber-200 rounded-2xl flex items-start justify-between gap-4">
-        <div className="flex items-start gap-3">
+      {/* Shortfall warning — only shown when the question bank genuinely can't cover the plan */}
+      {shortfall && (
+        <div className="p-4 bg-amber-50/90 border border-amber-200 rounded-2xl flex items-start gap-3">
           <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
           <div>
-            <h4 className="text-[13.5px] font-bold text-amber-900">Blueprint Warning Alert</h4>
+            <h4 className="text-[13.5px] font-bold text-amber-900">Not enough approved questions</h4>
             <p className="text-[12px] text-amber-800 mt-0.5">
-              Only 3 Hard Questions available in Torque subtopic. Need 1 more to fulfill target hard difficulty ratio.
+              The selected topics have no approved questions in the bank yet. Generation will fail until more are added, or reduce your question plan in Step 4.
             </p>
           </div>
         </div>
-
-        <button className="px-3 py-1.5 bg-white border border-amber-300 text-amber-900 font-bold text-[11.5px] rounded-xl hover:bg-amber-100 shadow-2xs transition-colors flex items-center gap-1.5 flex-shrink-0">
-          <Sparkles className="w-3.5 h-3.5 text-amber-600" /> Auto-Fix with AI
-        </button>
-      </div>
+      )}
 
       {/* Generated Paper Questions List */}
       <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4">
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-          <h3 className="text-[15px] font-bold text-slate-800">Generated Paper Questions Preview</h3>
+          <h3 className="text-[15px] font-bold text-slate-800">Sample Questions from the Question Bank</h3>
           <span className="text-[12px] font-semibold text-slate-500">
-            Showing 5 of {state.title ? 30 : 25} Questions
+            Showing {sampleQuestions.length} of {totalAvailable} approved questions
           </span>
         </div>
 
+        {isLoading ? (
+          <div className="p-8 text-center text-[13px] font-semibold text-slate-400">Loading questions…</div>
+        ) : sampleQuestions.length === 0 ? (
+          <div className="p-8 text-center text-[13px] font-semibold text-slate-500">
+            No approved questions found for the selected topics yet.
+          </div>
+        ) : (
         <div className="space-y-3.5">
           {sampleQuestions.map((q) => (
             <div
@@ -174,20 +97,6 @@ export function Step7Preview({ state, onChange, onNext, onPrev }: Step7PreviewPr
                   >
                     {q.difficulty}
                   </span>
-
-                  <span className="text-[11px] font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">
-                    {q.source}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => handleRegenerateQuestion(q.id)}
-                    title="Swap Question"
-                    className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors flex items-center gap-1 text-[11px] font-bold"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" /> Swap
-                  </button>
                 </div>
               </div>
 
@@ -195,13 +104,14 @@ export function Step7Preview({ state, onChange, onNext, onPrev }: Step7PreviewPr
 
               <div className="flex items-center justify-between text-[11.5px] text-slate-500 pl-9 pt-1 border-t border-slate-100">
                 <span>
-                  <b>Topic:</b> {q.topic} ({q.subtopic})
+                  <b>Topic:</b> {q.topic}
                 </span>
                 <span className="font-bold text-slate-700">{q.marks} Marks</span>
               </div>
             </div>
           ))}
         </div>
+        )}
       </div>
 
       {/* Footer Navigation */}

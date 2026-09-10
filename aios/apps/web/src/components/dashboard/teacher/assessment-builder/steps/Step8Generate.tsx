@@ -3,7 +3,6 @@
 import React, { useState } from 'react';
 import {
   Send,
-  FileText,
   Save,
   CheckCircle2,
   Printer,
@@ -21,17 +20,26 @@ interface Step8GenerateProps {
   state: AssessmentState;
   onPrev: () => void;
   onPublishSuccess: () => void;
+  onPublish: () => Promise<void>;
+  isPublishing: boolean;
+  publishError: string | null;
+  onSaveDraft: () => void;
+  isSavingDraft: boolean;
 }
 
-export function Step8Generate({ state, onPrev, onPublishSuccess }: Step8GenerateProps) {
+export function Step8Generate({
+  state, onPrev, onPublishSuccess, onPublish, isPublishing, publishError, onSaveDraft, isSavingDraft,
+}: Step8GenerateProps) {
   const [published, setPublished] = useState(false);
   const [publishMode, setPublishMode] = useState<'online' | 'live' | 'offline'>('online');
 
-  const handlePublish = () => {
-    setPublished(true);
-    setTimeout(() => {
-      onPublishSuccess();
-    }, 1800);
+  const handlePublish = async () => {
+    try {
+      await onPublish();
+      setPublished(true);
+    } catch {
+      // publishError (from the mutation) is rendered below — nothing further to do here.
+    }
   };
 
   if (published) {
@@ -201,29 +209,38 @@ export function Step8Generate({ state, onPrev, onPublishSuccess }: Step8Generate
         </div>
       </div>
 
+      {/* Publish error */}
+      {publishError && (
+        <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-2xl text-[12.5px] font-semibold text-rose-800">
+          {publishError}
+        </div>
+      )}
+
       {/* Action Buttons Row */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-5">
         <button
           onClick={onPrev}
-          className="px-6 py-2.5 border border-slate-300 text-slate-700 hover:bg-slate-50 font-bold text-[13px] rounded-xl transition-colors"
+          disabled={isPublishing}
+          className="px-6 py-2.5 border border-slate-300 text-slate-700 hover:bg-slate-50 font-bold text-[13px] rounded-xl transition-colors disabled:opacity-50"
         >
           ← Back to Preview
         </button>
 
         <div className="flex flex-wrap items-center gap-3">
-          <button className="px-4 py-2.5 border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold text-[12.5px] rounded-xl transition-colors flex items-center gap-1.5">
-            <Save className="w-4 h-4 text-slate-500" /> Save Draft
-          </button>
-
-          <button className="px-4 py-2.5 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-[12.5px] rounded-xl transition-colors flex items-center gap-1.5">
-            <FileText className="w-4 h-4 text-indigo-600" /> Preview PDF
+          <button
+            onClick={onSaveDraft}
+            disabled={isSavingDraft || isPublishing}
+            className="px-4 py-2.5 border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold text-[12.5px] rounded-xl transition-colors flex items-center gap-1.5 disabled:opacity-50"
+          >
+            <Save className="w-4 h-4 text-slate-500" /> {isSavingDraft ? 'Saving…' : 'Save Draft'}
           </button>
 
           <button
             onClick={handlePublish}
-            className="px-8 py-2.5 bg-gradient-to-r from-indigo-600 to-emerald-600 hover:from-indigo-700 hover:to-emerald-700 text-white font-bold text-[13.5px] rounded-xl shadow-lg transition-all flex items-center gap-2"
+            disabled={isPublishing}
+            className="px-8 py-2.5 bg-gradient-to-r from-indigo-600 to-emerald-600 hover:from-indigo-700 hover:to-emerald-700 text-white font-bold text-[13.5px] rounded-xl shadow-lg transition-all flex items-center gap-2 disabled:opacity-60"
           >
-            <Send className="w-4 h-4" /> Generate & Publish Now
+            <Send className="w-4 h-4" /> {isPublishing ? 'Publishing…' : 'Generate & Publish Now'}
           </button>
         </div>
       </div>

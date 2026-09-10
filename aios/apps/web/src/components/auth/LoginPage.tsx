@@ -124,9 +124,22 @@ export function LoginPage() {
   // (previously this wrote directly to localStorage with its own ad-hoc user
   // shape and flipped a global "demo mode" flag that silently mocked every API
   // response; consolidated so there's one dev-only login path, not two).
-  function handleDemoLogin(role: 'STUDENT' | 'TEACHER' | 'ADMIN' | 'FOUNDER') {
+  async function handleDemoLogin(role: 'STUDENT' | 'TEACHER' | 'ADMIN' | 'FOUNDER') {
     setIsSigningIn(true);
-    loginAsMock(role);
+    setError(null);
+
+    try {
+      await loginAsMock(role);
+      // AuthContext handles navigation on success
+    } catch (err) {
+      const message = axios.isAxiosError(err)
+        ? (err.response?.data as { message?: string })?.message ?? 'Demo sign-in failed. Is the backend running and seeded?'
+        : 'Demo sign-in failed. Is the backend running and seeded?';
+      setError(message);
+      toast.error(message);
+    } finally {
+      setIsSigningIn(false);
+    }
   }
 
   if (authLoading) {

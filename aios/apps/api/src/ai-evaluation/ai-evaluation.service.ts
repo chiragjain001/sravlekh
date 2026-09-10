@@ -1,9 +1,13 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import axios from 'axios';
 import { AI_EVALUATION_QUEUE, AiEvaluationJobData } from './ai-evaluation.constants';
+import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
+import { enqueueDeduped, jobKey } from '../infrastructure/queue/enqueue';
+import { QUEUE_POLICY } from '../infrastructure/queue/queue-policy';
+import { ensureDiagnosableMessage } from '../shared/logging/error-message';
 
 /**
  * 27-AI-EVALUATION-ARCHITECTURE.md §6: AI evaluation runs as a batched async
@@ -16,23 +20,43 @@ export class AiEvaluationService {
 
   constructor(
     private readonly config: ConfigService,
+    private readonly featureFlags: FeatureFlagsService,
     @InjectQueue(AI_EVALUATION_QUEUE) private readonly queue: Queue<AiEvaluationJobData>,
   ) {}
 
   async enqueueSingle(instituteId: string, responseId: string, requestedByUserId: string): Promise<void> {
-    await this.queue.add(
+    await this.assertEnabled(instituteId);
+    // Keyed on the response: two requests to evaluate the SAME response collapse
+    // to one while it is pending, but a genuine re-evaluation after completion
+    // still enqueues (removeOnComplete frees the key).
+    await enqueueDeduped(
+      this.queue,
       'single',
       { type: 'single', instituteId, responseId, requestedByUserId },
-      { attempts: 3, backoff: { type: 'exponential', delay: 1000 } },
+      jobKey('single', responseId),
+      { attempts: 3, backoff: { type: 'exponential', delay: 1000 }, ...QUEUE_POLICY.aiEvaluation.jobOptions },
+      this.logger,
     );
   }
 
   async enqueueBatch(instituteId: string, assessmentDeliveryId: string, requestedByUserId: string): Promise<void> {
-    await this.queue.add(
+    await this.assertEnabled(instituteId);
+    await enqueueDeduped(
+      this.queue,
       'batch',
       { type: 'batch', instituteId, assessmentDeliveryId, requestedByUserId },
-      { attempts: 2, backoff: { type: 'exponential', delay: 5000 } }, // fewer retries — a batch retry re-evaluates every still-pending response, not just the failed one
+      jobKey('batch', assessmentDeliveryId),
+      { attempts: 2, backoff: { type: 'exponential', delay: 5000 }, ...QUEUE_POLICY.aiEvaluation.jobOptions }, // fewer retries — a batch retry re-evaluates every still-pending response, not just the failed one
+      this.logger,
     );
+  }
+
+  // Founder Console Phase 3 — gated at enqueue time so a disabled institute
+  // never even queues a job, rather than the job silently failing downstream.
+  private async assertEnabled(instituteId: string): Promise<void> {
+    if (!(await this.featureFlags.isEnabled(instituteId, 'aiEvaluation'))) {
+      throw new ForbiddenException('AI evaluation is not enabled for this institute.');
+    }
   }
 
   /** Called by AiEvaluationProcessor. 27 §6: 8s soft / 20s hard per response — this is the single-response call. */
@@ -50,7 +74,7 @@ export class AiEvaluationService {
       this.logger.debug(`AI evaluation for response ${job.responseId} completed in ${Date.now() - startedAt}ms`);
     } catch (err) {
       this.logger.warn(`AI evaluation HTTP call failed for response ${job.responseId} after ${Date.now() - startedAt}ms`, err as Error);
-      throw err;
+      throw ensureDiagnosableMessage(err);
     }
   }
 
@@ -69,7 +93,7 @@ export class AiEvaluationService {
       this.logger.debug(`AI batch evaluation for delivery ${job.assessmentDeliveryId} completed in ${Date.now() - startedAt}ms`);
     } catch (err) {
       this.logger.warn(`AI batch evaluation HTTP call failed for delivery ${job.assessmentDeliveryId} after ${Date.now() - startedAt}ms`, err as Error);
-      throw err;
+      throw ensureDiagnosableMessage(err);
     }
   }
 }

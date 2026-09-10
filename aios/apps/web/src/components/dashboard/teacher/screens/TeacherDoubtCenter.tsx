@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Search, MessageCircle, CheckCircle2, Clock, Send } from 'lucide-react';
-import { doubts } from '@/lib/mock-data/teacher';
+import { useDoubts, useResolveDoubt } from '@/hooks/useApi';
 
 type StatusFilter   = 'All' | 'pending' | 'resolved';
 type PriorityFilter = 'All' | 'high' | 'medium' | 'low';
@@ -13,17 +13,42 @@ const priorityStyle = (p: string) => ({
   low:    'bg-slate-100 text-slate-500',
 }[p] ?? 'bg-slate-100 text-slate-500');
 
+const RESOLVED_STATUSES = new Set(['ANSWERED', 'CLOSED']);
+const urgencyToPriority = (u: number) => (u >= 3 ? 'high' : u === 2 ? 'medium' : 'low');
+
+interface DisplayDoubt {
+  id: string;
+  studentName: string;
+  topic: string;
+  question: string;
+  askedAt: string;
+  priority: string;
+  status: 'pending' | 'resolved';
+  responseText: string | null;
+}
+
 export function TeacherDoubtCenter() {
   const [statusF,   setStatusF]   = useState<StatusFilter>('All');
   const [priorityF, setPriorityF] = useState<PriorityFilter>('All');
   const [search,    setSearch]    = useState('');
   const [selected,  setSelected]  = useState<string | null>(null);
   const [reply,     setReply]     = useState('');
-  const [resolved,  setResolved]  = useState<string[]>([]);
 
-  const filtered = doubts.filter(d => {
-    const effectiveStatus = resolved.includes(d.id) ? 'resolved' : d.status;
-    const matchStatus   = statusF   === 'All' || effectiveStatus === statusF;
+  const { data: doubtsResp, isLoading } = useDoubts();
+  const resolveDoubt = useResolveDoubt();
+  const doubts: DisplayDoubt[] = (doubtsResp?.data ?? []).map((d: any) => ({
+    id: d.id,
+    studentName: d.studentProfile?.user?.name ?? 'Unknown Student',
+    topic: d.subject?.name ?? 'General',
+    question: d.content,
+    askedAt: new Date(d.createdAt).toLocaleString(),
+    priority: urgencyToPriority(d.urgency),
+    status: RESOLVED_STATUSES.has(d.status) ? 'resolved' : 'pending',
+    responseText: d.responseText,
+  }));
+
+  const filtered = doubts.filter((d) => {
+    const matchStatus   = statusF   === 'All' || d.status === statusF;
     const matchPriority = priorityF === 'All' || d.priority === priorityF;
     const matchSearch   = search === '' ||
       d.studentName.toLowerCase().includes(search.toLowerCase()) ||
@@ -31,19 +56,20 @@ export function TeacherDoubtCenter() {
     return matchStatus && matchPriority && matchSearch;
   });
 
-  const selectedDoubt = doubts.find(d => d.id === selected);
-  const isResolved    = (id: string) => selectedDoubt?.status === 'resolved' || resolved.includes(id);
+  const selectedDoubt = doubts.find((d) => d.id === selected);
 
   const handleResolve = () => {
     if (selected && reply.trim()) {
-      setResolved(prev => [...prev, selected]);
-      setReply('');
+      resolveDoubt.mutate(
+        { doubtId: selected, data: { resolutionText: reply.trim() } },
+        { onSuccess: () => setReply('') },
+      );
     }
   };
 
-  const pending  = doubts.filter(d => d.status === 'pending' && !resolved.includes(d.id)).length;
+  const pending  = doubts.filter((d) => d.status === 'pending').length;
   const total    = doubts.length;
-  const resCount = doubts.filter(d => d.status === 'resolved' || resolved.includes(d.id)).length;
+  const resCount = doubts.filter((d) => d.status === 'resolved').length;
 
   return (
     <div className="p-6 animate-fadein space-y-6">
@@ -114,41 +140,46 @@ export function TeacherDoubtCenter() {
           </div>
 
           <div className="space-y-2">
-            {filtered.map(d => {
-              const res = d.status === 'resolved' || resolved.includes(d.id);
-              return (
-                <button key={d.id} onClick={() => setSelected(d.id === selected ? null : d.id)}
-                  className={`w-full text-left p-4 rounded-xl border transition-all ${
-                    selected === d.id ? 'border-indigo-200 bg-indigo-50/40' :
-                    res ? 'border-slate-100 bg-slate-50/50 opacity-70' : 'border-slate-100 hover:border-slate-200'
-                  }`}>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-[9px] font-black">
-                        {d.studentName.split(' ').map(n => n[0]).join('')}
+            {isLoading ? (
+              <div className="py-10 text-center text-slate-400 text-[13px]">Loading doubts…</div>
+            ) : (
+              <>
+                {filtered.map(d => {
+                  const res = d.status === 'resolved';
+                  return (
+                    <button key={d.id} onClick={() => setSelected(d.id === selected ? null : d.id)}
+                      className={`w-full text-left p-4 rounded-xl border transition-all ${
+                        selected === d.id ? 'border-indigo-200 bg-indigo-50/40' :
+                        res ? 'border-slate-100 bg-slate-50/50 opacity-70' : 'border-slate-100 hover:border-slate-200'
+                      }`}>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-[9px] font-black">
+                            {d.studentName.split(' ').map(n => n[0]).join('')}
+                          </div>
+                          <span className="text-[12.5px] font-bold text-slate-800">{d.studentName}</span>
+                        </div>
+                        {res
+                          ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                          : <Clock        className="w-3.5 h-3.5 text-amber-500"    />
+                        }
                       </div>
-                      <span className="text-[12.5px] font-bold text-slate-800">{d.studentName}</span>
-                      <span className="text-[10px] text-slate-400">· {d.batchId}</span>
-                    </div>
-                    {res
-                      ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                      : <Clock        className="w-3.5 h-3.5 text-amber-500"    />
-                    }
+                      <p className="text-[12px] font-semibold text-indigo-600 mb-1">{d.topic}</p>
+                      <p className="text-[11.5px] text-slate-600 line-clamp-2 leading-snug">{d.question}</p>
+                      <div className="flex items-center justify-between mt-2">
+                        <span className="text-[10px] text-slate-400">{d.askedAt}</span>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded capitalize ${priorityStyle(d.priority)}`}>{d.priority}</span>
+                      </div>
+                    </button>
+                  );
+                })}
+                {filtered.length === 0 && (
+                  <div className="py-10 text-center text-slate-400">
+                    <MessageCircle className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                    <p className="text-[13px]">No doubts match your filters.</p>
                   </div>
-                  <p className="text-[12px] font-semibold text-indigo-600 mb-1">{d.topic}</p>
-                  <p className="text-[11.5px] text-slate-600 line-clamp-2 leading-snug">{d.question}</p>
-                  <div className="flex items-center justify-between mt-2">
-                    <span className="text-[10px] text-slate-400">{d.askedAt}</span>
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded capitalize ${priorityStyle(d.priority)}`}>{d.priority}</span>
-                  </div>
-                </button>
-              );
-            })}
-            {filtered.length === 0 && (
-              <div className="py-10 text-center text-slate-400">
-                <MessageCircle className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                <p className="text-[13px]">No doubts match your filters.</p>
-              </div>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -172,7 +203,7 @@ export function TeacherDoubtCenter() {
                   </div>
                   <div>
                     <p className="text-[13px] font-bold text-slate-800">{selectedDoubt.studentName}</p>
-                    <p className="text-[11px] text-slate-500">Batch {selectedDoubt.batchId} · {selectedDoubt.askedAt}</p>
+                    <p className="text-[11px] text-slate-500">{selectedDoubt.askedAt}</p>
                   </div>
                   <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded capitalize ${priorityStyle(selectedDoubt.priority)}`}>
                     {selectedDoubt.priority} priority
@@ -186,12 +217,14 @@ export function TeacherDoubtCenter() {
 
               {/* Reply area */}
               <div className="p-5 flex flex-col gap-4 flex-1">
-                {isResolved(selectedDoubt.id) ? (
+                {selectedDoubt.status === 'resolved' ? (
                   <div className="flex items-center gap-3 p-4 bg-emerald-50 border border-emerald-100 rounded-xl">
                     <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />
                     <div>
                       <p className="text-[13px] font-bold text-emerald-800">Doubt Resolved</p>
-                      <p className="text-[12px] text-emerald-600">Your reply has been sent to the student.</p>
+                      {selectedDoubt.responseText && (
+                        <p className="text-[12px] text-emerald-700 mt-1">{selectedDoubt.responseText}</p>
+                      )}
                     </div>
                   </div>
                 ) : (
@@ -200,9 +233,9 @@ export function TeacherDoubtCenter() {
                     <textarea rows={6} value={reply} onChange={e => setReply(e.target.value)}
                       placeholder="Type your answer or explanation here..."
                       className="w-full px-4 py-3 border border-slate-200 rounded-xl text-[13px] resize-none focus:outline-none focus:ring-2 focus:ring-indigo-400/30 focus:border-indigo-400" />
-                    <button onClick={handleResolve} disabled={!reply.trim()}
+                    <button onClick={handleResolve} disabled={!reply.trim() || resolveDoubt.isPending}
                       className="flex items-center justify-center gap-2 py-3 bg-indigo-600 text-white font-bold text-[13px] rounded-xl hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all">
-                      <Send className="w-4 h-4" /> Send Reply & Mark Resolved
+                      <Send className="w-4 h-4" /> {resolveDoubt.isPending ? 'Sending…' : 'Send Reply & Mark Resolved'}
                     </button>
                   </>
                 )}

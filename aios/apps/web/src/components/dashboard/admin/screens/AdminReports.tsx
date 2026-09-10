@@ -6,7 +6,7 @@
 // not a rendered PDF/Excel — see ReportGenerationProcessor for why.
 
 import { useState } from 'react';
-import { Plus, FileText, Loader2, Download, RefreshCw } from 'lucide-react';
+import { Plus, FileText, Loader2, ExternalLink, RefreshCw } from 'lucide-react';
 import { useReportsList, useRequestReport, useBatches } from '@/hooks/useApi';
 import { SkeletonTable, EmptyState } from '@/components/ui/foundation';
 
@@ -96,7 +96,7 @@ export function AdminReports() {
                   <td className="px-4 py-3 text-right">
                     {r.status === 'COMPLETE' && r.fileUrl ? (
                       <a href={r.fileUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-600 hover:text-indigo-800">
-                        <Download className="w-3.5 h-3.5" /> Download
+                        <ExternalLink className="w-3.5 h-3.5" /> View Report
                       </a>
                     ) : (
                       <span className="text-[11px] text-slate-300">—</span>

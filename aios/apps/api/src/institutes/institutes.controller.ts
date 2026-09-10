@@ -18,12 +18,16 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { UserRole } from '@prisma/client';
+import { EntitlementsService } from '../entitlements/entitlements.service';
 
 @ApiTags('institutes')
 @ApiBearerAuth()
 @Controller('institutes')
 export class InstitutesController {
-  constructor(private readonly institutesService: InstitutesService) {}
+  constructor(
+    private readonly institutesService: InstitutesService,
+    private readonly entitlements: EntitlementsService,
+  ) {}
 
   // ── Institute CRUD ─────────────────────────────────────────────────────────
 
@@ -45,6 +49,27 @@ export class InstitutesController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.institutesService.findById(id, user);
+  }
+
+  /**
+   * An institute's own plan, usage and remaining headroom.
+   *
+   * The same snapshot the Founder console reads, deliberately exposed to the
+   * institute's own ADMIN too: once plan limits actually block writes, the
+   * customer needs to see *why* a create was refused and how close they are to
+   * the next limit. Tenant-scoped through InstitutesService.findById's existing
+   * access check — an ADMIN can only ever read their own institute's usage.
+   */
+  @Get(':id/entitlements')
+  @Roles(UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Current plan, usage and remaining headroom for an institute' })
+  async getEntitlements(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    // Reuse the existing tenant/role check rather than reimplementing it.
+    await this.institutesService.findById(id, user);
+    return this.entitlements.getSnapshot(id);
   }
 
   @Patch(':id')

@@ -1,10 +1,14 @@
 'use client';
 
 import { useState } from 'react';
-import { User, Bell, Lock, Smartphone, Mail, Calendar, BookOpen, Shield, LogOut, CheckCircle2 } from 'lucide-react';
+import { User, Bell, Smartphone, Calendar, BookOpen, Shield, LogOut, CheckCircle2, Mail } from 'lucide-react';
+import { useAuth } from '@/contexts/auth.context';
+import { useMyStudentProfile, useLogoutAllMyDevices } from '@/hooks/useApi';
+import { ConfirmDialog } from '@/components/ui/foundation';
 
 export function StudentSettings() {
   const [activeTab, setActiveTab] = useState('Profile');
+  const [confirmLogoutAll, setConfirmLogoutAll] = useState(false);
   const [notifications, setNotifications] = useState({
     email: true,
     sms: false,
@@ -12,19 +16,23 @@ export function StudentSettings() {
     weeklyReports: true,
   });
 
+  const { user } = useAuth();
+  const { data: profile } = useMyStudentProfile();
+  const logoutAll = useLogoutAllMyDevices();
+
+  const avatarInitial = user?.avatarInitials ?? user?.name?.[0]?.toUpperCase() ?? '?';
+
   return (
     <div className="p-5 animate-fadein h-full">
       <div className="card shadow-sm border border-slate-100 rounded-2xl w-full h-full p-6 lg:p-8 flex flex-col relative overflow-hidden">
-        
-        {/* Header */}
+
         <div className="mb-8">
           <h2 className="text-[22px] font-bold text-slate-800">Settings</h2>
           <p className="text-[13px] text-slate-500">Manage your account preferences and security.</p>
         </div>
 
         <div className="flex flex-col lg:flex-row gap-10 h-full">
-          
-          {/* Sidebar Navigation */}
+
           <div className="w-full lg:w-64 flex flex-col gap-2">
             {[
               { id: 'Profile', icon: User, desc: 'Your personal information' },
@@ -35,9 +43,7 @@ export function StudentSettings() {
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={`flex items-start gap-4 p-4 rounded-2xl transition-all text-left ${
-                  activeTab === tab.id 
-                    ? 'bg-indigo-50 border border-indigo-100 shadow-sm' 
-                    : 'bg-transparent border border-transparent hover:bg-slate-50'
+                  activeTab === tab.id ? 'bg-indigo-50 border border-indigo-100 shadow-sm' : 'bg-transparent border border-transparent hover:bg-slate-50'
                 }`}
               >
                 <div className={`mt-0.5 ${activeTab === tab.id ? 'text-indigo-600' : 'text-slate-400'}`}>
@@ -51,10 +57,8 @@ export function StudentSettings() {
             ))}
           </div>
 
-          {/* Content Area */}
           <div className="flex-1 overflow-auto pr-2 custom-scrollbar">
-            
-            {/* PROFILE TAB */}
+
             {activeTab === 'Profile' && (
               <div className="animate-fadein max-w-2xl">
                 <div className="mb-6">
@@ -64,10 +68,10 @@ export function StudentSettings() {
 
                 <div className="bg-slate-50 border border-slate-100 rounded-2xl p-6 mb-8 flex items-center gap-6">
                   <div className="w-20 h-20 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center text-[24px] font-bold shadow-inner">
-                    Y
+                    {avatarInitial}
                   </div>
                   <div>
-                    <h2 className="text-[20px] font-bold text-slate-800">You (Student)</h2>
+                    <h2 className="text-[20px] font-bold text-slate-800">{user?.name ?? 'Student'}</h2>
                     <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-100 text-emerald-700 text-[11px] font-bold mt-2">
                       <CheckCircle2 className="w-3.5 h-3.5" /> Active Student
                     </span>
@@ -80,15 +84,7 @@ export function StudentSettings() {
                       <Mail className="w-3.5 h-3.5" /> Email Address
                     </label>
                     <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 text-[13.5px] text-slate-700 font-medium">
-                      student@sarvlekh.com
-                    </div>
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                      <Smartphone className="w-3.5 h-3.5" /> Phone Number
-                    </label>
-                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 text-[13.5px] text-slate-700 font-medium">
-                      +91 98765 43210
+                      {user?.email ?? '—'}
                     </div>
                   </div>
                   <div className="space-y-1.5">
@@ -96,27 +92,36 @@ export function StudentSettings() {
                       <BookOpen className="w-3.5 h-3.5" /> Enrolled Batch
                     </label>
                     <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 text-[13.5px] text-slate-700 font-medium">
-                      JEE Target 2025 (Class 12)
+                      {profile?.batch?.name ?? 'Not assigned yet'}
                     </div>
                   </div>
+                  {profile?.rollNumber && (
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <Smartphone className="w-3.5 h-3.5" /> Roll Number
+                      </label>
+                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 text-[13.5px] text-slate-700 font-medium">
+                        {profile.rollNumber}
+                      </div>
+                    </div>
+                  )}
                   <div className="space-y-1.5">
                     <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
                       <Calendar className="w-3.5 h-3.5" /> Date Joined
                     </label>
                     <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 text-[13.5px] text-slate-700 font-medium">
-                      April 12, 2024
+                      {profile?.admissionDate ? new Date(profile.admissionDate).toLocaleDateString([], { day: 'numeric', month: 'long', year: 'numeric' }) : '—'}
                     </div>
                   </div>
                 </div>
               </div>
             )}
 
-            {/* PREFERENCES TAB */}
             {activeTab === 'Preferences' && (
               <div className="animate-fadein max-w-2xl">
                 <div className="mb-6">
                   <h3 className="text-[16px] font-bold text-slate-800">Notification Preferences</h3>
-                  <p className="text-[12.5px] text-slate-500">Choose how and when you want to be notified.</p>
+                  <p className="text-[12.5px] text-slate-500">Choose how and when you want to be notified. Saved on this device only — not yet synced to the server.</p>
                 </div>
 
                 <div className="space-y-4">
@@ -124,15 +129,15 @@ export function StudentSettings() {
                     { id: 'email', label: 'Email Notifications', desc: 'Receive important updates via email' },
                     { id: 'sms', label: 'SMS Alerts', desc: 'Get text messages for critical alerts' },
                     { id: 'testReminders', label: 'Test Reminders', desc: 'Notify me 24 hours before an upcoming test' },
-                    { id: 'weeklyReports', label: 'Weekly Performance Reports', desc: 'Receive a summary of your week\'s progress' },
+                    { id: 'weeklyReports', label: 'Weekly Performance Reports', desc: "Receive a summary of your week's progress" },
                   ].map((setting) => (
                     <div key={setting.id} className="flex items-center justify-between p-4 border border-slate-100 rounded-xl">
                       <div>
                         <h4 className="text-[14px] font-bold text-slate-800">{setting.label}</h4>
                         <p className="text-[12px] text-slate-500 mt-0.5">{setting.desc}</p>
                       </div>
-                      <button 
-                        onClick={() => setNotifications(prev => ({ ...prev, [setting.id]: !prev[setting.id as keyof typeof prev] }))}
+                      <button
+                        onClick={() => setNotifications((prev) => ({ ...prev, [setting.id]: !prev[setting.id as keyof typeof prev] }))}
                         className={`w-11 h-6 rounded-full transition-colors relative ${notifications[setting.id as keyof typeof notifications] ? 'bg-indigo-600' : 'bg-slate-200'}`}
                       >
                         <div className={`w-4 h-4 rounded-full bg-white shadow-sm absolute top-1 transition-transform ${notifications[setting.id as keyof typeof notifications] ? 'left-6' : 'left-1'}`} />
@@ -140,16 +145,9 @@ export function StudentSettings() {
                     </div>
                   ))}
                 </div>
-                
-                <div className="mt-8 pt-6 border-t border-slate-100">
-                  <button className="px-6 py-2.5 bg-indigo-600 text-white text-[13px] font-bold rounded-xl hover:bg-indigo-700 transition-colors shadow-sm">
-                    Save Preferences
-                  </button>
-                </div>
               </div>
             )}
 
-            {/* SECURITY TAB */}
             {activeTab === 'Security' && (
               <div className="animate-fadein max-w-2xl">
                 <div className="mb-6">
@@ -162,7 +160,7 @@ export function StudentSettings() {
                     <Shield className="w-4 h-4 text-emerald-500" /> Authentication Provider
                   </h4>
                   <p className="text-[12.5px] text-slate-500 mb-5">Your account is securely authenticated via Google Single Sign-On (SSO). Password management is handled by your Google account.</p>
-                  
+
                   <div className="flex items-center gap-4 p-4 bg-slate-50 rounded-xl border border-slate-100">
                     <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center shadow-sm border border-slate-100 p-2.5">
                       <svg viewBox="0 0 24 24" className="w-full h-full">
@@ -174,7 +172,7 @@ export function StudentSettings() {
                     </div>
                     <div>
                       <p className="text-[13px] font-bold text-slate-800">Google Account</p>
-                      <p className="text-[12px] text-slate-500">student@sarvlekh.com</p>
+                      <p className="text-[12px] text-slate-500">{user?.email ?? '—'}</p>
                     </div>
                     <div className="ml-auto">
                       <span className="px-2.5 py-1 bg-emerald-100 text-emerald-700 text-[11px] font-bold rounded flex items-center gap-1">
@@ -188,8 +186,11 @@ export function StudentSettings() {
                   <h4 className="text-[14px] font-bold text-rose-800 mb-2 flex items-center gap-2">
                     <LogOut className="w-4 h-4" /> Active Sessions
                   </h4>
-                  <p className="text-[12.5px] text-rose-600/80 mb-4">If you notice suspicious activity, you can log out of all other devices.</p>
-                  <button className="px-5 py-2 bg-rose-100 text-rose-700 border border-rose-200 hover:bg-rose-600 hover:text-white text-[12px] font-bold rounded-xl transition-colors">
+                  <p className="text-[12.5px] text-rose-600/80 mb-4">If you notice suspicious activity, you can log out of all devices, including this one.</p>
+                  <button
+                    onClick={() => setConfirmLogoutAll(true)}
+                    className="px-5 py-2 bg-rose-100 text-rose-700 border border-rose-200 hover:bg-rose-600 hover:text-white text-[12px] font-bold rounded-xl transition-colors"
+                  >
                     Log out of all devices
                   </button>
                 </div>
@@ -198,6 +199,17 @@ export function StudentSettings() {
 
           </div>
         </div>
+
+        <ConfirmDialog
+          isOpen={confirmLogoutAll}
+          title="Log out of all devices?"
+          description="This immediately ends every active session for your account, including this one — you'll need to sign in again."
+          confirmLabel="Log out everywhere"
+          variant="danger"
+          isLoading={logoutAll.isPending}
+          onConfirm={() => logoutAll.mutate()}
+          onCancel={() => setConfirmLogoutAll(false)}
+        />
 
       </div>
     </div>

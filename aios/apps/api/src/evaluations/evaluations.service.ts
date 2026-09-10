@@ -13,10 +13,14 @@ import { CacheService } from '../infrastructure/cache/cache.service';
 import { AiEvaluationService } from '../ai-evaluation/ai-evaluation.service';
 import { PermissionsService } from '../permissions/permissions.service';
 import { ReportsService } from '../reports/reports.service';
-import { AuditAction, UserRole, QuestionType, EvaluationSource, EvaluationStatus, RubricScoringMode, Prisma } from '@prisma/client';
+import { AnalyticsService } from '../analytics/analytics.service';
+import { AuditAction, UserRole, EvaluationSource, EvaluationStatus, RubricScoringMode, Prisma } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { DecideEvaluationDto, EvaluationDecision, OverrideEvaluationDto, QueryEvaluationWorkItemsDto } from './dto/evaluation.dto';
 import { SCORE_AGGREGATION_QUEUE, ScoreAggregationJobData } from './score-aggregation.constants';
+import { SUBJECTIVE_QUESTION_TYPES } from './evaluation-status.util';
+import { enqueueDeduped, jobKey } from '../infrastructure/queue/enqueue';
+import { QUEUE_POLICY } from '../infrastructure/queue/queue-policy';
 
 const REPROCESS_IDEMPOTENCY_TTL_SECONDS = 60 * 60;
 
@@ -29,8 +33,13 @@ const REPROCESS_IDEMPOTENCY_TTL_SECONDS = 60 * 60;
  * (DIGITAL_VALUE/OMR_MARK) never enter this pipeline either — those are
  * scored directly at capture time (Phase 8), unchanged from v1's philosophy
  * (25 §4.1's acceptance criteria).
+ *
+ * SUBJECTIVE_QUESTION_TYPES itself now lives in evaluation-status.util.ts
+ * (P1 OPT-1) — it used to be declared separately here and in
+ * assessments.service.ts/shared/evaluation-lock-gate.ts; all three now import
+ * the one list, since it decides both what the governance gate examines and
+ * what the score aggregator trusts.
  */
-const SUBJECTIVE_QUESTION_TYPES: QuestionType[] = [QuestionType.SHORT_ANSWER, QuestionType.LONG_ANSWER, QuestionType.PASSAGE_BASED];
 const RUBRIC_ADDITIVE_MODES: RubricScoringMode[] = [RubricScoringMode.CRITERION_ADDITIVE, RubricScoringMode.STEP_WISE];
 
 @Injectable()
@@ -43,6 +52,7 @@ export class EvaluationsService {
     private readonly aiEvaluationService: AiEvaluationService,
     private readonly permissionsService: PermissionsService,
     private readonly reportsService: ReportsService,
+    private readonly analyticsService: AnalyticsService,
     @InjectQueue(SCORE_AGGREGATION_QUEUE) private readonly scoreAggregationQueue: Queue<ScoreAggregationJobData>,
   ) {}
 
@@ -114,7 +124,13 @@ export class EvaluationsService {
     });
 
     await this.writeAudit(instituteId, actor.id, responseId, { decision: dto.decision, marksAwarded });
-    await this.scoreAggregationQueue.add('recalculate', { attemptId: response.attemptId! }, { attempts: 3, backoff: { type: 'exponential', delay: 1000 } });
+    await enqueueDeduped(this.scoreAggregationQueue, 'recalculate', { attemptId: response.attemptId! }, jobKey('agg', response.attemptId!), { attempts: 3, backoff: { type: 'exponential', delay: 1000 }, ...QUEUE_POLICY.scoreAggregation.jobOptions }, this.logger);
+    // V2 Analytics/Mastery Integration phase: a TEACHER-sourced EvaluationVersion
+    // (every decide() outcome, including ACCEPT_AI — 25 §4.2's "accept as-is is
+    // still a real, human-authored version") is exactly the "finalized" point
+    // 21-DOMAIN-MODEL-V2.md §4.8 requires mastery to read from. AI-only versions
+    // (AiEvaluationService, untouched by this phase) never reach this line.
+    await this.analyticsService.enqueueMasteryRecalc(response.attempt!.studentProfileId, [response.question.topicId]);
 
     return newVersion;
   }
@@ -174,8 +190,11 @@ export class EvaluationsService {
     });
 
     await this.writeAudit(instituteId, actor.id, responseId, { action: 'override', marksAwarded, disputeReason: dto.disputeReason });
-    await this.scoreAggregationQueue.add('recalculate', { attemptId: response.attemptId! }, { attempts: 3, backoff: { type: 'exponential', delay: 1000 } });
+    await enqueueDeduped(this.scoreAggregationQueue, 'recalculate', { attemptId: response.attemptId! }, jobKey('agg', response.attemptId!), { attempts: 3, backoff: { type: 'exponential', delay: 1000 }, ...QUEUE_POLICY.scoreAggregation.jobOptions }, this.logger);
     await this.reportsService.reissueForStudent(instituteId, response.attempt!.studentProfileId, actor.id);
+    // Same mastery-recalc trigger as decide() — a REVIEWER-sourced version is
+    // equally "finalized" (25 §4.3).
+    await this.analyticsService.enqueueMasteryRecalc(response.attempt!.studentProfileId, [response.question.topicId]);
 
     return newVersion;
   }
@@ -213,7 +232,10 @@ export class EvaluationsService {
         }
         sum += cs.marksAwarded;
       }
-      const marksAwarded = Math.min(sum, rubric!.maxMarks);
+      // Capped at the response's own marksAvailable, not rubric.maxMarks — a rubric
+      // reused across questions (or a question edited after its rubric was authored)
+      // can legitimately carry a higher maxMarks than this response actually offers.
+      const marksAwarded = Math.min(sum, response.marksAvailable);
       const criterionScoresData = dto.criterionScores.map((cs) => ({
         rubricCriterion: { connect: { id: cs.rubricCriterionId } },
         marksAwarded: cs.marksAwarded,
@@ -262,13 +284,15 @@ export class EvaluationsService {
     // than OR-ing with the null/PENDING branches (Phase 12 left this filter
     // honestly empty since no AIRecommendation existed yet — Phase 13 makes
     // it real).
-    const eligibility: Prisma.ResponseWhereInput[] = query.aiFlag
+    const eligibility: Prisma.ResponseWhereInput[] = query.includeDecided
+      ? [{ evaluation: { status: { in: [EvaluationStatus.TEACHER_REVIEWED, EvaluationStatus.REVIEWER_FINALIZED] } } }]
+      : query.aiFlag
       ? [{ evaluation: { status: EvaluationStatus.AI_SUGGESTED, currentVersion: { aiRecommendation: { flags: { has: query.aiFlag } } } } }]
       : [{ evaluation: null }, { evaluation: { status: { in: [EvaluationStatus.PENDING, EvaluationStatus.AI_SUGGESTED] } } }];
 
     const where: Prisma.ResponseWhereInput = {
       attemptId: { not: null },
-      question: { type: { in: SUBJECTIVE_QUESTION_TYPES }, ...(query.subjectId && { subjectId: query.subjectId }) },
+      question: { type: { in: [...SUBJECTIVE_QUESTION_TYPES] }, ...(query.subjectId && { subjectId: query.subjectId }) },
       OR: eligibility,
       attempt: {
         assessmentDelivery: {
@@ -287,7 +311,29 @@ export class EvaluationsService {
           attempt: {
             select: {
               studentProfile: { select: { rollNumber: true, user: { select: { name: true } } } },
-              assessmentDelivery: { select: { assessment: { select: { title: true } } } },
+              assessmentDelivery: { select: { batchId: true, assessment: { select: { title: true } } } },
+            },
+          },
+          // Doc 28 §2: "source image always co-presented, never transcript-
+          // only" — the frontend needs a documentId/pageId to fetch the signed
+          // image URL (GET .../documents/:id/pages/:id/image) and the latest
+          // OCR transcript+confidence, for evidenceType=PAGE_REGION responses.
+          // Purely additive read data — no new write path, no duplicated logic.
+          questionRegion: {
+            select: {
+              id: true,
+              boundingBox: true,
+              pageImage: {
+                select: {
+                  id: true,
+                  page: { select: { id: true, documentId: true, pageNumber: true } },
+                },
+              },
+              ocrBlocks: {
+                select: {
+                  results: { orderBy: { processedAt: 'desc' }, take: 1 },
+                },
+              },
             },
           },
         },

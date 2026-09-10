@@ -19,7 +19,6 @@ export class AnalyticsController {
     @Param('instituteId') instituteId: string,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    // Only fetch for authorized institute
-    return this.analyticsService.getInstituteOverview(instituteId);
+    return this.analyticsService.getInstituteOverview(instituteId, user);
   }
 }

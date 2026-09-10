@@ -24,6 +24,15 @@ export class PermissionsController {
     return this.permissionsService.grant(instituteId, dto, user);
   }
 
+  @Get('mine')
+  @ApiOperation({ summary: "The logged-in user's own permission grants (any role — self-check, not the institute-wide list)" })
+  findMyGrants(
+    @Param('instituteId') instituteId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.permissionsService.findMyGrants(instituteId, user);
+  }
+
   @Get()
   @Roles(UserRole.ADMIN, UserRole.FOUNDER)
   @ApiOperation({ summary: 'List permission grants for this institute' })

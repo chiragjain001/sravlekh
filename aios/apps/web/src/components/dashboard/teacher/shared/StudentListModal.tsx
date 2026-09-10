@@ -1,4 +1,5 @@
 import { AlertTriangle, X, Users, ChevronRight, CalendarPlus, BookOpen } from 'lucide-react';
+import { useDashboardStore } from '@/store/dashboard-store';
 
 export interface WeakStudent { studentId: string; name: string; batchId: string; avgInTopic: number }
 
@@ -22,6 +23,16 @@ export function StudentListModal({
   onSelectStudent: (id: string) => void;
 }) {
   const pct = totalStudents > 0 ? Math.round((weakCount / totalStudents) * 100) : 0;
+  const { setTeacherNav } = useDashboardStore();
+
+  function goSchedule() {
+    onClose();
+    setTeacherNav('remedial-extra');
+  }
+  function goAssign() {
+    onClose();
+    setTeacherNav('assignments');
+  }
 
   return (
     <div
@@ -70,10 +81,10 @@ export function StudentListModal({
 
         {/* CTAs */}
         <div className="px-5 pb-4 flex gap-2">
-          <button className="flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 text-white text-[11.5px] font-bold rounded-xl hover:bg-indigo-700 transition-colors">
+          <button onClick={goSchedule} className="flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 text-white text-[11.5px] font-bold rounded-xl hover:bg-indigo-700 transition-colors">
             <CalendarPlus className="w-3.5 h-3.5" /> Schedule Extra Class
           </button>
-          <button className="flex items-center gap-1.5 px-3.5 py-1.5 border border-indigo-200 text-indigo-700 text-[11.5px] font-bold rounded-xl hover:bg-indigo-50 transition-colors">
+          <button onClick={goAssign} className="flex items-center gap-1.5 px-3.5 py-1.5 border border-indigo-200 text-indigo-700 text-[11.5px] font-bold rounded-xl hover:bg-indigo-50 transition-colors">
             <BookOpen className="w-3.5 h-3.5" /> Assign Practice Set
           </button>
         </div>

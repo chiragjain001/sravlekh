@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
-import { TopHeader } from '@/components/shared/TopHeader';
+import { useEffect, useState } from 'react';
+// TopHeader is rendered by the parent founder/page.tsx — do not re-render here
+import { useFounderSettings, useUpdateFounderSettings } from '@/hooks/useApi';
 import {
   Settings, Shield, Key, Bell, Database, Cpu, Lock,
   Globe, Mail, Smartphone, Layers, Server, RefreshCw, CheckCircle2,
@@ -25,38 +26,56 @@ const CONFIG_CHANGES_MOCK = [
   { item: 'WhatsApp API Key Updated', changedBy: 'Super Admin', module: 'Integrations', oldVal: '••••••••', newVal: '••••••••', date: '22 May, 10:45 AM' },
 ];
 
+// Defaults shown before the real persisted values load, and for any toggle
+// key that's never been saved yet. Once useFounderSettings() resolves, real
+// persisted values (if any) override these per-key.
+const DEFAULT_TOGGLES: Record<string, boolean> = {
+  maintMode: false,
+  whiteLabel: true,
+  darkModeDefault: false,
+  mfaEnforced: true,
+  ssoGoogle: true,
+  ssoSaml: true,
+  ipWhitelisting: false,
+  autoApproveInst: true,
+  pushNotifs: true,
+  aiTokenTracking: true,
+  proctoringWatermark: true,
+  bloomTaxonomy: true,
+  autoBackup: true,
+  ipAnonymize: false,
+  graphqlSandbox: true,
+  flagAiBuilder: true,
+  flagWhatsAppAlerts: true,
+  flagAutoTimetable: true,
+  flagProctoring: true,
+  flagMultiBranch: true,
+};
+
 export function FounderSettings() {
   const [activeTab, setActiveTab] = useState('General');
   const [saved, setSaved]         = useState(false);
   const [modalAction, setModalAction] = useState<string | null>(null);
 
-  // Common interactive state toggles across tabs
-  const [toggles, setToggles] = useState<Record<string, boolean>>({
-    maintMode: false,
-    whiteLabel: true,
-    darkModeDefault: false,
-    mfaEnforced: true,
-    ssoGoogle: true,
-    ssoSaml: true,
-    ipWhitelisting: false,
-    autoApproveInst: true,
-    pushNotifs: true,
-    aiTokenTracking: true,
-    proctoringWatermark: true,
-    bloomTaxonomy: true,
-    autoBackup: true,
-    ipAnonymize: false,
-    graphqlSandbox: true,
-    flagAiBuilder: true,
-    flagWhatsAppAlerts: true,
-    flagAutoTimetable: true,
-    flagProctoring: true,
-    flagMultiBranch: true,
-  });
+  // Real persistence: GET/PATCH /founder/settings (see docs on the audit's
+  // "Save Changes lies about persisting" Critical finding). Only the boolean
+  // toggle switches on this screen persist for real — the many uncontrolled
+  // text/number/select fields below describe subsystems (billing, SAML SSO,
+  // LLM provider selection, etc.) that have no real backend anywhere in this
+  // codebase yet, and are left as illustrative until that's genuinely built.
+  const { data: persisted, isPending: settingsLoading } = useFounderSettings();
+  const updateSettings = useUpdateFounderSettings();
+
+  const [toggles, setToggles] = useState<Record<string, boolean>>(DEFAULT_TOGGLES);
+
+  useEffect(() => {
+    if (persisted) setToggles((prev) => ({ ...DEFAULT_TOGGLES, ...prev, ...persisted }));
+  }, [persisted]);
 
   const toggle = (key: string) => setToggles(prev => ({ ...prev, [key]: !prev[key] }));
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    await updateSettings.mutateAsync(toggles);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -76,17 +95,16 @@ export function FounderSettings() {
 
   return (
     <div className="h-full overflow-y-auto bg-[#f8fafc]">
-      <TopHeader
-        greeting="Settings"
-        subtitle="Configure platform preferences and system settings"
-        rightContent={
-          <button onClick={handleSave}
-            className="flex items-center gap-1.5 px-4 py-2 text-[12px] bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow-sm transition-colors">
-            {saved ? <Check className="w-4 h-4 text-white" /> : <Save className="w-4 h-4" />}
-            {saved ? 'Changes Saved!' : 'Save Changes'}
-          </button>
-        }
-      />
+      <div className="px-5 pt-4 flex items-center justify-between gap-4">
+        <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 max-w-3xl">
+          The toggle switches on this screen persist for real. The text, number, and dropdown fields below are illustrative previews of settings this platform doesn&apos;t enforce anywhere yet (billing, SSO/SAML, LLM provider selection, and similar) — saving does not change their behavior.
+        </p>
+        <button onClick={handleSave} disabled={updateSettings.isPending || settingsLoading}
+          className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2 text-[12px] bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow-sm transition-colors disabled:opacity-60">
+          {updateSettings.isPending ? <RefreshCw className="w-4 h-4 animate-spin" /> : saved ? <Check className="w-4 h-4 text-white" /> : <Save className="w-4 h-4" />}
+          {updateSettings.isPending ? 'Saving…' : saved ? 'Changes Saved!' : 'Save Changes'}
+        </button>
+      </div>
 
       <div className="p-5 space-y-6 animate-fadein max-w-[1700px] mx-auto">
         {/* ── TOP METADATA BAR ── */}
@@ -321,8 +339,8 @@ export function FounderSettings() {
                         <tr><th className="p-2.5">Key Name</th><th className="p-2.5">Token Mask</th><th className="p-2.5">Scope</th><th className="p-2.5 text-right">Actions</th></tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 font-mono">
-                        <tr><td className="p-2.5 font-bold font-sans">Production Webhook Key</td><td className="p-2.5 text-indigo-600">sk_live_9012...84a</td><td className="p-2.5 text-slate-500 font-sans">Full Access</td><td className="p-2.5 text-right font-sans"><button onClick={() => alert('Key revoked')} className="text-rose-600 font-bold hover:underline">Revoke</button></td></tr>
-                        <tr><td className="p-2.5 font-bold font-sans">Analytics Sync Key</td><td className="p-2.5 text-indigo-600">sk_live_3412...92b</td><td className="p-2.5 text-slate-500 font-sans">Read Only</td><td className="p-2.5 text-right font-sans"><button onClick={() => alert('Key revoked')} className="text-rose-600 font-bold hover:underline">Revoke</button></td></tr>
+                        <tr><td className="p-2.5 font-bold font-sans">Production Webhook Key</td><td className="p-2.5 text-indigo-600">sk_live_9012...84a</td><td className="p-2.5 text-slate-500 font-sans">Full Access</td><td className="p-2.5 text-right font-sans"><button disabled title="API key management not yet wired" className="text-slate-300 font-bold cursor-not-allowed">Revoke</button></td></tr>
+                        <tr><td className="p-2.5 font-bold font-sans">Analytics Sync Key</td><td className="p-2.5 text-indigo-600">sk_live_3412...92b</td><td className="p-2.5 text-slate-500 font-sans">Read Only</td><td className="p-2.5 text-right font-sans"><button disabled title="API key management not yet wired" className="text-slate-300 font-bold cursor-not-allowed">Revoke</button></td></tr>
                       </tbody>
                     </table>
                   </div>
@@ -455,7 +473,7 @@ export function FounderSettings() {
 
             <div className="px-6 py-4 bg-white border-t border-slate-100 flex justify-end gap-2">
               <button onClick={() => setModalAction(null)} className="px-4 py-2 text-[12px] font-bold border border-slate-200 text-slate-700 rounded-xl">Cancel</button>
-              <button onClick={() => { setModalAction(null); alert(`${modalAction} executed successfully!`); }} className="px-5 py-2 text-[12px] font-bold bg-indigo-600 text-white rounded-xl hover:bg-indigo-700">Execute Action</button>
+              <button onClick={() => setModalAction(null)} className="px-5 py-2 text-[12px] font-bold bg-indigo-600 text-white rounded-xl hover:bg-indigo-700">Execute Action</button>
             </div>
           </div>
         </div>

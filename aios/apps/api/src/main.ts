@@ -7,6 +7,7 @@ import helmet from 'helmet';
 const cookieParser = require('cookie-parser') as () => unknown;
 import * as Sentry from '@sentry/node';
 import { AppModule } from './app.module';
+import { RUN_WORKERS } from './infrastructure/queue/queue-policy';
 
 // 12-LOGGING-MONITORING.md §1: Sentry for error tracking. Same "optional, warn,
 // degrade" pattern as Redis/S3/INTERNAL_SERVICE_TOKEN elsewhere — SENTRY_DSN is
@@ -75,8 +76,41 @@ async function bootstrap() {
     SwaggerModule.setup('api/docs', app, document);
   }
 
+  // Graceful shutdown. worker.ts has had this since it was written; the API
+  // process never did, which meant every rolling deploy, container restart and
+  // autoscaler scale-down killed this process outright on SIGTERM:
+  //
+  //  * in-flight HTTP requests died mid-response — the client sees a connection
+  //    reset rather than a status code it can interpret or safely retry;
+  //  * PrismaService.onModuleDestroy() (which calls $disconnect()) is only ever
+  //    invoked by Nest's shutdown hooks, so without this it NEVER RAN in the API
+  //    process — the pool was abandoned and Postgres was left to time out the
+  //    orphaned sessions;
+  //  * a request inside $transaction() died with no rollback issued, leaving the
+  //    transaction to be aborted by connection teardown instead of by us.
+  //
+  // It matters more, not less, when RUN_WORKERS is true: this process is then
+  // also holding BullMQ job locks that app.close() releases.
+  app.enableShutdownHooks();
+
   await app.listen(port);
-  console.log(`AIOS API running on port ${port} [${nodeEnv}]`);
+
+  const shutdown = async (signal: string) => {
+    console.log(`${signal} received — draining in-flight requests before exit.`);
+    await app.close();
+    process.exit(0);
+  };
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+
+  // Say plainly whether this process is also consuming jobs. Deploying a
+  // dedicated worker (npm run start:worker) while leaving RUN_WORKERS unset on
+  // the API means BOTH processes consume — which still works, but silently
+  // undoes the isolation the split exists for, and is invisible without this.
+  const mode = RUN_WORKERS
+    ? 'API + workers (single process — set RUN_WORKERS=false when a dedicated worker runs)'
+    : 'API only (RUN_WORKERS=false — jobs are consumed by the worker process)';
+  console.log(`AIOS API running on port ${port} [${nodeEnv}] — ${mode}`);
 }
 
 void bootstrap();

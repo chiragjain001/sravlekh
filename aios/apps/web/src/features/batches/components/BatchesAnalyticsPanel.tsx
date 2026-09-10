@@ -1,136 +1,78 @@
 'use client';
-// ─── Batches Analytics Panel Component ───────────────────────────────────────
+// ─── Batches Analytics Panel ───────────────────────────────────────────────────
+// Real aggregates only, from BatchesService.getStats — no capacity/fee/
+// syllabus-progress figures, since no such domain exists in the backend.
 
 import React from 'react';
-import {
-  PieChart, Pie, Cell, BarChart, Bar,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-} from 'recharts';
-import { Layers, Users, Award, AlertTriangle, CalendarDays, TrendingUp } from 'lucide-react';
-import { useBatchesAnalytics } from '../hooks/useBatches';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { Layers, CheckCircle2, Archive, Users } from 'lucide-react';
+import { useBatchesStats } from '../hooks/useBatches';
 
 function AnalyticsSkeleton() {
   return (
     <div className="space-y-6 animate-pulse">
-      <div className="grid grid-cols-4 gap-4">
-        {[1,2,3,4].map((i) => <div key={i} className="h-24 bg-slate-100 rounded-2xl" />)}
-      </div>
-      <div className="grid grid-cols-3 gap-4">
-        {[1,2,3].map((i) => <div key={i} className="h-64 bg-slate-100 rounded-2xl" />)}
-      </div>
+      <div className="grid grid-cols-3 gap-4">{[1, 2, 3].map((i) => <div key={i} className="h-24 bg-slate-100 rounded-2xl" />)}</div>
+      <div className="h-64 bg-slate-100 rounded-2xl" />
     </div>
   );
 }
 
-function KpiCard({
-  label, value, sub, icon: Icon, gradient,
-}: {
-  label: string; value: string | number; sub?: string;
-  icon: React.ElementType; gradient: string;
-}) {
+function KpiCard({ label, value, icon: Icon, gradient }: { label: string; value: string | number; icon: React.ElementType; gradient: string }) {
   return (
     <div className={`relative overflow-hidden rounded-2xl p-5 text-white ${gradient} shadow-lg`}>
-      <div className="absolute top-3 right-3 opacity-20">
-        <Icon className="w-16 h-16" />
-      </div>
+      <div className="absolute top-3 right-3 opacity-20"><Icon className="w-16 h-16" /></div>
       <div className="relative z-10">
         <p className="text-xs font-medium opacity-80">{label}</p>
         <p className="text-3xl font-black mt-1 leading-none">{value}</p>
-        {sub && <p className="text-xs opacity-70 mt-1 font-medium">{sub}</p>}
       </div>
     </div>
   );
 }
 
 export function BatchesAnalyticsPanel() {
-  const { data: analytics, isLoading, isError } = useBatchesAnalytics();
+  const { data: stats, isPending, isError } = useBatchesStats();
 
-  if (isLoading) return <AnalyticsSkeleton />;
-
-  if (isError || !analytics) {
-    return (
-      <div className="flex items-center justify-center h-48 text-slate-400">
-        <AlertTriangle className="w-6 h-6 mr-2" />
-        <span className="text-sm">Failed to load batch analytics</span>
-      </div>
-    );
-  }
+  if (isPending) return <AnalyticsSkeleton />;
+  if (isError || !stats) return <div className="text-center py-16 text-sm text-slate-500">Failed to load batch stats.</div>;
 
   return (
     <div className="space-y-6">
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard
-          label="Total Batches"       value={analytics.totalBatches}
-          sub="+6% this year"         icon={Layers}
-          gradient="bg-gradient-to-br from-blue-600 to-indigo-800"
-        />
-        <KpiCard
-          label="Active Cohorts"      value={analytics.activeCohorts}
-          sub="87.5% operational"     icon={Users}
-          gradient="bg-gradient-to-br from-emerald-500 to-emerald-700"
-        />
-        <KpiCard
-          label="Avg Batch Capacity"  value={`${analytics.avgCapacityPct}%`}
-          sub="+3% seat fill rate"    icon={TrendingUp}
-          gradient="bg-gradient-to-br from-purple-600 to-indigo-800"
-        />
-        <KpiCard
-          label="Upcoming Batches"   value={analytics.upcomingBatches}
-          sub="Launching in 30 days"  icon={CalendarDays}
-          gradient="bg-gradient-to-br from-amber-500 to-orange-600"
-        />
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <KpiCard label="Total Batches" value={stats.total} icon={Layers} gradient="bg-gradient-to-br from-indigo-500 to-indigo-700" />
+        <KpiCard label="Active" value={stats.active} icon={CheckCircle2} gradient="bg-gradient-to-br from-emerald-500 to-emerald-700" />
+        <KpiCard label="Archived" value={stats.inactive} icon={Archive} gradient="bg-gradient-to-br from-slate-500 to-slate-700" />
       </div>
 
-      {/* Charts Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* Cohort Score Comparison */}
-        <div className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm col-span-2">
-          <h3 className="text-sm font-bold text-slate-900 mb-4">Cohort Performance &amp; Attendance Comparison</h3>
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={analytics.cohortComparison} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="name" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} domain={[0, 100]} />
-                <Tooltip contentStyle={{ borderRadius: '8px', fontSize: '11px' }} />
-                <Bar dataKey="avgScore" name="Avg Score %" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="attendance" name="Attendance %" fill="#10b981" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Seat Utilization Pie */}
-        <div className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm col-span-1 flex flex-col justify-between">
-          <div>
-            <h3 className="text-sm font-bold text-slate-900 mb-4">Institute Capacity Utilization</h3>
-            <div className="h-44 w-full flex items-center justify-center">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm">
+          <h4 className="text-xs font-bold text-slate-700 mb-3 uppercase tracking-wide">Batches by Class Year</h4>
+          {(stats.byClassYear?.length ?? 0) === 0 ? <p className="text-xs text-slate-400 py-8 text-center">No batches yet.</p> : (
+            <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={analytics.capacityUtilization}
-                    innerRadius={45} outerRadius={68}
-                    paddingAngle={3} dataKey="value" stroke="none"
-                  >
-                    {analytics.capacityUtilization.map((e, i) => <Cell key={i} fill={e.color} />)}
-                  </Pie>
-                  <Tooltip contentStyle={{ borderRadius: '8px', fontSize: '11px' }} />
-                </PieChart>
+                <BarChart data={stats.byClassYear ?? []} margin={{ top: 5, right: 10, bottom: 5, left: -20 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="classYear" tick={{ fontSize: 9, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 9, fill: '#94a3b8' }} axisLine={false} tickLine={false} allowDecimals={false} />
+                  <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '11px' }} />
+                  <Bar dataKey="count" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                </BarChart>
               </ResponsiveContainer>
             </div>
-            <div className="space-y-2 mt-2">
-              {analytics.capacityUtilization.map((u, i) => (
-                <div key={i} className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2">
-                    <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: u.color }} />
-                    <span className="text-slate-600 font-medium">{u.name}</span>
-                  </div>
-                  <span className="font-bold text-slate-900">{u.value} seats</span>
+          )}
+        </div>
+
+        <div className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm">
+          <h4 className="text-xs font-bold text-slate-700 mb-3 uppercase tracking-wide flex items-center gap-1.5"><Users className="w-3.5 h-3.5 text-blue-500" /> Top Batches by Enrollment</h4>
+          {(stats.byEnrollment?.length ?? 0) === 0 ? <p className="text-xs text-slate-400 py-8 text-center">No students enrolled yet.</p> : (
+            <div className="space-y-2">
+              {(stats.byEnrollment ?? []).map((b: any) => (
+                <div key={b.batchId} className="flex items-center justify-between px-3 py-2 bg-slate-50 rounded-lg text-xs">
+                  <span className="font-medium text-slate-700">{b.batchName}</span>
+                  <span className="font-bold text-slate-900">{b.studentCount} students</span>
                 </div>
               ))}
             </div>
-          </div>
+          )}
         </div>
       </div>
     </div>

@@ -19,7 +19,7 @@ interface AuthContextValue {
   accessToken: string | null;
   isLoading: boolean;
   login: (idToken: string) => Promise<void>;
-  loginAsMock: (role: 'STUDENT' | 'TEACHER' | 'ADMIN' | 'FOUNDER') => void;
+  loginAsMock: (role: 'STUDENT' | 'TEACHER' | 'ADMIN' | 'FOUNDER') => Promise<void>;
   logout: () => void;
 }
 
@@ -141,20 +141,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /**
-   * Mock login for testing — bypasses real auth. Dev/test only; see 06-AUTH-AUTHORIZATION.md
-   * ("a mock role-token login exists only in non-prod"). No-ops outside development so a
-   * stray call can never fabricate a session in a deployed environment.
+   * Mock login for testing — signs in as a real, seeded user via the backend's
+   * dev-only POST /auth/dev-login (see AuthService.loginAsMockRole,
+   * 06-AUTH-AUTHORIZATION.md §1). Unlike the old client-only stub, this returns
+   * a genuinely signed JWT, so every subsequent API call actually authenticates
+   * against the real backend instead of silently failing 401s. No-ops outside
+   * development so a stray call can never fabricate a session in a deployed
+   * environment (the backend independently enforces the same gate).
    */
   const loginAsMock = useCallback(
-    (role: 'STUDENT' | 'TEACHER' | 'ADMIN' | 'FOUNDER') => {
+    async (role: 'STUDENT' | 'TEACHER' | 'ADMIN' | 'FOUNDER') => {
       if (process.env.NODE_ENV === 'production') {
         console.error('loginAsMock is disabled in production.');
         return;
       }
-      const mockUser  = MOCK_USERS[role];
-      const mockToken = `mock-token-${role.toLowerCase()}-${Date.now()}`;
-      persistSession(mockToken, mockUser);
-      redirectForRole(role);
+      try {
+        const { data } = await apiClient.post<GoogleLoginApiResponse>('/auth/dev-login', { role });
+        const fixture = MOCK_USERS[role];
+        const userObj = data?.user || fixture;
+        const sessionUser: AuthenticatedUser = {
+          ...fixture,
+          id: userObj.id || fixture.id,
+          email: userObj.email || fixture.email,
+          name: userObj.name || fixture.name,
+          instituteId: userObj.instituteId || fixture.instituteId,
+          avatarUrl: userObj.avatarUrl ?? fixture.avatarUrl,
+        };
+        persistSession(data?.accessToken || 'mock-dev-token', sessionUser);
+        redirectForRole(role);
+      } catch (err) {
+        console.error('Mock login failed — is the backend running and seeded? (pnpm --filter @aios/db seed)', err);
+        throw err;
+      }
     },
     [persistSession, redirectForRole],
   );

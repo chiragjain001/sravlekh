@@ -151,6 +151,9 @@ export class UpdateTagsDto {
   tags!: string[];
 }
 
+export const STUDENT_SORT_FIELDS = ['name', 'rollNumber', 'admissionDate'] as const;
+export type StudentSortField = (typeof STUDENT_SORT_FIELDS)[number];
+
 export class QueryStudentsDto {
   @ApiPropertyOptional({ example: 'Aditya' })
   @IsOptional()
@@ -171,6 +174,21 @@ export class QueryStudentsDto {
   @IsArray()
   @IsString({ each: true })
   tags?: string[];
+
+  @ApiPropertyOptional({ enum: ['ACTIVE', 'INACTIVE', 'SUSPENDED'], description: 'Filter by account status' })
+  @IsOptional()
+  @IsString()
+  status?: string;
+
+  @ApiPropertyOptional({ enum: STUDENT_SORT_FIELDS, default: 'name' })
+  @IsOptional()
+  @IsEnum(STUDENT_SORT_FIELDS)
+  sortBy?: StudentSortField = 'name';
+
+  @ApiPropertyOptional({ enum: ['asc', 'desc'], default: 'asc' })
+  @IsOptional()
+  @IsEnum(['asc', 'desc'])
+  sortDir?: 'asc' | 'desc' = 'asc';
 
   @ApiPropertyOptional({ default: 1 })
   @IsOptional()

@@ -1,6 +1,16 @@
 import axios from 'axios';
 
-const isDemoMode = typeof window !== 'undefined' && localStorage.getItem('aios_demo_mode') === 'true';
+// Demo/mock mode is a dev-only convenience for working on the UI without a live
+// backend. It must never be reachable in a production build — gating on
+// NODE_ENV alone isn't enough for a bundled SPA (the check would just be
+// compiled away as `false`, which is exactly the point: in a production build
+// this condition is statically `false` and the localStorage flag below is
+// never even read). See apps/api/src/auth/auth.service.ts's loginAsMockRole
+// for the equivalent server-side gate this mirrors.
+const isDemoMode =
+  process.env.NODE_ENV !== 'production' &&
+  typeof window !== 'undefined' &&
+  localStorage.getItem('aios_demo_mode') === 'true';
 
 /**
  * Axios instance pre-configured for the AIOS API.
@@ -32,12 +42,25 @@ apiClient.interceptors.request.use((config) => {
 // Response interceptor
 apiClient.interceptors.response.use(
   (response) => response,
-  (error: any) => {
-    if (error.__isMock) {
-      const url = error.config.url || '';
+  (error: unknown) => {
+    const err = error as Record<string, unknown>;
+    if (err['__isMock']) {
+      const config = err['config'] as { url?: string };
+      const url = config.url || '';
       // Provide mock data based on URL
-      let mockData: any = { data: [] };
-      if (url.includes('/analytics/overview')) {
+      let mockData: unknown = { data: [] };
+      if (url.includes('/auth/dev-login') || url.includes('/auth/google')) {
+        mockData = {
+          accessToken: 'mock-demo-access-token',
+          user: {
+            id: 'mock-user-001',
+            email: 'demo@aios.test',
+            name: 'Demo User',
+            role: 'TEACHER',
+            instituteId: 'demo-institute-1',
+          },
+        };
+      } else if (url.includes('/analytics/overview')) {
         mockData = { totalStudents: 1250, totalTeachers: 45, activeExams: 3 };
       } else if (url.includes('/batches')) {
         mockData = [
@@ -79,10 +102,16 @@ apiClient.interceptors.response.use(
 
 /**
  * Axios instance for the Python AI Engine.
- * Note: Uses full localhost URL since it runs on a different port.
+ *
+ * Same-origin and proxied, exactly like `apiClient` above. This was previously
+ * `baseURL: 'http://localhost:8000'` — a literal address of *the browser's own
+ * machine*, so every screen built on it (the batch heatmaps, AI blueprint
+ * generation, the evaluation-quality dashboard) worked only on a developer
+ * laptop running the engine locally and failed for every real user. The
+ * `/api/py` prefix is rewritten to PYTHON_API_URL by next.config.js.
  */
 export const aiClient = axios.create({
-  baseURL: 'http://localhost:8000',
+  baseURL: '/api/py',
   headers: { 'Content-Type': 'application/json' },
 });
 
@@ -94,10 +123,12 @@ if (isDemoMode) {
 
 aiClient.interceptors.response.use(
   (response) => response,
-  (error: any) => {
-    if (error.__isMock) {
-      const url = error.config.url || '';
-      let mockData: any = { data: [] };
+  (error: unknown) => {
+    const err = error as Record<string, unknown>;
+    if (err['__isMock']) {
+      const config = err['config'] as { url?: string };
+      const url = config.url || '';
+      let mockData: unknown = { data: [] };
       
       if (url.includes('/heatmap')) {
         mockData = {
