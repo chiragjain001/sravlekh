@@ -37,6 +37,7 @@ import { FeatureFlagsModule } from './feature-flags/feature-flags.module';
 import { SupportTicketsModule } from './support-tickets/support-tickets.module';
 import { EntitlementsModule } from './entitlements/entitlements.module';
 import { QueueModule } from './infrastructure/queue/queue.module';
+import { QueueMonitorModule } from './infrastructure/queue/queue-monitor.module';
 import { StorageModule } from './infrastructure/storage/storage.module';
 import { CacheModule } from './infrastructure/cache/cache.module';
 import { AllExceptionsFilter } from './shared/filters/all-exceptions.filter';
@@ -80,6 +81,7 @@ import { CacheService } from './infrastructure/cache/cache.service';
     // ── Core modules ──────────────────────────────────────────────────────
     PrismaModule,
     QueueModule,
+    QueueMonitorModule,
     StorageModule,
     CacheModule,
     AuthModule,

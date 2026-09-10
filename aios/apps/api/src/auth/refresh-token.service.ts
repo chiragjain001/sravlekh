@@ -1,6 +1,7 @@
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { alertRefreshTokenReuse } from '../shared/logging/alerts';
 
 /**
  * Refresh-token sessions: issue, rotate, revoke.
@@ -169,9 +170,16 @@ export class RefreshTokenService {
       // A token rotated long ago has just been presented. Two copies exist and
       // there is no way to tell which one this is, so the whole session dies.
       await this.revokeFamily(existing.familyId, 'reuse_detected');
-      this.logger.warn(
-        `Refresh token reuse detected for user ${existing.userId} (family ${existing.familyId}, ` +
-          `rotated ${Math.round(sinceRotation / 1000)}s ago). Entire session family revoked.`,
+      // An ALERT, not a log line. This is the only signal in the system that
+      // names a specific compromised account, and by the time it fires the
+      // session family is already revoked — so if nobody sees it, nobody ever
+      // learns the theft happened. It was previously a bare logger.warn, which
+      // no on-call rotation would ever have seen.
+      alertRefreshTokenReuse(
+        existing.userId,
+        existing.familyId,
+        Math.round(sinceRotation / 1000),
+        this.logger,
       );
       throw new UnauthorizedException('Session expired. Please sign in again.');
     }
