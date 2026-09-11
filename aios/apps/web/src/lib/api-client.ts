@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { type AxiosInstance } from 'axios';
 
 // Demo/mock mode is a dev-only convenience for working on the UI without a live
 // backend. It must never be reachable in a production build — gating on
@@ -83,6 +83,50 @@ async function refreshSession(): Promise<void> {
   return refreshInFlight;
 }
 
+/**
+ * Shared 401 handling for every client that sends the access token.
+ *
+ * The access token is short-lived (minutes), so a 401 usually means "expired",
+ * not "logged out" — and the refresh cookie is httpOnly, so this is the only place
+ * that can find out. Used by BOTH apiClient and aiClient: the Python engine
+ * verifies the same JWT and returns 401 on expiry too, and before this was shared
+ * an AI screen used after the token lapsed simply failed until some unrelated
+ * apiClient call happened to refresh the session.
+ *
+ * `_retried` makes this strictly one attempt per request. Without it, a refresh
+ * that itself 401s would re-enter this handler and recurse. The refresh endpoint
+ * is excluded outright for the same reason.
+ */
+async function retryAfterRefresh(error: unknown, client: AxiosInstance): Promise<unknown> {
+  if (!(axios.isAxiosError(error) && error.response?.status === 401 && typeof window !== 'undefined')) {
+    return Promise.reject(error);
+  }
+
+  const original = error.config as (typeof error.config & { _retried?: boolean }) | undefined;
+  const isRefreshCall = original?.url?.includes('/auth/refresh');
+
+  if (original && !original._retried && !isRefreshCall) {
+    original._retried = true;
+    try {
+      await refreshSession();
+      const token = localStorage.getItem('aios_access_token');
+      if (token && original.headers) {
+        original.headers.Authorization = `Bearer ${token}`;
+      }
+      return client.request(original);
+    } catch {
+      // fall through to the redirect below
+    }
+  }
+
+  // Refresh failed, or this request had already been retried: the session is
+  // genuinely over.
+  localStorage.removeItem('aios_access_token');
+  localStorage.removeItem('aios_user');
+  window.location.href = '/login?reason=session_expired';
+  return Promise.reject(error);
+}
+
 // Response interceptor
 apiClient.interceptors.response.use(
   (response) => response,
@@ -130,43 +174,7 @@ apiClient.interceptors.response.use(
       return Promise.resolve({ data: mockData, status: 200 });
     }
 
-    if (
-      axios.isAxiosError(error) &&
-      error.response?.status === 401 &&
-      typeof window !== 'undefined'
-    ) {
-      const original = error.config as (typeof error.config & { _retried?: boolean }) | undefined;
-
-      // Try to refresh before giving up. The access token is now short-lived
-      // (minutes), so a 401 usually means "expired", not "logged out" — and the
-      // refresh cookie is httpOnly, so this is the only place that can find out.
-      //
-      // `_retried` makes this strictly one attempt per request. Without it, a
-      // refresh that itself 401s would re-enter this handler and recurse.
-      // The refresh endpoint is excluded outright for the same reason.
-      const isRefreshCall = original?.url?.includes('/auth/refresh');
-
-      if (original && !original._retried && !isRefreshCall) {
-        original._retried = true;
-        try {
-          await refreshSession();
-          const token = localStorage.getItem('aios_access_token');
-          if (token && original.headers) {
-            original.headers.Authorization = `Bearer ${token}`;
-          }
-          return apiClient.request(original);
-        } catch {
-          // fall through to the redirect below
-        }
-      }
-
-      // Refresh failed, or this request had already been retried: the session is
-      // genuinely over.
-      localStorage.removeItem('aios_access_token');
-      localStorage.removeItem('aios_user');
-      window.location.href = '/login?reason=session_expired';
-    }
-    return Promise.reject(error);
+    return retryAfterRefresh(error, apiClient);
   },
 );
 
@@ -177,8 +185,9 @@ apiClient.interceptors.response.use(
  * `baseURL: 'http://localhost:8000'` — a literal address of *the browser's own
  * machine*, so every screen built on it (the batch heatmaps, AI blueprint
  * generation, the evaluation-quality dashboard) worked only on a developer
- * laptop running the engine locally and failed for every real user. The
- * `/api/py` prefix is rewritten to PYTHON_API_URL by next.config.js.
+ * laptop running the engine locally and failed for every real user. `/api/py`
+ * is served by a route handler (app/api/py/[...path]) that reads PYTHON_API_URL
+ * per request — not a next.config.js rewrite, which would freeze it at build time.
  */
 export const aiClient = axios.create({
   baseURL: '/api/py',
@@ -193,7 +202,7 @@ if (isDemoMode) {
 
 aiClient.interceptors.response.use(
   (response) => response,
-  (error: unknown) => {
+  async (error: unknown) => {
     const err = error as Record<string, unknown>;
     if (err['__isMock']) {
       const config = err['config'] as { url?: string };
@@ -224,7 +233,7 @@ aiClient.interceptors.response.use(
       }
       return Promise.resolve({ data: mockData, status: 200 });
     }
-    return Promise.reject(error);
+    return retryAfterRefresh(error, aiClient);
   }
 );
 

@@ -131,13 +131,16 @@ expiry. Users who log in after the deploy get the new scheme.
 
 ## 7. Known gaps
 
-- **`aiClient` does not refresh.** The Python-engine client sends the same access
-  token but has no 401-refresh interceptor, so a call landing exactly in the gap
-  fails once rather than refreshing. Low impact — every such screen also makes
-  `apiClient` calls that trigger the refresh — but it should be unified.
-- **No scheduled cleanup job.** `cleanupExpired()` exists and is tested, but
-  nothing calls it periodically yet. Until it is scheduled, `refresh_tokens`
-  grows by roughly one row per user per 15 minutes of active use.
+- ~~**`aiClient` does not refresh.**~~ **Closed 2026-09-11.** This entry originally
+  called the gap "low impact" on the theory that every AI screen also makes
+  `apiClient` calls. That understated it: the Python engine verifies the same JWT
+  and returns 401 on expiry, so with a 15-minute token an AI screen used after the
+  token lapsed failed outright until some unrelated call happened to refresh. The
+  401 handling is now one shared `retryAfterRefresh()` used by both clients, with
+  `api-client.test.ts` covering it (verified to fail against the old code).
+- ~~**No scheduled cleanup job.**~~ **Closed 2026-09-11.**
+  `RefreshTokenCleanupService` runs `cleanupExpired()` hourly
+  (`REFRESH_TOKEN_CLEANUP_INTERVAL_MS`), worker-process only, `unref()`d timer.
 - **No UI for session listing.** `listActiveSessions()` exists and is tested;
   nothing surfaces it. "Here are your active sessions, revoke one" is the natural
   next feature.
