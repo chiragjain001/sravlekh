@@ -315,6 +315,32 @@ contracts (`test_ai_router.py`, `test_blueprint_agent.py`).
 
 ---
 
+## 4a. Status update — 2026-09-12
+
+Follow-up work on branch `chore/staging-db-migrations`. Each row says how it was
+verified; "unverified" means exactly that.
+
+| Item from §4 below | Status | Evidence |
+| :--- | :--- | :--- |
+| Refresh-token rotation | **Done** | docs/38; 25 unit + 7 integration tests against real Postgres (10-way concurrent rotation). Found and fixed a `P2028` pool-exhaustion bug only visible against a real DB. |
+| `GET /users/:id` role scoping | **Done** | Callers surveyed first (zero legitimate ones). Role matrix tests in `users.service.spec.ts`. |
+| `/api/v1` build-time rewrite | **Done** | One build run twice with different `API_URL` reached two different backends. Found and fixed an `Expect: 100-continue` upload failure and a `..` path-traversal escape in the proxy. |
+| Health live/ready split, timer leak | **Done** | `/health/live`, `/health/ready` (503 while draining). 12 tests. |
+| Load tests | **Partly done** | load-tests/RESULTS-2026-09-11.md. Read path measured (saturates at 5–10 VUs on a starved laptop, 0% errors). The five domain scripts remain unrun — they need seeded exam/delivery state. |
+| Production alerting | **Done, partial scope** | docs/39. Queue backlog, dead-letter, refresh-token reuse. **No latency or error-rate alerting** — needs a metrics pipeline. |
+| Frontend test coverage | **Improved, still thin** | 5 → 34 tests. Covers the proxy and session refresh; no component tests. |
+| Image sizes | **Changed, UNVERIFIED** | Standalone output in `web.Dockerfile` (commit `f54699d`). **Never built** — Docker could not start at 0.4 GB free RAM. Build it before merging. Python image untouched. |
+| E2E tests | **Not started** | Needs the full stack incl. Postgres; Docker was unavailable. A mock-mode browser test would pass while proving nothing, so none was written. |
+| Billing / revenue path | **Not started** | Product decision, not a hardening task. |
+
+New findings from this work, not yet acted on:
+
+- **Prisma connection pool is never sized.** Defaults to `cpus × 2 + 1` per
+  process; five replicas at 17 each approach Postgres's default
+  `max_connections=100`. Needs `?connection_limit=` set against the real topology.
+- **Deployment coupling:** `JWT_EXPIRES_IN` now defaults to `15m`. Deploy API and
+  web together, or set `JWT_EXPIRES_IN=7d` until the web app ships (docs/38 §6).
+
 ## 4. Not fixed — open, with evidence
 
 **Unchanged from the 2026-09-03 audit, re-verified as still open today:**
