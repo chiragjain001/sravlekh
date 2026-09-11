@@ -6,10 +6,16 @@
 # packages/db (the web app imports @aios/db for its generated types) and the
 # root lockfile. Same convention as api.Dockerfile.
 #
-# This container is not just a static host: next.config.js rewrites /api/v1 to
-# the NestJS API and /api/py to the Python engine, so the Next server is a
-# load-bearing proxy at run time. Both destinations are read from the
-# environment at startup and must be set on the container.
+# This container is not just a static host: route handlers proxy /api/v1 to the
+# NestJS API and /api/py to the Python engine (src/lib/server/upstream-proxy.ts),
+# so the Next server is a load-bearing proxy at run time. Both destinations —
+# API_URL and PYTHON_API_URL — are read from the environment PER REQUEST and must
+# be set on the container. They are deliberately not next.config.js rewrites,
+# which Next freezes at build time.
+#
+# The runtime stage ships Next's standalone output (next.config.js `output:
+# 'standalone'`): only the files the server actually imports, traced at build
+# time, instead of the whole pnpm node_modules tree.
 
 FROM node:20-alpine AS base
 # No version pinned here on purpose: corepack resolves it from the root
@@ -58,28 +64,38 @@ RUN pnpm --filter @aios/db exec prisma generate --generator client
 # resolved its rewrite destinations at build time. That meant one image per
 # environment, and an image promoted from staging to production would have gone
 # on quietly calling the staging API.
+# Standalone output is opt-in (see next.config.js for why it is not the default:
+# it breaks `pnpm build` on Windows dev machines).
+ENV NEXT_OUTPUT_STANDALONE=1
 RUN pnpm --filter @aios/web build
 
 # ---- runtime ----------------------------------------------------------------
-FROM base AS runtime
+# Plain node:20-alpine, NOT `base`: the runtime needs neither corepack/pnpm nor
+# OpenSSL. OpenSSL was there for Prisma's query engine, and nothing in the web
+# app imports @aios/db — it keeps its own copy of the types in
+# src/types/db.types.ts — so Prisma is not in the traced output at all.
+FROM node:20-alpine AS runtime
 ENV NODE_ENV=production
+# The standalone server binds to $HOSTNAME. Docker sets that to the container id,
+# which would bind the server to the container's own hostname only and make it
+# unreachable through the published port. 0.0.0.0 listens on every interface.
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
+WORKDIR /app
 
-COPY --from=build /repo/node_modules node_modules
-COPY --from=build /repo/apps/web/node_modules apps/web/node_modules
-COPY --from=build /repo/apps/web/.next apps/web/.next
-# (No apps/web/public directory exists — this app serves no static assets from one.
-#  Add the COPY back alongside it if that changes.)
-COPY --from=build /repo/apps/web/package.json apps/web/
-COPY --from=build /repo/apps/web/next.config.js apps/web/
-COPY --from=build /repo/packages/db packages/db
+# Standalone mirrors the monorepo layout under outputFileTracingRoot, so the
+# server lands at apps/web/server.js. Static assets are NOT included in the
+# standalone tree by design and must be copied beside it, or every page renders
+# with no CSS or JS. (No apps/web/public exists; add it the same way if one does.)
+COPY --from=build --chown=node:node /repo/apps/web/.next/standalone ./
+COPY --from=build --chown=node:node /repo/apps/web/.next/static ./apps/web/.next/static
 
-WORKDIR /repo/apps/web
 # Non-root: nothing here needs to write to the filesystem at run time.
 USER node
 EXPOSE 3000
 
-# Exec form so `next start` is PID 1 and receives SIGTERM directly. Shell form
-# would put /bin/sh at PID 1, which forwards nothing — see main.ts's shutdown
-# comment for the measured cost of a signal that never arrives (an 11s hang and
-# a SIGKILL on every deploy).
-CMD ["node_modules/.bin/next", "start", "-p", "3000"]
+# Exec form so node is PID 1 and receives SIGTERM directly. Shell form would put
+# /bin/sh at PID 1, which forwards nothing — see main.ts's shutdown comment for
+# the measured cost of a signal that never arrives (an 11s hang and a SIGKILL on
+# every deploy).
+CMD ["node", "apps/web/server.js"]

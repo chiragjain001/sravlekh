@@ -1,6 +1,27 @@
+const path = require('path');
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Emit a self-contained server (.next/standalone) holding only the files the
+  // app actually imports, traced at build time. The runtime image then ships
+  // that instead of the whole pnpm node_modules tree — which was most of its
+  // 1.34 GB, and included Prisma, its engines and packages/db despite no web
+  // source file importing @aios/db.
+  //
+  // OPT-IN via NEXT_OUTPUT_STANDALONE=1, set by infra/docker/web.Dockerfile. Not
+  // unconditional because producing the standalone tree means recreating pnpm's
+  // symlinks, and Windows refuses to create symlinks without Developer Mode or
+  // admin rights: an unconditional setting made `pnpm build` FAIL outright on a
+  // Windows dev machine (EPERM: operation not permitted, symlink ...). Linux —
+  // the Docker build and CI — has no such restriction.
+  ...(process.env.NEXT_OUTPUT_STANDALONE === '1' && {
+    output: 'standalone',
+    // Monorepo: trace from the workspace root, or pnpm's hoisted packages outside
+    // apps/web are missed and the standalone server fails at startup with
+    // "Cannot find module".
+    outputFileTracingRoot: path.join(__dirname, '../../'),
+  }),
   // Allow cross-origin images from Google avatars and S3
   images: {
     remotePatterns: [
