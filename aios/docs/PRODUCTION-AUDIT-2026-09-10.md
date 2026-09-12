@@ -328,7 +328,7 @@ verified; "unverified" means exactly that.
 | Health live/ready split, timer leak | **Done** | `/health/live`, `/health/ready` (503 while draining). 12 tests. |
 | Load tests | **Partly done** | load-tests/RESULTS-2026-09-11.md. Read path measured (saturates at 5–10 VUs on a starved laptop, 0% errors). The five domain scripts remain unrun — they need seeded exam/delivery state. |
 | Production alerting | **Done, partial scope** | docs/39. Queue backlog, dead-letter, refresh-token reuse. **No latency or error-rate alerting** — needs a metrics pipeline. |
-| Frontend test coverage | **Improved, still thin** | 5 → 34 tests. Covers the proxy and session refresh; no component tests. |
+| Frontend test coverage | **Improved, still thin** | 5 → 40 tests. Covers the proxy, session refresh and `RouteGuard` role gating. Still no tests for the dashboard screens or `useApi`. |
 | Image sizes | **Changed, UNVERIFIED** | Standalone output in `web.Dockerfile` (commit `f54699d`). **Never built** — Docker could not start at 0.4 GB free RAM. Build it before merging. Python image untouched. |
 | E2E tests | **Not started** | Needs the full stack incl. Postgres; Docker was unavailable. A mock-mode browser test would pass while proving nothing, so none was written. |
 | Billing / revenue path | **Not started** | Product decision, not a hardening task. |
