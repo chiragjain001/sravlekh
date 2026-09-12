@@ -335,7 +335,7 @@ verified; "unverified" means exactly that.
 
 New findings from this work, not yet acted on:
 
-- **Prisma connection pool is never sized.** Defaults to `cpus × 2 + 1` per
+- ~~**Prisma connection pool is never sized.**~~ **Configurable 2026-09-12** via `DATABASE_POOL_LIMIT` (opt-in; unset keeps Prisma’s default). The right value still has to be chosen against the real topology. Defaults to `cpus × 2 + 1` per
   process; five replicas at 17 each approach Postgres's default
   `max_connections=100`. Needs `?connection_limit=` set against the real topology.
 - **Deployment coupling:** `JWT_EXPIRES_IN` now defaults to `15m`. Deploy API and

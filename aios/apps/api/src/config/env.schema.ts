@@ -42,6 +42,13 @@ export const envSchema = z
     // inherit it. Optional, because the running app itself only reads url.
     DIRECT_URL: z.string().optional(),
 
+    // Prisma connection-pool size per process. Unset means Prisma's default of
+    // `num_cpus * 2 + 1`, derived from the container's CPU count — see
+    // prisma.service.ts's poolLimitOptions for why that default becomes a
+    // problem the first time the API is scaled horizontally. Size it against
+    // replica count and the database's max_connections.
+    DATABASE_POOL_LIMIT: z.coerce.number().int().positive().optional(),
+
     // Google OAuth
     GOOGLE_CLIENT_ID: z.string().min(1),
     GOOGLE_CLIENT_SECRET: z.string().min(1),
