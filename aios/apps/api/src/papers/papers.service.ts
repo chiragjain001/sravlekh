@@ -173,7 +173,12 @@ export class PapersService {
       include: {
         blueprint: true,
         items: {
-          include: { question: true },
+          // Topic name included alongside the question, not just topicId — a
+          // teacher reviewing the generated paper (the "Paper" tab on an exam's
+          // detail page) needs to see what each question is actually about, the
+          // same context the Paper Builder's own Preview step already shows
+          // before publishing.
+          include: { question: { include: { topic: { select: { name: true } } } } },
           orderBy: { order: 'asc' },
         },
       },

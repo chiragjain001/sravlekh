@@ -3,29 +3,47 @@
 import { useState } from 'react';
 import {
   ClipboardList, Plus, Search, Calendar, ChevronRight, ChevronLeft,
-  BarChart2, AlertTriangle, CheckCircle2, Users, Target, Zap, BookOpen
+  BarChart2, AlertTriangle, CheckCircle2, Users, Target, Zap, BookOpen, FileText
 } from 'lucide-react';
-import { useExams, useBatches, useExamResults } from '@/hooks/useApi';
+import { useExams, useExam, usePaper, useBatches, useExamResults } from '@/hooks/useApi';
 import { useDashboardStore } from '@/store/dashboard-store';
 import { toDisplayExamStatus as toDisplayStatus } from '@/lib/exam-status';
 import { ExamGradingPanel } from './ExamGradingPanel';
 
 type View = 'list' | 'analysis';
+type DetailTab = 'analysis' | 'students' | 'paper';
 
 export function TeacherTestsExams() {
   const { setTeacherNav, setTeacherCtx } = useDashboardStore();
   const [searchTerm,   setSearchTerm]   = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [view,         setView]         = useState<View>('list');
-  const [detailTab,    setDetailTab]    = useState<'analysis' | 'students'>('analysis');
+  const [detailTab,    setDetailTab]    = useState<DetailTab>('analysis');
   const [selectedTest, setSelectedTest] = useState<string | null>(null);
   const [showGrading,  setShowGrading]  = useState(false);
+  // Which linked paper variant is on screen, for exams with more than one
+  // (Paper Builder's "Paper Sets" can generate several — e.g. anti-cheating
+  // Set A/B). Reset to null on every exam selection so it always defaults to
+  // the first available variant rather than leaking a stale id across exams.
+  const [selectedPaperId, setSelectedPaperId] = useState<string | null>(null);
 
   const { data: examsResp, isLoading: examsLoading } = useExams();
   const { data: batchesResp } = useBatches();
   const exams: any[] = examsResp?.data ?? examsResp ?? [];
   const batches: any[] = batchesResp?.data ?? batchesResp ?? [];
   const { data: results, isLoading: resultsLoading } = useExamResults(view === 'analysis' ? selectedTest : null);
+  // The list endpoint (useExams) never includes linked papers — only
+  // GET /exams/:examId does — so the "Paper" tab needs its own fetch rather
+  // than reading test.papers off the row the table already had.
+  const { data: examDetail } = useExam(view === 'analysis' ? selectedTest : null);
+  const papers: { id: string; title: string; status: string }[] = examDetail?.papers ?? [];
+  const activePaperId = selectedPaperId ?? papers[0]?.id ?? null;
+  // Fetched lazily (only once the Paper tab is actually opened), same pattern
+  // as useExamResults above — no point pulling full question content for a
+  // teacher who never asks to see it.
+  const { data: paperDetail, isLoading: paperLoading } = usePaper(
+    view === 'analysis' && detailTab === 'paper' ? activePaperId : null,
+  );
 
   const enrichedTests = exams.map((e: any) => ({
     id: e.id,
@@ -42,6 +60,7 @@ export function TeacherTestsExams() {
     setSelectedTest(testId);
     setView('analysis');
     setDetailTab('analysis');
+    setSelectedPaperId(null); // don't carry a stale variant selection between exams
   };
 
   const test = exams.find((e: any) => e.id === selectedTest);
@@ -72,7 +91,7 @@ export function TeacherTestsExams() {
             displayStatus === 'completed' ? 'bg-emerald-100 text-emerald-700' :
             displayStatus === 'grading'   ? 'bg-amber-100 text-amber-700'     :
                                              'bg-sky-100 text-sky-700'
-          }`}>{test.status}</span>
+          }`}>{displayStatus}</span>
         </div>
 
         {resultsLoading ? (
@@ -133,9 +152,9 @@ export function TeacherTestsExams() {
           </div>
         </div>
 
-        {/* Tabs for Analysis / Students */}
+        {/* Tabs for Paper / Analysis / Students */}
         <div role="tablist" aria-label="Test detail tabs" className="flex gap-1 p-2 bg-slate-100 rounded-2xl w-fit">
-          {(['analysis', 'students'] as const).map(tab => (
+          {(['paper', 'analysis', 'students'] as const).map(tab => (
             <button
               key={tab}
               role="tab"
@@ -145,10 +164,80 @@ export function TeacherTestsExams() {
                 detailTab === tab ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
               }`}
             >
-              {tab === 'analysis' ? 'Question Analysis' : 'Student Performances'}
+              {tab === 'paper' ? 'Question Paper' : tab === 'analysis' ? 'Question Analysis' : 'Student Performances'}
             </button>
           ))}
         </div>
+
+        {/* Tab Content — Paper (the questions actually published, reviewable
+            after the fact — Paper Builder's own Preview step was previously
+            the ONLY place a teacher could see this, and only once, before
+            publishing) */}
+        {detailTab === 'paper' && (
+          papers.length === 0 ? (
+            <div className="p-8 text-center bg-slate-50 border border-slate-200 rounded-2xl text-slate-400">
+              <FileText className="w-8 h-8 mx-auto mb-2 opacity-30" />
+              <p className="text-[13px]">No paper is linked to this exam.</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {papers.length > 1 && (
+                <div className="flex flex-wrap gap-2">
+                  {papers.map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => setSelectedPaperId(p.id)}
+                      className={`px-3.5 py-1.5 text-[12px] font-bold rounded-lg border transition-colors ${
+                        activePaperId === p.id
+                          ? 'bg-indigo-600 border-indigo-600 text-white'
+                          : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-300'
+                      }`}
+                    >
+                      {p.title}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {paperLoading ? (
+                <div className="p-8 text-center text-slate-400 text-[13px]">Loading paper…</div>
+              ) : !paperDetail ? (
+                <div className="p-8 text-center bg-slate-50 border border-slate-200 rounded-2xl text-slate-400">
+                  <FileText className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                  <p className="text-[13px]">Couldn't load this paper's questions.</p>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {paperDetail.items.map((item: any, i: number) => (
+                    <div key={item.id} className="bg-white border border-slate-100 rounded-2xl p-4 shadow-sm">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex items-start gap-3">
+                          <span className="w-6 h-6 rounded-lg bg-slate-100 text-slate-500 text-[11px] font-black flex items-center justify-center flex-shrink-0 mt-0.5">
+                            {i + 1}
+                          </span>
+                          <div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className={`text-[9px] font-bold px-2 py-0.5 rounded capitalize ${
+                                item.question.difficulty === 'HARD' ? 'bg-rose-100 text-rose-700' :
+                                item.question.difficulty === 'MEDIUM' ? 'bg-amber-100 text-amber-700' :
+                                'bg-emerald-100 text-emerald-700'
+                              }`}>{item.question.difficulty}</span>
+                              {item.question.topic?.name && (
+                                <span className="text-[11px] font-semibold text-slate-500">{item.question.topic.name}</span>
+                              )}
+                            </div>
+                            <p className="text-[13.5px] text-slate-800 leading-snug">{item.question.content}</p>
+                          </div>
+                        </div>
+                        <span className="text-[12px] font-bold text-slate-600 whitespace-nowrap flex-shrink-0">{item.marks} Marks</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        )}
 
         {/* Tab Content */}
         {detailTab === 'analysis' && (
