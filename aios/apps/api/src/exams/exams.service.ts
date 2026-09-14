@@ -45,6 +45,21 @@ export class ExamsService {
       throw new NotFoundException('Batch not found');
     }
 
+    // Scheduling an exam in the past was previously accepted outright — the
+    // frontend wizard even shipped with a stale hardcoded default date, which
+    // meant a teacher could publish and never notice the test was scheduled
+    // for a day that had already passed. Same-day is allowed (a teacher
+    // running "Publish Immediately" for right now is still "today"); only a
+    // date strictly before today is rejected.
+    if (dto.scheduledDate) {
+      const scheduled = new Date(dto.scheduledDate);
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      if (scheduled < startOfToday) {
+        throw new BadRequestException('The exam date cannot be in the past — pick today or a later date.');
+      }
+    }
+
     const exam = await this.prisma.exam.create({
       data: {
         instituteId,

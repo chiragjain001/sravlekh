@@ -19,7 +19,12 @@ interface Step5RulesProps {
   onPrev: () => void;
 }
 
-const QUESTION_TYPES = ['MCQ', 'Integer', 'Numerical', 'Assertion Reason', 'Mixed'];
+// Short/Long Answer added alongside the existing competitive-exam formats —
+// the backend's QuestionType enum has always had SHORT_ANSWER/LONG_ANSWER
+// (packages/db/prisma/schema.prisma), but nothing in the wizard ever offered
+// them, so a school-style theory paper (mostly subjective questions) could
+// never actually be built here, only MCQ/Numerical competitive-exam papers.
+const QUESTION_TYPES = ['MCQ', 'Integer', 'Numerical', 'Assertion Reason', 'Mixed', 'Short Answer', 'Long Answer'];
 const RECENT_DAYS_OPTIONS = [30, 60, 90, 0];
 
 export function Step5Rules({ state, onChange, onNext, onPrev }: Step5RulesProps) {

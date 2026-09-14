@@ -140,47 +140,83 @@ async function main() {
     create: { userId: users.STUDENT.id, rollNumber: 'JEE-A-001', batchId: batch.id, tags: [] },
   });
 
-  // 7. Question bank — a handful of approved MCQs per topic/difficulty so the
-  // Assessment Builder can actually generate a real paper end-to-end without
-  // hitting "not enough questions in bank" on a modest plan.
+  // 7. Question bank — a spread of approved questions per topic/difficulty/type
+  // so the Assessment Builder can actually generate a real mixed paper
+  // end-to-end without hitting "not enough questions in bank".
+  //
+  // WHY EVERY TYPE, NOT JUST MCQ: this used to seed MCQ only. That silently
+  // matched the wizard's own bug (assessment-blueprint.ts's buildDistributionRules
+  // used to read only questionTypes[0], so NUMERICAL/theory types were never
+  // actually requested even when a teacher selected them) — fixed alongside
+  // this seed, found by driving Paper Builder live end-to-end: selecting
+  // MCQ + Numerical now genuinely asks the bank for both, and asking for a
+  // type nothing here provided (a school-style Short/Long Answer paper, or
+  // any Numerical-inclusive one) failed generation outright with "Needed 1,
+  // found 0". A demo institute with only MCQ coverage cannot demonstrate the
+  // Theory/Subjective paper support the wizard now offers.
   const topics = [topicMotion, topicProjectile, topicNewton, topicFriction];
   const difficulties = [DifficultyLevel.EASY, DifficultyLevel.MEDIUM, DifficultyLevel.HARD];
+  // Per topic x difficulty: enough of each type that a realistic plan (Step 4's
+  // sliders default to single-digit counts per tier) doesn't exhaust the bank
+  // even with two or three types selected at once, mirroring how a teacher
+  // actually uses Step 5's multi-select.
+  const typeCounts: { type: QuestionType; count: number }[] = [
+    { type: QuestionType.MCQ, count: 4 },
+    { type: QuestionType.NUMERICAL, count: 3 },
+    { type: QuestionType.SHORT_ANSWER, count: 2 },
+    { type: QuestionType.LONG_ANSWER, count: 1 },
+  ];
   let questionsCreated = 0;
 
   for (const topic of topics) {
     for (const difficulty of difficulties) {
-      for (let i = 1; i <= 4; i++) {
-        const id = `demo-q-${topic.id}-${difficulty.toLowerCase()}-${i}`;
-        const existing = await prisma.question.findUnique({ where: { id } });
-        if (existing) continue;
-        await prisma.question.create({
-          data: {
-            id,
-            instituteId: institute.id,
-            subjectId: subject.id,
-            chapterId: topic.chapterId,
-            topicId: topic.id,
-            type: QuestionType.MCQ,
-            difficulty,
-            marks: 4,
-            negativeMarks: 1,
-            content: `[${difficulty}] Sample question #${i} on ${topic.name}.`,
-            options: [
-              { label: 'A', text: 'Option A', isCorrect: i % 4 === 0 },
-              { label: 'B', text: 'Option B', isCorrect: i % 4 === 1 },
-              { label: 'C', text: 'Option C', isCorrect: i % 4 === 2 },
-              { label: 'D', text: 'Option D', isCorrect: i % 4 === 3 },
-            ],
-            solution: `Worked solution for ${topic.name} sample question #${i}.`,
-            isApproved: true,
-            createdByUserId: users.TEACHER.id,
-          },
-        });
-        questionsCreated += 1;
+      for (const { type, count } of typeCounts) {
+        for (let i = 1; i <= count; i++) {
+          const id = `demo-q-${topic.id}-${difficulty.toLowerCase()}-${type.toLowerCase()}-${i}`;
+          const existing = await prisma.question.findUnique({ where: { id } });
+          if (existing) continue;
+
+          const isMcq = type === QuestionType.MCQ;
+          const marks = type === QuestionType.LONG_ANSWER ? 10 : type === QuestionType.SHORT_ANSWER ? 5 : 4;
+
+          await prisma.question.create({
+            data: {
+              id,
+              instituteId: institute.id,
+              subjectId: subject.id,
+              chapterId: topic.chapterId,
+              topicId: topic.id,
+              type,
+              difficulty,
+              marks,
+              negativeMarks: isMcq ? 1 : 0,
+              content:
+                type === QuestionType.NUMERICAL
+                  ? `[${difficulty}] Calculate the value for sample numerical problem #${i} on ${topic.name}.`
+                  : type === QuestionType.SHORT_ANSWER
+                  ? `[${difficulty}] Briefly explain sample concept #${i} related to ${topic.name}.`
+                  : type === QuestionType.LONG_ANSWER
+                  ? `[${difficulty}] Derive/discuss in detail: sample long-answer prompt #${i} on ${topic.name}.`
+                  : `[${difficulty}] Sample question #${i} on ${topic.name}.`,
+              options: isMcq
+                ? [
+                    { label: 'A', text: 'Option A', isCorrect: i % 4 === 0 },
+                    { label: 'B', text: 'Option B', isCorrect: i % 4 === 1 },
+                    { label: 'C', text: 'Option C', isCorrect: i % 4 === 2 },
+                    { label: 'D', text: 'Option D', isCorrect: i % 4 === 3 },
+                  ]
+                : undefined,
+              solution: `Worked solution for ${topic.name} sample ${type.toLowerCase()} #${i}.`,
+              isApproved: true,
+              createdByUserId: users.TEACHER.id,
+            },
+          });
+          questionsCreated += 1;
+        }
       }
     }
   }
-  console.log(`✅ Question bank seeded (${questionsCreated} new questions).`);
+  console.log(`✅ Question bank seeded (${questionsCreated} new questions across MCQ/Numerical/Short/Long Answer).`);
 
   // 8. Two subjective questions (SHORT_ANSWER/LONG_ANSWER) — only these types
   // ever reach the evaluation queue (see evaluations.service.ts's

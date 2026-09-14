@@ -20,13 +20,15 @@ const VALID_FORWARD: Record<ExamStatus, ExamStatus | null> = {
 describe('ExamsService — state machine', () => {
   let service: ExamsService;
   let prisma: {
-    exam: { findUnique: jest.Mock; findMany: jest.Mock; update: jest.Mock; delete: jest.Mock };
+    exam: { findUnique: jest.Mock; findMany: jest.Mock; update: jest.Mock; delete: jest.Mock; create: jest.Mock };
     teacherProfile: { findUnique: jest.Mock };
     batchTeacher: { findMany: jest.Mock };
     scoreRecord: { findMany: jest.Mock };
     answerSheet: { findMany: jest.Mock; count: jest.Mock };
     auditLog: { create: jest.Mock };
     paper: { updateMany: jest.Mock };
+    blueprint: { findUnique: jest.Mock };
+    batch: { findUnique: jest.Mock };
     $transaction: jest.Mock;
   };
 
@@ -35,7 +37,7 @@ describe('ExamsService — state machine', () => {
 
   beforeEach(async () => {
     prisma = {
-      exam: { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn(), delete: jest.fn() },
+      exam: { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn(), delete: jest.fn(), create: jest.fn() },
       teacherProfile: { findUnique: jest.fn() },
       batchTeacher: { findMany: jest.fn() },
       scoreRecord: { findMany: jest.fn() },
@@ -47,6 +49,8 @@ describe('ExamsService — state machine', () => {
       answerSheet: { findMany: jest.fn(), count: jest.fn().mockResolvedValue(0) },
       auditLog: { create: jest.fn() },
       paper: { updateMany: jest.fn() },
+      blueprint: { findUnique: jest.fn() },
+      batch: { findUnique: jest.fn() },
       // LOCK/UNLOCK go through prisma.$transaction([...]) so the audit entry is
       // atomic with the mutation — mirror Prisma's array-form behavior in the mock.
       $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
@@ -388,6 +392,53 @@ describe('ExamsService — state machine', () => {
     it("404s for another institute's exam", async () => {
       prisma.exam.findUnique.mockResolvedValueOnce({ ...draft, instituteId: 'inst-OTHER' });
       await expect(service.deleteExam('inst-1', 'e-1', admin)).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ── createExam — scheduledDate must be today or later ───────────────────
+  //
+  // Found by manually testing Paper Builder end to end: the wizard shipped
+  // with a stale hardcoded default date (2024-05-28) and nothing on either
+  // side rejected it, so a teacher could publish an exam already scheduled in
+  // the past without any warning. createExam is the one place scheduledDate
+  // is ever written, so the guard lives here.
+
+  describe('createExam — scheduledDate validation', () => {
+    const validDto = { title: 'Weekly Test', batchId: 'batch-1', blueprintId: 'bp-1', type: 'WEEKLY_TEST' as any, captureMode: 'MANUAL_GRID' as any };
+
+    beforeEach(() => {
+      prisma.blueprint.findUnique.mockResolvedValue({ id: 'bp-1', instituteId: 'inst-1', duration: 60 });
+      prisma.batch.findUnique.mockResolvedValue({ id: 'batch-1', instituteId: 'inst-1' });
+      prisma.exam.create.mockResolvedValue({ id: 'exam-1', title: 'Weekly Test' });
+    });
+
+    it('rejects a date that has already passed', async () => {
+      await expect(
+        service.createExam('inst-1', { ...validDto, scheduledDate: '2024-05-28T09:00:00.000Z' }, admin),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.exam.create).not.toHaveBeenCalled();
+    });
+
+    it('accepts today\'s date — "publish immediately" must not be rejected as "in the past"', async () => {
+      const todayAtNoon = new Date();
+      todayAtNoon.setHours(12, 0, 0, 0);
+      await expect(
+        service.createExam('inst-1', { ...validDto, scheduledDate: todayAtNoon.toISOString() }, admin),
+      ).resolves.toBeDefined();
+      expect(prisma.exam.create).toHaveBeenCalled();
+    });
+
+    it('accepts a future date', async () => {
+      const nextYear = new Date();
+      nextYear.setFullYear(nextYear.getFullYear() + 1);
+      await expect(
+        service.createExam('inst-1', { ...validDto, scheduledDate: nextYear.toISOString() }, admin),
+      ).resolves.toBeDefined();
+    });
+
+    it('is not evaluated at all when no scheduledDate is given — a draft with no date yet stays valid', async () => {
+      await expect(service.createExam('inst-1', validDto, admin)).resolves.toBeDefined();
+      expect(prisma.exam.create).toHaveBeenCalled();
     });
   });
 });

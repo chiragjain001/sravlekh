@@ -24,7 +24,7 @@ import { useAuth } from '@/contexts/auth.context';
 import { NotificationBell } from '@/components/shared/NotificationBell';
 import {
   useBatches, useSubjects, useQuestions,
-  useCreateBlueprint, useGeneratePaper, useCreateExam, useLinkPaperToExam, useBlueprints,
+  useCreateBlueprint, useGeneratePaper, useClonePaper, useCreateExam, useLinkPaperToExam, useBlueprints,
 } from '@/hooks/useApi';
 import { buildDistributionRules, totalQuestionsFromRules, mapExamType, MARKS_PER_QUESTION } from '@/lib/assessment-blueprint';
 
@@ -37,7 +37,7 @@ import { Step3Syllabus, SyllabusChapter } from '../assessment-builder/steps/Step
 import { Step4Planning } from '../assessment-builder/steps/Step4Planning';
 import { Step5Rules } from '../assessment-builder/steps/Step5Rules';
 import { Step6Strategy } from '../assessment-builder/steps/Step6Strategy';
-import { Step7Preview, PreviewQuestion } from '../assessment-builder/steps/Step7Preview';
+import { Step7Preview } from '../assessment-builder/steps/Step7Preview';
 import { Step8Generate } from '../assessment-builder/steps/Step8Generate';
 
 const STEP_NAMES = [
@@ -50,6 +50,16 @@ const STEP_NAMES = [
   { num: 7, label: 'Preview' },
   { num: 8, label: 'Generate' },
 ];
+
+// Today's date in the BROWSER's own local timezone, as YYYY-MM-DD — never
+// `new Date().toISOString().slice(0, 10)`, which is UTC and reads as
+// "tomorrow" or "yesterday" for anyone not near Greenwich right around
+// midnight local time. Mirrors Step1Details.tsx's own todayIsoDate() exactly,
+// since both need to agree on what "today" means for the same date field.
+function todayIsoDateLocal(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 export function TeacherPaperBuilder() {
   const { teacherCtx, setTeacherNav } = useDashboardStore();
@@ -70,8 +80,34 @@ export function TeacherPaperBuilder() {
 
   // Pre-fill initial context details based on active class / batch context
   const initialContext = React.useMemo(() => {
-    const activeSubLabel = subjectId === 'maths' ? 'Mathematics' : subjectId === 'chemistry' ? 'Chemistry' : subjectId === 'biology' ? 'Biology' : 'Physics';
-    const activeExamLabel = classId === '12' ? 'NEET 2026' : 'NEET 2027';
+    // Was a 4-way hardcoded guess (subjectId === 'maths' ? ... : ... : 'Physics')
+    // that silently mislabeled EVERY subject outside that list as "Physics" —
+    // a real institute or school teaches more than four subjects.
+    //
+    // teacherCtx.subjectId is documented as a slug ("e.g. physics, chemistry"
+    // — types/academic-context.types.ts) and the top-bar selector does set it
+    // that way, but it's not the only writer: TeacherClasses.tsx's "Create
+    // Test for This Batch" (a real, common entry point into this screen) sets
+    // it to the subject's actual database id instead — found by driving that
+    // exact path, where the id landed raw in the Title/Exam/Subject fields
+    // ("Cmt666kpp000l145z3sx9b5op Assessment"). Rather than track down and
+    // realign every setTeacherCtx call site to one convention, matching tries
+    // BOTH shapes a real caller uses, and never falls back to displaying the
+    // raw value — an unresolved id is not a subject name a teacher should see.
+    const matchedSubject = subjectId
+      ? subjects.find((s: any) => s.id === subjectId || s.name.toLowerCase() === subjectId.toLowerCase())
+      : undefined;
+    const activeSubLabel = matchedSubject?.name ?? 'General';
+
+    // Was hardcoded to "NEET 2026/2027" for every single paper, regardless of
+    // subject, batch or institute — nothing in the schema (no InstituteType,
+    // no target-exam config anywhere) actually says this is a coaching
+    // institute preparing for NEET; a school teacher would see their Class 8
+    // Science test auto-labelled "NEET 2027". This field is read-only display
+    // chrome (never sent to the backend — see handlePublish below, which never
+    // references assessmentState.exam), so the fix is simply to stop
+    // fabricating a brand it has no basis for.
+    const activeExamLabel = `${activeSubLabel} Assessment`;
 
     let defaultBatches: string[] = [];
     let defaultTitle = `${activeSubLabel} Weekly Test`;
@@ -88,7 +124,7 @@ export function TeacherPaperBuilder() {
       batches: defaultBatches,
       title: defaultTitle,
     };
-  }, [classId, subjectId, batchId, realBatches]);
+  }, [classId, subjectId, batchId, realBatches, subjects]);
 
   // Tracks an AI-driven subject switch (see handleApplyAiResult below) that
   // overrides the teacher's own logged-in subject context. Reset whenever
@@ -115,8 +151,17 @@ export function TeacherPaperBuilder() {
     }));
   }, [activeSubject]);
 
-  const { data: questionsResp, isLoading: questionsLoading } = useQuestions(
-    activeSubject ? { subjectId: activeSubject.id, isApproved: true, limit: 200 } : { isApproved: true, limit: 0 },
+  // Only fires once a real subject has resolved — { limit: 0 } was being sent
+  // in the meantime as a "give me nothing yet" placeholder, but the backend's
+  // validation requires limit >= 1 and rejected it outright with a 400 on
+  // every load, visible in the network log on every single page visit before
+  // the subject list finished loading.
+  // isLoading no longer consumed here — it only ever fed Step7Preview's old
+  // sample-questions loading state, which is gone now that Step 7 loads the
+  // real generated paper itself (via usePaper inside Step7Preview).
+  const { data: questionsResp } = useQuestions(
+    activeSubject ? { subjectId: activeSubject.id, isApproved: true, limit: 200 } : undefined,
+    !!activeSubject,
   );
   const approvedQuestions: any[] = questionsResp?.data ?? [];
 
@@ -125,6 +170,19 @@ export function TeacherPaperBuilder() {
   const [isDraftsOpen, setIsDraftsOpen] = useState(false);
   const [isQuestionBankOpen, setIsQuestionBankOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // A week out, in the browser's own local date — a real default a teacher
+  // would then adjust, not a fixed calendar date that ages into the past the
+  // moment "now" moves past it. This was previously '2024-05-28', hardcoded
+  // and already stale by the time this was tested live: a teacher who never
+  // touched Step 1's date field would publish an exam dated in the past with
+  // nothing anywhere — frontend or backend — objecting. Both now do
+  // (Step1Details.tsx's min attribute + guard, exams.service.ts createExam).
+  const defaultDueDate = React.useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 7);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }, []);
 
   // Global Assessment State
   const [assessmentState, setAssessmentState] = useState<AssessmentState>(() => ({
@@ -138,7 +196,7 @@ export function TeacherPaperBuilder() {
     negativeMarking: '-1 for each wrong answer',
     instructions: 'Add special instructions for students...',
     scheduleType: 'later',
-    dueDate: '2024-05-28',
+    dueDate: defaultDueDate,
     startTime: '09:00',
     endTime: '11:00',
     shuffleQuestions: true,
@@ -283,14 +341,32 @@ export function TeacherPaperBuilder() {
     );
   };
 
-  // ── Publish chain: Blueprint -> (Paper + Exam per batch) -> link ────────
+  // ── Publish chain ─────────────────────────────────────────────────────
+  //
+  // Blueprint -> ONE review Paper (generated the moment Step 7 is entered,
+  // general/no batch) -> teacher reviews/edits it in Step 7 -> Step 8 clones
+  // that exact reviewed state into one Paper + Exam PER target batch.
+  //
+  // This used to generate blind: one blueprint, then generatePaper called
+  // fresh per batch inside handlePublish, with no step in between where a
+  // teacher could see or reject a question before it reached students. The
+  // review-then-clone split is what makes Step 7 real rather than decorative
+  // — cloning (not a second generatePaper call) is what lets every batch get
+  // the identical, already-approved set of questions instead of each batch
+  // independently drawing its own random paper from the same blueprint.
   const createBlueprint = useCreateBlueprint();
   const generatePaper = useGeneratePaper();
+  const clonePaper = useClonePaper();
   const createExam = useCreateExam();
   const linkPaper = useLinkPaperToExam();
   const [publishError, setPublishError] = useState<string | null>(null);
   const [isPublishing, setIsPublishing] = useState(false);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
+
+  const [reviewBlueprintId, setReviewBlueprintId] = useState<string | null>(null);
+  const [reviewPaperId, setReviewPaperId] = useState<string | null>(null);
+  const [isGeneratingReview, setIsGeneratingReview] = useState(false);
+  const [generationError, setGenerationError] = useState<string | null>(null);
 
   function extractErrorMessage(err: unknown, fallback: string): string {
     if (axios.isAxiosError(err)) {
@@ -299,6 +375,55 @@ export function TeacherPaperBuilder() {
     }
     return fallback;
   }
+
+  // Invalidates the generated review paper whenever anything that would
+  // change what's IN it changes. Without this, going back from Step 7 to
+  // adjust the topic plan (or switching subject entirely) would leave Step 7
+  // showing a paper generated from the OLD plan — the review would no longer
+  // describe what Step 8 is about to publish.
+  React.useEffect(() => {
+    setReviewPaperId(null);
+    setReviewBlueprintId(null);
+    setGenerationError(null);
+  }, [
+    activeSubject?.id,
+    assessmentState.selectedChapters,
+    assessmentState.selectedTopics,
+    assessmentState.chapterQuestionPlan,
+    assessmentState.questionTypes,
+  ]);
+
+  const generateReviewPaper = async () => {
+    if (!activeSubject) { setGenerationError('Select a subject with a real curriculum before generating.'); return; }
+    const rules = buildDistributionRules(assessmentState, chaptersTree);
+    if (rules.length === 0) { setGenerationError('Select topics and set a question plan (Step 3-4) before generating.'); return; }
+
+    setIsGeneratingReview(true);
+    setGenerationError(null);
+    try {
+      const blueprint = await createBlueprint.mutateAsync({
+        subjectId: activeSubject.id,
+        name: assessmentState.title || 'Untitled Assessment',
+        totalMarks: totalQuestionsFromRules(rules) * MARKS_PER_QUESTION,
+        duration: assessmentState.duration,
+        instructions: assessmentState.instructions,
+        distribution: rules,
+      });
+      // General — no targetBatchId. This is the one paper every batch's copy
+      // gets cloned from at publish time, so it deliberately isn't scoped to
+      // any single batch yet.
+      const paper = await generatePaper.mutateAsync({
+        blueprintId: blueprint.id,
+        title: assessmentState.title || 'Untitled Assessment',
+      });
+      setReviewBlueprintId(blueprint.id);
+      setReviewPaperId(paper.id);
+    } catch (err) {
+      setGenerationError(extractErrorMessage(err, 'Failed to generate the paper. Please try again.'));
+    } finally {
+      setIsGeneratingReview(false);
+    }
+  };
 
   const handleSaveDraft = async () => {
     if (!activeSubject) { showToast('Select a subject with a real curriculum before saving.'); return; }
@@ -326,36 +451,41 @@ export function TeacherPaperBuilder() {
   const handlePublish = async () => {
     setPublishError(null);
 
-    if (!activeSubject) { setPublishError('Select a subject with a real curriculum before publishing.'); throw new Error('no-subject'); }
-    const rules = buildDistributionRules(assessmentState, chaptersTree);
-    if (rules.length === 0) { setPublishError('Select topics and set a question plan (Step 3-4) before publishing.'); throw new Error('no-rules'); }
+    if (!reviewPaperId || !reviewBlueprintId) {
+      setPublishError('Please finish reviewing your paper (Step 7) before publishing.');
+      throw new Error('not-reviewed');
+    }
     const targetBatches = realBatches.filter((b) => assessmentState.batches.includes(b.name));
     if (targetBatches.length === 0) { setPublishError('Select at least one batch (Step 1) before publishing.'); throw new Error('no-batches'); }
+    // Belt and braces alongside Step1Details' date picker guard — the backend
+    // (exams.service.ts createExam) is the real enforcement, but failing here
+    // first means the teacher sees one clear message instead of a batch of
+    // per-request API errors after already starting to publish.
+    if (assessmentState.scheduleType === 'later' && assessmentState.dueDate) {
+      const todayStr = todayIsoDateLocal();
+      if (assessmentState.dueDate < todayStr) {
+        setPublishError('The exam date is in the past — go back to Step 1 and pick today or a later date.');
+        throw new Error('past-date');
+      }
+    }
 
     setIsPublishing(true);
     try {
-      const blueprint = await createBlueprint.mutateAsync({
-        subjectId: activeSubject.id,
-        name: assessmentState.title || 'Untitled Assessment',
-        totalMarks: totalQuestionsFromRules(rules) * MARKS_PER_QUESTION,
-        duration: assessmentState.duration,
-        instructions: assessmentState.instructions,
-        distribution: rules,
-      });
-
-      // One Paper + Exam per selected batch, from the same Blueprint — Exam
-      // and Paper are both single-batch models (apps/api/src/exams/dto/exam.dto.ts),
-      // so a multi-batch assessment fans out into one exam instance per batch.
+      // One Paper (cloned from the reviewed paper — never re-generated) +
+      // Exam per selected batch. Exam is a single-batch model
+      // (apps/api/src/exams/dto/exam.dto.ts), so a multi-batch assessment
+      // fans out into one exam instance per batch, each with its own copy of
+      // the exact questions the teacher approved in Step 7.
       for (const batch of targetBatches) {
-        const paper = await generatePaper.mutateAsync({
-          blueprintId: blueprint.id,
+        const paper = await clonePaper.mutateAsync({
+          paperId: reviewPaperId,
           title: assessmentState.title || 'Untitled Assessment',
           targetBatchId: batch.id,
         });
         const exam = await createExam.mutateAsync({
           title: assessmentState.title || 'Untitled Assessment',
           batchId: batch.id,
-          blueprintId: blueprint.id,
+          blueprintId: reviewBlueprintId,
           type: mapExamType(assessmentState.type),
           scheduledDate: assessmentState.scheduleType === 'later' && assessmentState.dueDate
             ? new Date(`${assessmentState.dueDate}T${assessmentState.startTime || '09:00'}:00`).toISOString()
@@ -380,6 +510,16 @@ export function TeacherPaperBuilder() {
     if (stepNum === 1) {
       if (!assessmentState.title.trim()) return { valid: false, error: 'Please enter an Assessment Title.' };
       if (!assessmentState.batches.length) return { valid: false, error: 'Please select at least one Batch.' };
+      // Mirrors Step1Details' date-picker guard and exams.service.ts's
+      // backend check — caught here too so leaving Step 1 with a typed/pasted
+      // past date (the picker's min blocks the calendar UI, not free text)
+      // surfaces one clear message immediately, not a failed publish later.
+      if (assessmentState.scheduleType === 'later' && assessmentState.dueDate) {
+        const todayStr = todayIsoDateLocal();
+        if (assessmentState.dueDate < todayStr) {
+          return { valid: false, error: 'The exam date cannot be in the past — pick today or a later date.' };
+        }
+      }
     }
     if (stepNum === 2) {
       if (!assessmentState.selectedSources.length) return { valid: false, error: 'Please select at least one Question Source.' };
@@ -405,6 +545,14 @@ export function TeacherPaperBuilder() {
       return;
     }
     setCurrentStep(targetStep);
+
+    // Entering the review step for the first time since the plan last
+    // changed (the useEffect above clears reviewPaperId on exactly those
+    // changes) — generate the real paper now, so Step 7 has something to
+    // show instead of yesterday's decorative 5-question sample.
+    if (targetStep === 7 && !reviewPaperId && !isGeneratingReview) {
+      void generateReviewPaper();
+    }
   };
 
   return (
@@ -630,21 +778,12 @@ export function TeacherPaperBuilder() {
 
           {currentStep === 7 && (
             <Step7Preview
-              state={assessmentState}
-              onChange={updateState}
               onNext={() => handleNextStep(8)}
               onPrev={() => setCurrentStep(6)}
-              questions={selectedTopicQuestions.map((q, idx): PreviewQuestion => ({
-                id: q.id,
-                num: idx + 1,
-                text: q.content,
-                topic: q.topic?.name ?? 'Unknown Topic',
-                difficulty: q.difficulty === 'HARD' ? 'Hard' : q.difficulty === 'MEDIUM' ? 'Medium' : 'Easy',
-                marks: q.marks,
-                isApproved: true,
-              }))}
-              totalAvailable={availableQuestionsCount}
-              isLoading={questionsLoading}
+              paperId={reviewPaperId}
+              isGenerating={isGeneratingReview}
+              generationError={generationError}
+              onRetryGeneration={() => void generateReviewPaper()}
             />
           )}
 
@@ -700,7 +839,19 @@ export function TeacherPaperBuilder() {
 
           {currentStep < 8 ? (
             <button
-              onClick={() => setCurrentStep((prev) => Math.min(8, prev + 1))}
+              // Was setCurrentStep((prev) => Math.min(8, prev + 1)) directly —
+              // a SECOND navigation path parallel to each step's own "Next"
+              // button, skipping BOTH canAdvance's validation (a teacher could
+              // reach Step 4 without ever picking a batch) AND, found while
+              // testing the review flow live, handleNextStep's step-7 paper
+              // generation trigger. Every "Next: Preview →" click during that
+              // test landed here (this button's own label happens to read
+              // identically — {STEP_NAMES[6].label} is "Preview" — to Step6
+              // Strategy's distinctly-worded "Next: Paper Preview" button),
+              // reaching Step 7 with reviewPaperId never set and nothing to
+              // show. Routing through handleNextStep is what both existing
+              // per-step buttons already did; this one now matches them.
+              onClick={() => handleNextStep(Math.min(8, currentStep + 1))}
               className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[13px] rounded-xl shadow-xs transition-all flex items-center gap-1.5"
             >
               Next: {STEP_NAMES[currentStep]?.label || 'Next'} →

@@ -36,6 +36,17 @@ const ASSESSMENT_TYPES = [
   { id: 'Assignment', icon: '📚', label: 'Assignment', activeColor: 'border-pink-600 bg-pink-50/60 text-pink-900' },
 ];
 
+// Today's date in the browser's own local timezone, formatted for an
+// <input type="date"> value/min — never UTC, or a teacher west of Greenwich
+// past midnight local time would see "tomorrow" rejected as "in the past".
+function todayIsoDate(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 export function Step1Details({ state, onChange, availableBatches, onNext }: Step1DetailsProps) {
   const toggleBatch = (batchId: string) => {
     const current = state.batches;
@@ -249,7 +260,16 @@ export function Step1Details({ state, onChange, availableBatches, onNext }: Step
                   <input
                     type="date"
                     value={state.dueDate}
-                    onChange={(e) => onChange({ dueDate: e.target.value })}
+                    min={todayIsoDate()}
+                    // `min` alone is a browser-UI hint — it blocks the native
+                    // picker but not a typed-in or pasted value, so the actual
+                    // guard is here too. The backend enforces this again
+                    // regardless (exams.service.ts createExam) since neither
+                    // client-side check can be trusted on its own.
+                    onChange={(e) => {
+                      if (e.target.value && e.target.value < todayIsoDate()) return;
+                      onChange({ dueDate: e.target.value });
+                    }}
                     className="w-full pl-8 pr-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[12px] font-semibold text-slate-800"
                   />
                 </div>

@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Body,
   Param,
   UseGuards,
@@ -11,6 +12,8 @@ import { PapersService } from './papers.service';
 import {
   CreateBlueprintDto,
   GeneratePaperDto,
+  ManualReplaceItemDto,
+  ClonePaperDto,
 } from './dto/paper.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -76,5 +79,42 @@ export class PapersController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.papersService.getPaper(instituteId, paperId, user);
+  }
+
+  @Post('papers/:paperId/clone')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: "Copy a paper's current (possibly teacher-edited) items into a new paper for one batch" })
+  clonePaper(
+    @Param('instituteId') instituteId: string,
+    @Param('paperId') paperId: string,
+    @Body() dto: ClonePaperDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.papersService.clonePaper(instituteId, paperId, dto, user);
+  }
+
+  @Post('papers/:paperId/items/:itemId/regenerate')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Reject one item and swap it for a different approved question (same topic/type/difficulty) — DRAFT papers only' })
+  regenerateItem(
+    @Param('instituteId') instituteId: string,
+    @Param('paperId') paperId: string,
+    @Param('itemId') itemId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.papersService.regeneratePaperItem(instituteId, paperId, itemId, user);
+  }
+
+  @Patch('papers/:paperId/items/:itemId/manual')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Replace one item with a question the teacher writes themselves — DRAFT papers only' })
+  replaceItemManually(
+    @Param('instituteId') instituteId: string,
+    @Param('paperId') paperId: string,
+    @Param('itemId') itemId: string,
+    @Body() dto: ManualReplaceItemDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.papersService.replaceItemManually(instituteId, paperId, itemId, dto, user);
   }
 }

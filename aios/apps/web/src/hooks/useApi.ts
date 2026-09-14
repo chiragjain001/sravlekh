@@ -630,7 +630,7 @@ export function useBatchStats() {
 
 // ── Questions ────────────────────────────────────────────────────────────
 
-export function useQuestions(params?: Record<string, unknown>) {
+export function useQuestions(params?: Record<string, unknown>, enabled = true) {
   const { user } = useAuth();
   return useQuery({
     queryKey: ['questions', user?.instituteId, params],
@@ -638,7 +638,7 @@ export function useQuestions(params?: Record<string, unknown>) {
       const res = await apiClient.get(`/institutes/${user?.instituteId}/questions`, { params });
       return res.data;
     },
-    enabled: !!user?.instituteId,
+    enabled: !!user?.instituteId && enabled,
   });
 }
 
@@ -925,6 +925,29 @@ export function useGeneratePaper() {
   });
 }
 
+/**
+ * Copies a paper's CURRENT items into a fresh paper for one batch.
+ *
+ * Used at final publish, once per target batch, on the SAME reviewed paper id
+ * — never generatePaper again — so every batch gets exactly what the teacher
+ * approved in the Preview step rather than a fresh independent random draw
+ * that happens to share a blueprint. See papers.service.ts clonePaper() for
+ * why this exists instead of linking one paper to several exams.
+ */
+export function useClonePaper() {
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async ({ paperId, title, targetBatchId }: { paperId: string; title: string; targetBatchId?: string }) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/papers/${paperId}/clone`, { title, targetBatchId });
+      return res.data;
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to prepare the paper for this batch';
+      toast.error(msg);
+    },
+  });
+}
+
 // ── Exams ────────────────────────────────────────────────────────────────
 
 export function useCreateExam() {
@@ -1021,6 +1044,50 @@ export function usePaper(paperId: string | null) {
       return res.data;
     },
     enabled: !!user?.instituteId && !!paperId,
+  });
+}
+
+/** Teacher rejects a generated question — swapped for a different approved one, same topic/type/difficulty. */
+export function useRegeneratePaperItem() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ paperId, itemId }: { paperId: string; itemId: string }) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/papers/${paperId}/items/${itemId}/regenerate`);
+      return res.data;
+    },
+    onSuccess: (_data, { paperId }) => {
+      queryClient.invalidateQueries({ queryKey: ['papers', user?.instituteId, paperId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Could not find a replacement question';
+      toast.error(msg);
+    },
+  });
+}
+
+/** Teacher writes their own replacement question for one item. */
+export function useReplaceItemManually() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      paperId, itemId, content, difficulty, marks,
+    }: { paperId: string; itemId: string; content: string; difficulty?: string; marks?: number }) => {
+      const res = await apiClient.patch(
+        `/institutes/${user?.instituteId}/papers/${paperId}/items/${itemId}/manual`,
+        { content, difficulty, marks },
+      );
+      return res.data;
+    },
+    onSuccess: (_data, { paperId }) => {
+      queryClient.invalidateQueries({ queryKey: ['papers', user?.instituteId, paperId] });
+      toast.success('Your question has been added to the paper');
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Could not save your question';
+      toast.error(msg);
+    },
   });
 }
 

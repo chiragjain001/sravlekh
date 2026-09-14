@@ -12,6 +12,8 @@ import {
   CreateBlueprintDto,
   GeneratePaperDto,
   BlueprintDistributionRuleDto,
+  ManualReplaceItemDto,
+  ClonePaperDto,
 } from './dto/paper.dto';
 import { sampleWithoutReplacement } from '../shared/random-sample';
 
@@ -187,6 +189,188 @@ export class PapersService {
     if (!paper || paper.instituteId !== instituteId) throw new NotFoundException('Paper not found.');
 
     return paper;
+  }
+
+  /**
+   * Copies a paper's CURRENT items — after whatever review/regenerate/manual
+   * edits it went through — into a brand new Paper for one target batch.
+   *
+   * See ClonePaperDto's comment for why this exists instead of linking the
+   * same paper twice: Paper.examId is a single scalar, so one paper can only
+   * ever belong to one exam. Publishing a reviewed paper to several batches
+   * therefore clones it once per batch — item-for-item, in the same order —
+   * rather than asking generatePaper to draw again, which would give each
+   * batch a different random paper from the same blueprint and silently
+   * throw away everything the teacher just reviewed.
+   */
+  async clonePaper(instituteId: string, sourcePaperId: string, dto: ClonePaperDto, actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
+
+    const source = await this.prisma.paper.findUnique({
+      where: { id: sourcePaperId },
+      include: { items: { orderBy: { order: 'asc' } } },
+    });
+    if (!source || source.instituteId !== instituteId) throw new NotFoundException('Paper not found.');
+    if (source.items.length === 0) throw new BadRequestException('This paper has no questions yet — nothing to publish.');
+
+    const clone = await this.prisma.$transaction(async (tx) => {
+      const p = await tx.paper.create({
+        data: {
+          instituteId,
+          blueprintId: source.blueprintId,
+          title: dto.title,
+          status: PaperStatus.DRAFT,
+          isPersonalized: source.isPersonalized,
+          targetBatchId: dto.targetBatchId,
+          createdByUserId: actor.id,
+          items: {
+            createMany: {
+              data: source.items.map((item) => ({
+                questionId: item.questionId,
+                marks: item.marks,
+                order: item.order,
+              })),
+            },
+          },
+        },
+      });
+
+      await tx.paperVersion.create({ data: { paperId: p.id, versionNo: 1, setLabel: 'Set A' } });
+
+      return p;
+    });
+
+    await this.writeAudit(instituteId, actor.id, AuditAction.CREATE, 'papers', clone.id, null, { title: dto.title, clonedFrom: sourcePaperId });
+
+    return clone;
+  }
+
+  // ── Item review (teacher rejects a generated question, before publishing) ──
+  //
+  // generatePaper() above picks the whole paper blind, in one shot, at the
+  // moment the teacher clicks Publish — there was no point between "the LLM
+  // picked these questions" and "students can see them" where a teacher could
+  // reject one. The two methods below are that point: swap one item for a
+  // fresh bank pick, or replace it with a question the teacher writes
+  // themselves — both while the paper is still DRAFT, i.e. before anything is
+  // published to students.
+
+  /** Shared setup + guards for both replacement paths below. */
+  private async loadEditableItem(instituteId: string, paperId: string, itemId: string, actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
+
+    const item = await this.prisma.paperItem.findUnique({
+      where: { id: itemId },
+      include: { paper: true, question: true },
+    });
+
+    if (!item || item.paperId !== paperId || item.paper.instituteId !== instituteId) {
+      throw new NotFoundException('Paper item not found.');
+    }
+
+    // A published paper is one students may already be sitting or have sat —
+    // swapping a question under them after the fact would silently invalidate
+    // whatever was graded or being attempted against the original. DRAFT is
+    // the only status this paper occupies before /exams/link-paper makes it
+    // live, so this blocks edits only once that boundary has been crossed.
+    if (item.paper.status !== PaperStatus.DRAFT) {
+      throw new BadRequestException('This paper has already been published and can no longer be edited.');
+    }
+
+    return item;
+  }
+
+  /**
+   * Regenerates one item: picks a different approved question with the same
+   * topic/type/difficulty as the one being replaced, excluding every question
+   * already used elsewhere in this paper (not just this item) so a swap can
+   * never introduce a duplicate.
+   */
+  async regeneratePaperItem(instituteId: string, paperId: string, itemId: string, actor: AuthenticatedUser) {
+    const item = await this.loadEditableItem(instituteId, paperId, itemId, actor);
+
+    const siblingQuestionIds = (
+      await this.prisma.paperItem.findMany({ where: { paperId }, select: { questionId: true } })
+    ).map((i) => i.questionId);
+
+    const candidates = await this.prisma.question.findMany({
+      where: {
+        instituteId,
+        topicId: item.question.topicId,
+        type: item.question.type,
+        difficulty: item.question.difficulty,
+        isApproved: true,
+        id: { notIn: siblingQuestionIds },
+      },
+      select: { id: true },
+    });
+
+    if (candidates.length === 0) {
+      throw new BadRequestException(
+        'No other approved question is available for this topic and difficulty yet — write your own instead, or add more to the bank.',
+      );
+    }
+
+    const [replacement] = sampleWithoutReplacement(candidates, 1);
+
+    const updated = await this.prisma.paperItem.update({
+      where: { id: itemId },
+      data: { questionId: replacement!.id },
+      include: { question: { include: { topic: { select: { name: true } } } } },
+    });
+
+    await this.writeAudit(instituteId, actor.id, AuditAction.UPDATE, 'paper_items', itemId, { questionId: item.questionId }, { questionId: replacement!.id, reason: 'regenerated' });
+
+    return updated;
+  }
+
+  /**
+   * Replaces one item with a question the teacher writes themselves.
+   *
+   * isApproved mirrors questions.service.ts's own create() rule exactly —
+   * TEACHER-authored questions are NOT auto-approved into the shared bank;
+   * only ADMIN/FOUNDER are. That governance is about the bank's general
+   * quality gate, not about this paper: the row is attached to THIS item via
+   * direct assignment below, not drawn through generatePaper's
+   * isApproved-only candidate query, so the teacher can use it in their own
+   * exam immediately either way — approval only decides whether it can later
+   * be picked up by someone else's blueprint too.
+   */
+  async replaceItemManually(
+    instituteId: string,
+    paperId: string,
+    itemId: string,
+    dto: ManualReplaceItemDto,
+    actor: AuthenticatedUser,
+  ) {
+    const item = await this.loadEditableItem(instituteId, paperId, itemId, actor);
+
+    const question = await this.prisma.question.create({
+      data: {
+        instituteId,
+        subjectId: item.question.subjectId,
+        chapterId: item.question.chapterId,
+        topicId: item.question.topicId,
+        type: dto.type ?? item.question.type,
+        difficulty: dto.difficulty ?? item.question.difficulty,
+        marks: dto.marks ?? item.marks,
+        content: dto.content,
+        options: dto.options as any,
+        solution: dto.solution,
+        isApproved: actor.role === UserRole.FOUNDER || actor.role === UserRole.ADMIN,
+        createdByUserId: actor.id,
+      },
+    });
+
+    const updated = await this.prisma.paperItem.update({
+      where: { id: itemId },
+      data: { questionId: question.id, marks: dto.marks ?? item.marks },
+      include: { question: { include: { topic: { select: { name: true } } } } },
+    });
+
+    await this.writeAudit(instituteId, actor.id, AuditAction.UPDATE, 'paper_items', itemId, { questionId: item.questionId }, { questionId: question.id, reason: 'manual_replacement' });
+
+    return updated;
   }
 
   // ── Private helpers ───────────────────────────────────────────────────────
