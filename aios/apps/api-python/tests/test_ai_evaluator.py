@@ -95,13 +95,22 @@ def mock_llm(result_dict):
 
 
 @pytest.mark.asyncio
-async def test_skips_when_the_question_has_no_reference_answer():
+async def test_evaluates_independently_when_no_reference_answer():
+    """Reference answer is now optional. When missing, LLM evaluates using independent knowledge."""
     response = make_response(make_question(solution=None))
     fake_db = make_db(response)
-    with patch("src.evaluation.ai_evaluator.db", fake_db):
+    llm_class = mock_llm({"suggestedMarks": 3.0, "confidence": 0.85, "suggestedCriterionScores": None})
+    with patch("src.evaluation.ai_evaluator.db", fake_db), \
+         patch("src.providers.factory.OpenAIAdapter", llm_class), \
+         patch("src.evaluation.ai_evaluator.get_settings", return_value=SETTINGS_WITH_KEY), \
+         patch("src.evaluation.ai_evaluator.resolve_evaluation_ai_model_id", AsyncMock(return_value="model-1")), \
+         patch("src.evaluation.ai_evaluator.resolve_active_evaluation_model_version", AsyncMock(return_value=SimpleNamespace(id="mv-1", versionLabel="gpt-4o"))), \
+         patch("src.evaluation.ai_evaluator.resolve_evaluation_prompt_version_id", AsyncMock(return_value="pv-1")):
         result = await evaluate_response("inst-1", "resp-1", "user-1")
-    assert result == {"skipped": True, "reason": "no_reference_answer"}
-    fake_db.airecommendation.create.assert_not_awaited()
+    # Should process successfully and include "no_reference_used" flag
+    assert result.get("skipped") is not True
+    assert "no_reference_used" in result.get("flags", [])
+    fake_db.airecommendation.create.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -484,7 +493,6 @@ def test_build_prompt_renders_the_registered_template_with_correctly_substituted
     assert "Reference answer:\nPlants convert light to chemical energy." in holistic
     assert "Student's answer:\nPlants use sunlight." in holistic
     assert "Return JSON." in holistic
-    assert "Score against these specific criteria" not in holistic  # no criteria -> no block
 
     rubric_scored = _build_prompt(
         template=PROMPT_TEMPLATE,
@@ -495,7 +503,8 @@ def test_build_prompt_renders_the_registered_template_with_correctly_substituted
         criteria=[SimpleNamespace(description="Mentions chlorophyll", maxMarks=2)],
         format_instructions="Return JSON.",
     )
-    assert "Score against these specific criteria:\n- Mentions chlorophyll (max 2 marks)" in rubric_scored
+    assert "Rubric criteria for evaluation:" in rubric_scored
+    assert "Mentions chlorophyll (max 2 marks)" in rubric_scored
 
 
 def test_build_prompt_safely_handles_curly_braces_in_free_text_fields():

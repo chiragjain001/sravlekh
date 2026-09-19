@@ -28,6 +28,7 @@ from src.config import get_settings
 from src.database import db
 from src.evaluation.ai_model_registry import (
     PROMPT_TEMPLATE,
+    PROMPT_TEMPLATE_V3,
     resolve_active_evaluation_model_version,
     resolve_evaluation_ai_model_id,
     resolve_evaluation_prompt_version_id,
@@ -97,9 +98,8 @@ async def evaluate_response(institute_id: str, response_id: str, requested_by_us
     if response.attempt.assessmentDelivery.assessment.instituteId != institute_id:
         return Skipped(reason="response_not_found").model_dump()
 
-    reference_answer = response.question.solution
-    if not reference_answer:
-        return Skipped(reason="no_reference_answer").model_dump()
+    reference_answer = response.question.solution or ""
+    # Reference answer is now optional — if not provided, LLM evaluates independently
 
     ocr_result = None
     if response.evidenceType == "PAGE_REGION":
@@ -140,13 +140,12 @@ async def evaluate_response(institute_id: str, response_id: str, requested_by_us
 
     result_model = AIEvaluationResult
     parser = PydanticOutputParser(pydantic_object=result_model)
-    # P1 B3: renders the SAME PROMPT_TEMPLATE constant resolve_evaluation_prompt_
-    # version_id persists as PromptVersion.promptTemplate below — not a separately
-    # authored string, so the audited template and the actual rendered prompt
-    # cannot drift apart the way they previously did (see ai_model_registry.py's
-    # PROMPT_TEMPLATE comment).
+
+    # Choose prompt template based on reference answer availability
+    template_to_use = PROMPT_TEMPLATE if reference_answer else PROMPT_TEMPLATE_V3
+
     prompt_text = _build_prompt(
-        template=PROMPT_TEMPLATE,
+        template=template_to_use,
         question_content=response.question.content,
         reference_answer=reference_answer,
         student_answer=student_answer_text,
@@ -255,6 +254,8 @@ async def evaluate_response(institute_id: str, response_id: str, requested_by_us
         flags.append("off_topic_suspected")
     if reference_answer and len(student_answer_text) > 3 * len(reference_answer):
         flags.append("answer_exceeds_expected_length")
+    if not reference_answer:
+        flags.append("no_reference_used")  # Tag when LLM evaluated independently
     if not flags:
         flags.append("none")
 
@@ -401,20 +402,23 @@ async def evaluate_delivery_batch(institute_id: str, assessment_delivery_id: str
 
 
 def _build_prompt(template, question_content, reference_answer, student_answer, max_marks, criteria, format_instructions) -> str:
-    """Renders `template` (PROMPT_TEMPLATE from the registry — see the call site
-    and ai_model_registry.py's comment) against these inputs. Not the template's
-    own source of truth: passing `template` explicitly, rather than importing it
-    here too, keeps this function a pure renderer and makes the dependency
-    visible at the call site instead of hidden inside this module."""
+    """Renders `template` (PROMPT_TEMPLATE or PROMPT_TEMPLATE_V3 from the registry)
+    against these inputs. Reference answer can be empty — for v3, LLM evaluates independently."""
     criteria_block = ""
     if criteria:
         lines = [f"- {c.description} (max {c.maxMarks} marks)" for c in criteria]
-        criteria_block = "\nScore against these specific criteria:\n" + "\n".join(lines)
+        criteria_block = "\nRubric criteria for evaluation:\n" + "\n".join(lines)
+
+    # For v3 template (no reference), include a note that LLM should solve independently
+    if reference_answer == "" and "Rubric criteria" not in template:
+        criteria_block = "\nYou are an expert evaluator. Grade based on your own knowledge.\nRubric criteria:\n" + (
+            "\n".join([f"- {c.description} (max {c.maxMarks} marks)" for c in criteria]) if criteria else ""
+        )
 
     return template.format(
         max_marks=max_marks,
         question_content=question_content,
-        reference_answer=reference_answer,
+        reference_answer=reference_answer or "[No reference provided — evaluate using your expert knowledge]",
         student_answer=student_answer,
         criteria_block=criteria_block,
         format_instructions=format_instructions,

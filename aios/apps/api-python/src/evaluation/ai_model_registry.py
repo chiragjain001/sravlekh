@@ -24,20 +24,26 @@ VERSION_LABEL = "gpt-4o"
 # not silently made to look correct in hindsight.
 PROMPT_VERSION_LABEL = "v2"
 
-# P1 B3: this is the actual template ai_evaluator.py's _build_prompt() renders —
-# imported and used directly there (not copied), so the two are structurally the
-# same text rather than two independently-maintained strings that drifted apart
-# from day one. {format_instructions}/{question_content}/etc. are `.format()`
-# placeholders; str.format() does one pass over THIS string's own braces and does
-# not re-scan substituted values, so format_instructions (which itself contains
-# literal JSON-schema braces) and free-text fields (question/answer/criteria,
-# which may contain arbitrary characters) are inserted literally, not re-parsed.
+# With reference answer (original)
 PROMPT_TEMPLATE = (
     "Question (worth {max_marks} marks):\n{question_content}\n\n"
     "Reference answer:\n{reference_answer}\n\n"
     "Student's answer:\n{student_answer}\n"
     "{criteria_block}\n\n"
     "Grade the student's answer against the reference answer. Be fair and consistent. "
+    "If the student's answer appears to have little relevance to the question, set offTopicSuspected=true.\n\n"
+    "{format_instructions}"
+)
+
+# Without reference answer (new v3 - LLM solves independently)
+PROMPT_TEMPLATE_V3 = (
+    "Question (worth {max_marks} marks):\n{question_content}\n\n"
+    "Student's answer:\n{student_answer}\n"
+    "{criteria_block}\n\n"
+    "You are an expert evaluator. Grade this student's answer based on your own knowledge and understanding of the subject. "
+    "First solve the question yourself, then evaluate the student's answer against your solution. "
+    "Grade fairly, awarding full marks only if the student's answer is correct/complete, "
+    "partial marks for partial correctness, and zero if incorrect. "
     "If the student's answer appears to have little relevance to the question, set offTopicSuspected=true.\n\n"
     "{format_instructions}"
 )
