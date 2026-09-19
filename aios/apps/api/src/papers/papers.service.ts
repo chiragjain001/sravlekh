@@ -173,7 +173,12 @@ export class PapersService {
     const paper = await this.prisma.paper.findUnique({
       where: { id: paperId },
       include: {
-        blueprint: true,
+        institute: { select: { id: true, name: true } },
+        // subject name pulled in alongside the blueprint — a printable question
+        // paper header needs "Subject: Physics", which nothing else on Paper
+        // already exposes (blueprint.name is the blueprint's own title, not the
+        // subject it was built for).
+        blueprint: { include: { subject: { select: { id: true, name: true } } } },
         items: {
           // Topic name included alongside the question, not just topicId — a
           // teacher reviewing the generated paper (the "Paper" tab on an exam's

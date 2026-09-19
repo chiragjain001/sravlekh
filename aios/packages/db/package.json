@@ -12,6 +12,7 @@
     "studio": "prisma studio",
     "seed": "tsx --env-file .env src/seed.ts",
     "seed:demo-school": "tsx --env-file .env src/seed-demo-school.ts",
+    "seed:ncert": "tsx --env-file .env src/seed-ncert.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

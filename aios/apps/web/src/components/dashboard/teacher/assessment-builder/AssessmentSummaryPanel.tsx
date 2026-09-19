@@ -65,6 +65,17 @@ export function AssessmentSummaryPanel({
   availableQuestionsCount,
   onOpenAiAssistant,
 }: AssessmentSummaryPanelProps) {
+  // Both meters are derived from chapterQuestionPlan (Step 4) and
+  // selectedTopics (Step 3) — before a teacher has touched either, totalQuestions
+  // is genuinely 0, and qualityScore's own "0 -> Needs Review" branch turned that
+  // into an alarming-looking red flag on the very first step, before there was
+  // anything to review. A plan that doesn't exist yet isn't a plan that failed
+  // review, so show a neutral "not planned yet" state instead of 0/100 until
+  // there's an actual plan to score.
+  const hasPlan = totalQuestions > 0;
+  const scoreLabel = !hasPlan ? 'Not Planned Yet' : qualityScore >= 80 ? 'Good' : qualityScore >= 60 ? 'Fair' : 'Needs Review';
+  const scoreLabelColor = !hasPlan ? 'text-slate-400' : qualityScore >= 60 ? 'text-emerald-600' : 'text-rose-600';
+
   return (
     <div className="w-[320px] bg-white border-l border-slate-200 p-5 flex flex-col justify-between flex-shrink-0 h-full overflow-y-auto space-y-5 custom-scrollbar">
       <div className="space-y-5">
@@ -89,24 +100,24 @@ export function AssessmentSummaryPanel({
                   fill="none"
                   d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
                 />
-                <path
-                  className="text-indigo-600 transition-all duration-500 ease-out"
-                  strokeDasharray={`${qualityScore}, 100`}
-                  strokeWidth="3.5"
-                  strokeLinecap="round"
-                  stroke="currentColor"
-                  fill="none"
-                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                />
+                {hasPlan && (
+                  <path
+                    className="text-indigo-600 transition-all duration-500 ease-out"
+                    strokeDasharray={`${qualityScore}, 100`}
+                    strokeWidth="3.5"
+                    strokeLinecap="round"
+                    stroke="currentColor"
+                    fill="none"
+                    d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                  />
+                )}
               </svg>
               <div className="absolute text-center">
-                <span className="text-[13px] font-extrabold text-slate-800 leading-none">{qualityScore}</span>
+                <span className="text-[13px] font-extrabold text-slate-800 leading-none">{hasPlan ? qualityScore : '—'}</span>
                 <span className="text-[9px] text-slate-400 font-semibold block">/100</span>
               </div>
             </div>
-            <span className="text-[10px] font-bold text-emerald-600 mt-1">
-              {qualityScore >= 80 ? 'Good' : qualityScore >= 60 ? 'Fair' : 'Needs Review'}
-            </span>
+            <span className={`text-[10px] font-bold mt-1 ${scoreLabelColor}`}>{scoreLabel}</span>
             <span className="text-[9px] text-slate-400 font-medium">Quality Score</span>
           </div>
 
@@ -116,9 +127,11 @@ export function AssessmentSummaryPanel({
               <Database className="w-4 h-4" />
             </div>
             <span className="text-[14px] font-extrabold text-slate-800 leading-tight">
-              {availableQuestionsCount.toLocaleString()}
+              {hasPlan ? availableQuestionsCount.toLocaleString() : '—'}
             </span>
-            <span className="text-[9.5px] text-slate-500 font-medium">Questions Available</span>
+            <span className="text-[9.5px] text-slate-500 font-medium">
+              {hasPlan ? 'Questions Available' : 'Plan questions to see this'}
+            </span>
           </div>
         </div>
 

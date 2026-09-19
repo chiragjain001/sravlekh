@@ -17,17 +17,20 @@ opposed to the older unrestricted "standard keys") authenticate the same way
 as any other API key on this client — `Client(api_key=...)` — so no separate
 code path is needed for the two key types.
 
-Only implements a single TextPart. ImagePart raises AdapterInvalidRequestError
-rather than silently degrading: Gemini has no equivalent of OpenAI's "pass any
-http(s) or data: URL" image input — it wants inline bytes or a File API/GCS
-reference — and OCR (the one call site that sends images) has no requirement
-today to move off OpenAIAdapter. Inventing that mapping now, unused, would be
-exactly the speculative complexity providers/types.py's docstring warns against.
+ImagePart is supported by fetching the image bytes here (http(s) URL or data:
+URL) and sending them inline — Gemini has no "pass any URL" input like OpenAI's.
+Fetch failures are normalized to AdapterInvalidRequestError WITHOUT the URL in the
+message: OCR image URLs are pre-signed storage URLs and the signature is a secret.
 """
 
+import base64
+import mimetypes
+from urllib.parse import urlparse
+
+import httpx
 from google.genai import Client
 from google.genai.errors import APIError, ClientError, ServerError
-from google.genai.types import GenerateContentConfig
+from google.genai.types import GenerateContentConfig, Part
 
 from src.providers.base import ModelProviderAdapter
 from src.providers.errors import (
@@ -36,7 +39,7 @@ from src.providers.errors import (
     AdapterProviderError,
     AdapterRateLimitError,
 )
-from src.providers.types import ContentPart, GenerateRequest, GenerateResult, TextPart
+from src.providers.types import ContentPart, GenerateRequest, GenerateResult, ImagePart, TextPart
 
 # HTTP statuses the Gemini API uses for auth/rate-limit failures within the
 # ClientError (4xx) family — everything else in that family is treated as a
@@ -45,35 +48,69 @@ from src.providers.types import ContentPart, GenerateRequest, GenerateResult, Te
 _AUTH_STATUS_CODES = frozenset({401, 403})
 _RATE_LIMIT_STATUS_CODE = 429
 
+IMAGE_FETCH_TIMEOUT_SECONDS = 15
+MAX_IMAGE_BYTES = 15 * 1024 * 1024
+
+
+async def _load_image(image_url: str) -> Part:
+    """Resolves an ImagePart URL to an inline Gemini Part. Never puts the URL in
+    an error message (see module docstring)."""
+    if image_url.startswith("data:"):
+        try:
+            header, _, payload = image_url.partition(",")
+            mime = header[len("data:"):].split(";")[0] or "image/png"
+            data = base64.b64decode(payload) if ";base64" in header else payload.encode()
+        except Exception as e:
+            raise AdapterInvalidRequestError("Malformed data: image URL.") from e
+        return Part.from_bytes(data=data, mime_type=mime)
+
+    if urlparse(image_url).scheme not in ("http", "https"):
+        raise AdapterInvalidRequestError("Image URL must be http(s) or a data: URL.")
+
+    try:
+        async with httpx.AsyncClient(timeout=IMAGE_FETCH_TIMEOUT_SECONDS, follow_redirects=True) as client:
+            resp = await client.get(image_url)
+            resp.raise_for_status()
+    except httpx.HTTPError as e:
+        raise AdapterInvalidRequestError(f"Could not fetch image ({type(e).__name__}).") from None
+    if len(resp.content) > MAX_IMAGE_BYTES:
+        raise AdapterInvalidRequestError("Image is too large.")
+
+    mime = resp.headers.get("content-type", "").split(";")[0].strip()
+    if not mime.startswith("image/"):
+        mime = mimetypes.guess_type(urlparse(image_url).path)[0] or "image/jpeg"
+    return Part.from_bytes(data=resp.content, mime_type=mime)
+
 
 class GeminiAdapter(ModelProviderAdapter):
     def __init__(self, api_key: str):
         self._client = Client(api_key=api_key)
 
-    def _to_contents(self, parts: list[ContentPart]) -> str:
+    async def _to_contents(self, parts: list[ContentPart]):
         """Mirrors OpenAIAdapter's single-TextPart path: blueprint_agent.py's
         one HumanMessage-equivalent is a plain string, not a part list."""
         if len(parts) == 1 and isinstance(parts[0], TextPart):
             return parts[0].text
-        if any(not isinstance(p, TextPart) for p in parts):
-            raise AdapterInvalidRequestError(
-                "GeminiAdapter does not yet support image content — see this file's "
-                "module docstring. OCR should keep using OpenAIAdapter."
-            )
-        # Multiple TextParts (not exercised by any current call site): join in
-        # order rather than reject, since there's nothing genuinely unsupported
-        # about it — just untested until a real caller needs it.
-        return "\n".join(p.text for p in parts)
+        contents = []
+        for p in parts:
+            if isinstance(p, TextPart):
+                contents.append(p.text)
+            elif isinstance(p, ImagePart):
+                contents.append(await _load_image(p.image_url))
+            else:
+                raise AdapterInvalidRequestError(f"Unsupported content part type: {type(p).__name__}")
+        return contents
 
     async def generate(self, request: GenerateRequest) -> GenerateResult:
         config_kwargs: dict[str, object] = {"temperature": request.temperature}
         if request.max_tokens is not None:
             config_kwargs["max_output_tokens"] = request.max_tokens
 
+        contents = await self._to_contents(request.content)
         try:
             response = await self._client.aio.models.generate_content(
                 model=request.model,
-                contents=self._to_contents(request.content),
+                contents=contents,
                 config=GenerateContentConfig(**config_kwargs),
             )
         except ClientError as e:

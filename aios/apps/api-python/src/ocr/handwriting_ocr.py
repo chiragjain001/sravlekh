@@ -22,7 +22,7 @@ from langchain_core.output_parsers import PydanticOutputParser
 from pydantic import BaseModel, Field
 
 from src.config import get_settings
-from src.providers.openai_adapter import OpenAIAdapter
+from src.providers.factory import select_adapter
 from src.providers.types import GenerateRequest, ImagePart, TextPart
 
 NO_EXTRACTION_BLOCK_TYPES = {"DIAGRAM_SKETCH", "TABLE"}
@@ -75,8 +75,7 @@ async def extract_text(image_url: str, block_type: str, model: str) -> OCRExtrac
         raise ValueError(f"Unknown OCR block type: {block_type}")
 
     settings = get_settings()
-    if not settings.OPENAI_API_KEY:
-        raise ValueError("OPENAI_API_KEY is not configured in the environment.")
+    adapter, model = select_adapter(settings, model)
 
     parser = PydanticOutputParser(pydantic_object=OCRExtractionResult)
 
@@ -94,6 +93,5 @@ async def extract_text(image_url: str, block_type: str, model: str) -> OCRExtrac
         temperature=OCR_TEMPERATURE,
     )
 
-    adapter = OpenAIAdapter(api_key=settings.OPENAI_API_KEY)
     generated = await adapter.generate(request)
     return parser.parse(generated.text)

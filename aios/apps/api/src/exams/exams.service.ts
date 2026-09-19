@@ -121,8 +121,12 @@ export class ExamsService {
     const exam = await this.prisma.exam.findUnique({
       where: { id: examId },
       include: {
-        batch: { select: { id: true, name: true } },
-        blueprint: { select: { id: true, name: true, totalMarks: true } },
+        institute: { select: { id: true, name: true } },
+        batch: { select: { id: true, name: true, classYear: true, section: true } },
+        // subject name included alongside the blueprint's own name — a printable
+        // question paper header needs "Subject: Physics", not the blueprint's
+        // internal title, and nothing else already exposes that link to a teacher.
+        blueprint: { select: { id: true, name: true, totalMarks: true, duration: true, instructions: true, subject: { select: { id: true, name: true } } } },
         papers: { select: { id: true, title: true, status: true } },
       },
     });

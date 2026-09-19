@@ -32,7 +32,7 @@ from src.evaluation.ai_model_registry import (
     resolve_evaluation_ai_model_id,
     resolve_evaluation_prompt_version_id,
 )
-from src.providers.openai_adapter import OpenAIAdapter
+from src.providers.factory import select_adapter
 from src.providers.types import GenerateRequest, TextPart
 
 logger = logging.getLogger(__name__)
@@ -135,8 +135,8 @@ async def evaluate_response(institute_id: str, response_id: str, requested_by_us
         rubric_version_criteria = []
 
     settings = get_settings()
-    if not settings.OPENAI_API_KEY:
-        raise ValueError("OPENAI_API_KEY is not configured in the environment.")
+    if not settings.OPENAI_API_KEY and not settings.GEMINI_API_KEY:
+        raise ValueError("Neither OPENAI_API_KEY nor GEMINI_API_KEY is configured in the environment.")
 
     result_model = AIEvaluationResult
     parser = PydanticOutputParser(pydantic_object=result_model)
@@ -169,9 +169,10 @@ async def evaluate_response(institute_id: str, response_id: str, requested_by_us
     # it (27 §8a). Registry resolution above is unchanged and still authoritative:
     # the adapter receives the already-resolved versionLabel as a plain string and
     # has no ability to choose a model itself.
+    adapter, model_label = select_adapter(settings, ai_model_version.versionLabel)
     generate_request = GenerateRequest(
         content=[TextPart(prompt_text)],
-        model=ai_model_version.versionLabel,
+        model=model_label,
         temperature=EVALUATION_TEMPERATURE,
         max_tokens=EVALUATION_MAX_TOKENS,
     )
@@ -185,7 +186,6 @@ async def evaluate_response(institute_id: str, response_id: str, requested_by_us
         "maxTokens": generate_request.max_tokens,
     }
 
-    adapter = OpenAIAdapter(api_key=settings.OPENAI_API_KEY)
     # 27 §6: 20s hard timeout, enforced here rather than only at the NestJS caller's
     # axios timeout — that one abandons the HTTP connection while this coroutine keeps
     # running, which is how a queue retry ends up racing a still-live first attempt.

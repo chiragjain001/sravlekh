@@ -122,7 +122,7 @@ async def test_c3_same_tenant_response_proceeds_normally():
     fake_db = make_db(response)
     llm_class = mock_llm({"suggestedMarks": 4.0, "confidence": 0.9, "suggestedCriterionScores": None})
     with patch("src.evaluation.ai_evaluator.db", fake_db), \
-         patch("src.evaluation.ai_evaluator.OpenAIAdapter", llm_class), \
+         patch("src.providers.factory.OpenAIAdapter", llm_class), \
          patch("src.evaluation.ai_evaluator.get_settings", return_value=SETTINGS_WITH_KEY), \
          patch("src.evaluation.ai_evaluator.resolve_evaluation_ai_model_id", AsyncMock(return_value="model-1")), \
          patch("src.evaluation.ai_evaluator.resolve_active_evaluation_model_version", AsyncMock(return_value=SimpleNamespace(id="mv-1", versionLabel="gpt-4o"))), \
@@ -158,7 +158,7 @@ async def test_successful_holistic_evaluation_creates_recommendation_and_ai_vers
     llm_class = mock_llm({"suggestedMarks": 4, "confidence": 0.9, "note": "Good answer", "offTopicSuspected": False})
 
     with patch("src.evaluation.ai_evaluator.db", fake_db), \
-         patch("src.evaluation.ai_evaluator.OpenAIAdapter", llm_class), \
+         patch("src.providers.factory.OpenAIAdapter", llm_class), \
          patch("src.evaluation.ai_evaluator.get_settings", return_value=SETTINGS_WITH_KEY), \
          patch("src.evaluation.ai_evaluator.resolve_evaluation_ai_model_id", AsyncMock(return_value="model-1")), \
          patch("src.evaluation.ai_evaluator.resolve_active_evaluation_model_version", AsyncMock(return_value=SimpleNamespace(id="mv-1", versionLabel="gpt-4o"))), \
@@ -189,7 +189,7 @@ async def test_flags_low_confidence_below_threshold():
     llm_class = mock_llm({"suggestedMarks": 2, "confidence": 0.4, "note": "Uncertain", "offTopicSuspected": False})
 
     with patch("src.evaluation.ai_evaluator.db", fake_db), \
-         patch("src.evaluation.ai_evaluator.OpenAIAdapter", llm_class), \
+         patch("src.providers.factory.OpenAIAdapter", llm_class), \
          patch("src.evaluation.ai_evaluator.get_settings", return_value=SETTINGS_WITH_KEY), \
          patch("src.evaluation.ai_evaluator.resolve_evaluation_ai_model_id", AsyncMock(return_value="model-1")), \
          patch("src.evaluation.ai_evaluator.resolve_active_evaluation_model_version", AsyncMock(return_value=SimpleNamespace(id="mv-1", versionLabel="gpt-4o"))), \
@@ -208,7 +208,7 @@ async def test_flags_ocr_low_confidence_from_the_underlying_ocr_result():
     llm_class = mock_llm({"suggestedMarks": 3, "confidence": 0.9, "note": "ok", "offTopicSuspected": False})
 
     with patch("src.evaluation.ai_evaluator.db", fake_db), \
-         patch("src.evaluation.ai_evaluator.OpenAIAdapter", llm_class), \
+         patch("src.providers.factory.OpenAIAdapter", llm_class), \
          patch("src.evaluation.ai_evaluator.get_settings", return_value=SETTINGS_WITH_KEY), \
          patch("src.evaluation.ai_evaluator.resolve_evaluation_ai_model_id", AsyncMock(return_value="model-1")), \
          patch("src.evaluation.ai_evaluator.resolve_active_evaluation_model_version", AsyncMock(return_value=SimpleNamespace(id="mv-1", versionLabel="gpt-4o"))), \
@@ -250,7 +250,7 @@ async def test_ocr_confidence_routing_boundary_matrix(confidence, should_skip, e
     llm_class = mock_llm({"suggestedMarks": 3, "confidence": 0.9, "note": "ok", "offTopicSuspected": False})
 
     with patch("src.evaluation.ai_evaluator.db", fake_db), \
-         patch("src.evaluation.ai_evaluator.OpenAIAdapter", llm_class), \
+         patch("src.providers.factory.OpenAIAdapter", llm_class), \
          patch("src.evaluation.ai_evaluator.get_settings", return_value=SETTINGS_WITH_KEY), \
          patch("src.evaluation.ai_evaluator.resolve_evaluation_ai_model_id", AsyncMock(return_value="model-1")), \
          patch("src.evaluation.ai_evaluator.resolve_active_evaluation_model_version", AsyncMock(return_value=SimpleNamespace(id="mv-1", versionLabel="gpt-4o"))), \
@@ -312,7 +312,7 @@ async def test_criterion_scores_are_persisted_and_total_is_capped_at_marks_avail
     })
 
     with patch("src.evaluation.ai_evaluator.db", fake_db), \
-         patch("src.evaluation.ai_evaluator.OpenAIAdapter", llm_class), \
+         patch("src.providers.factory.OpenAIAdapter", llm_class), \
          patch("src.evaluation.ai_evaluator.get_settings", return_value=SETTINGS_WITH_KEY), \
          patch("src.evaluation.ai_evaluator.resolve_evaluation_ai_model_id", AsyncMock(return_value="model-1")), \
          patch("src.evaluation.ai_evaluator.resolve_active_evaluation_model_version", AsyncMock(return_value=SimpleNamespace(id="mv-1", versionLabel="gpt-4o"))), \
@@ -332,7 +332,7 @@ async def test_no_active_model_configured_skips_to_human_queue_without_calling_t
     llm_class = mock_llm({"suggestedMarks": 4, "confidence": 0.9, "offTopicSuspected": False})
 
     with patch("src.evaluation.ai_evaluator.db", fake_db), \
-         patch("src.evaluation.ai_evaluator.OpenAIAdapter", llm_class), \
+         patch("src.providers.factory.OpenAIAdapter", llm_class), \
          patch("src.evaluation.ai_evaluator.get_settings", return_value=SETTINGS_WITH_KEY), \
          patch("src.evaluation.ai_evaluator.resolve_evaluation_ai_model_id", AsyncMock(return_value="model-1")), \
          patch("src.evaluation.ai_evaluator.resolve_active_evaluation_model_version", AsyncMock(return_value=None)), \
@@ -355,7 +355,7 @@ async def test_slow_llm_call_times_out_and_routes_to_the_human_queue():
     hanging_llm = MagicMock(return_value=SimpleNamespace(generate=AsyncMock(side_effect=TimeoutError())))
 
     with patch("src.evaluation.ai_evaluator.db", fake_db), \
-         patch("src.evaluation.ai_evaluator.OpenAIAdapter", hanging_llm), \
+         patch("src.providers.factory.OpenAIAdapter", hanging_llm), \
          patch("src.evaluation.ai_evaluator.get_settings", return_value=SETTINGS_WITH_KEY), \
          patch("src.evaluation.ai_evaluator.resolve_evaluation_ai_model_id", AsyncMock(return_value="model-1")), \
          patch("src.evaluation.ai_evaluator.resolve_active_evaluation_model_version", AsyncMock(return_value=SimpleNamespace(id="mv-1", versionLabel="gpt-4o"))), \
@@ -375,7 +375,7 @@ async def test_losing_a_concurrent_claim_discards_its_rows_instead_of_forking_th
     llm_class = mock_llm({"suggestedMarks": 4, "confidence": 0.9, "offTopicSuspected": False})
 
     with patch("src.evaluation.ai_evaluator.db", fake_db), \
-         patch("src.evaluation.ai_evaluator.OpenAIAdapter", llm_class), \
+         patch("src.providers.factory.OpenAIAdapter", llm_class), \
          patch("src.evaluation.ai_evaluator.get_settings", return_value=SETTINGS_WITH_KEY), \
          patch("src.evaluation.ai_evaluator.resolve_evaluation_ai_model_id", AsyncMock(return_value="model-1")), \
          patch("src.evaluation.ai_evaluator.resolve_active_evaluation_model_version", AsyncMock(return_value=SimpleNamespace(id="mv-1", versionLabel="gpt-4o"))), \
@@ -527,7 +527,7 @@ async def test_resolved_prompt_template_matches_what_is_actually_sent_to_the_llm
     chat_openai = mock_llm({"suggestedMarks": 4, "confidence": 0.9, "note": "Good answer", "offTopicSuspected": False})
 
     with patch("src.evaluation.ai_evaluator.db", fake_db), \
-         patch("src.evaluation.ai_evaluator.OpenAIAdapter", chat_openai), \
+         patch("src.providers.factory.OpenAIAdapter", chat_openai), \
          patch("src.evaluation.ai_evaluator.get_settings", return_value=SETTINGS_WITH_KEY), \
          patch("src.evaluation.ai_evaluator.resolve_evaluation_ai_model_id", AsyncMock(return_value="model-1")), \
          patch("src.evaluation.ai_evaluator.resolve_active_evaluation_model_version", AsyncMock(return_value=SimpleNamespace(id="mv-1", versionLabel="gpt-4o"))), \
@@ -569,7 +569,7 @@ async def test_persisted_audit_metadata_is_consistent_with_the_actual_execution(
     chat_openai = mock_llm({"suggestedMarks": 4, "confidence": 0.9, "note": "Good answer", "offTopicSuspected": False})
 
     with patch("src.evaluation.ai_evaluator.db", fake_db), \
-         patch("src.evaluation.ai_evaluator.OpenAIAdapter", chat_openai), \
+         patch("src.providers.factory.OpenAIAdapter", chat_openai), \
          patch("src.evaluation.ai_evaluator.get_settings", return_value=SETTINGS_WITH_KEY), \
          patch("src.evaluation.ai_evaluator.resolve_evaluation_ai_model_id", AsyncMock(return_value="model-1")), \
          patch("src.evaluation.ai_evaluator.resolve_active_evaluation_model_version", AsyncMock(return_value=SimpleNamespace(id="mv-1", versionLabel="gpt-4o"))), \
@@ -604,7 +604,7 @@ async def test_configured_max_tokens_is_actually_enforced_in_the_provider_reques
     adapter_class = mock_llm({"suggestedMarks": 4, "confidence": 0.9, "offTopicSuspected": False})
 
     with patch("src.evaluation.ai_evaluator.db", fake_db), \
-         patch("src.evaluation.ai_evaluator.OpenAIAdapter", adapter_class), \
+         patch("src.providers.factory.OpenAIAdapter", adapter_class), \
          patch("src.evaluation.ai_evaluator.get_settings", return_value=SETTINGS_WITH_KEY), \
          patch("src.evaluation.ai_evaluator.resolve_evaluation_ai_model_id", AsyncMock(return_value="model-1")), \
          patch("src.evaluation.ai_evaluator.resolve_active_evaluation_model_version", AsyncMock(return_value=SimpleNamespace(id="mv-1", versionLabel="gpt-4o"))), \
@@ -625,7 +625,7 @@ async def test_no_evaluation_model_parameter_silently_diverges_from_the_actual_r
     adapter_class = mock_llm({"suggestedMarks": 4, "confidence": 0.9, "offTopicSuspected": False})
 
     with patch("src.evaluation.ai_evaluator.db", fake_db), \
-         patch("src.evaluation.ai_evaluator.OpenAIAdapter", adapter_class), \
+         patch("src.providers.factory.OpenAIAdapter", adapter_class), \
          patch("src.evaluation.ai_evaluator.get_settings", return_value=SETTINGS_WITH_KEY), \
          patch("src.evaluation.ai_evaluator.resolve_evaluation_ai_model_id", AsyncMock(return_value="model-1")), \
          patch("src.evaluation.ai_evaluator.resolve_active_evaluation_model_version", AsyncMock(return_value=SimpleNamespace(id="mv-1", versionLabel="gpt-4o-registry-selected"))), \
@@ -659,7 +659,7 @@ async def test_prompt_resolution_failure_propagates_rather_than_falling_back_to_
     chat_openai = mock_llm({"suggestedMarks": 4, "confidence": 0.9, "note": "ok", "offTopicSuspected": False})
 
     with patch("src.evaluation.ai_evaluator.db", fake_db), \
-         patch("src.evaluation.ai_evaluator.OpenAIAdapter", chat_openai), \
+         patch("src.providers.factory.OpenAIAdapter", chat_openai), \
          patch("src.evaluation.ai_evaluator.get_settings", return_value=SETTINGS_WITH_KEY), \
          patch("src.evaluation.ai_evaluator.resolve_evaluation_ai_model_id", AsyncMock(return_value="model-1")), \
          patch("src.evaluation.ai_evaluator.resolve_active_evaluation_model_version", AsyncMock(return_value=SimpleNamespace(id="mv-1", versionLabel="gpt-4o"))), \
@@ -728,7 +728,7 @@ async def test_unparseable_model_output_routes_to_human_queue_instead_of_raising
     )
 
     with patch("src.evaluation.ai_evaluator.db", fake_db), \
-         patch("src.evaluation.ai_evaluator.OpenAIAdapter", bad_adapter), \
+         patch("src.providers.factory.OpenAIAdapter", bad_adapter), \
          patch("src.evaluation.ai_evaluator.get_settings", return_value=SETTINGS_WITH_KEY), \
          patch("src.evaluation.ai_evaluator.resolve_evaluation_ai_model_id", AsyncMock(return_value="model-1")), \
          patch("src.evaluation.ai_evaluator.resolve_active_evaluation_model_version", AsyncMock(return_value=SimpleNamespace(id="mv-1", versionLabel="gpt-4o"))), \
@@ -769,7 +769,7 @@ async def test_truncated_completion_is_discarded_rather_than_graded_on_partial_o
     )
 
     with patch("src.evaluation.ai_evaluator.db", fake_db), \
-         patch("src.evaluation.ai_evaluator.OpenAIAdapter", truncating_adapter), \
+         patch("src.providers.factory.OpenAIAdapter", truncating_adapter), \
          patch("src.evaluation.ai_evaluator.get_settings", return_value=SETTINGS_WITH_KEY), \
          patch("src.evaluation.ai_evaluator.resolve_evaluation_ai_model_id", AsyncMock(return_value="model-1")), \
          patch("src.evaluation.ai_evaluator.resolve_active_evaluation_model_version", AsyncMock(return_value=SimpleNamespace(id="mv-1", versionLabel="gpt-4o"))), \

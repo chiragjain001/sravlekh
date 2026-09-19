@@ -135,12 +135,40 @@ export function TeacherPaperBuilder() {
     setSelectedSubjectId(null);
   }, [initialContext.subject]);
 
+  // Opening Paper Builder from the sidebar carries no subject context, so
+  // initialContext.subject is the "General" placeholder — which matches no
+  // real subject, leaving the syllabus empty and the wizard stuck at Step 3.
+  // Fall back to the subjects that actually have a syllabus: auto-pick when
+  // there is exactly one, otherwise let the teacher choose (picker in Step 3).
+  const subjectsWithSyllabus = React.useMemo(
+    () => subjects.filter((s: any) => (s.chapters ?? []).length > 0),
+    [subjects],
+  );
+  const contextSubject = React.useMemo(
+    () => subjects.find((s: any) => s.name.toLowerCase() === initialContext.subject.toLowerCase()) ?? null,
+    [subjects, initialContext.subject],
+  );
+
   const activeSubject = React.useMemo(() => {
     if (selectedSubjectId) {
       return subjects.find((s: any) => s.id === selectedSubjectId) ?? null;
     }
-    return subjects.find((s: any) => s.name.toLowerCase() === initialContext.subject.toLowerCase()) ?? null;
-  }, [subjects, selectedSubjectId, initialContext.subject]);
+    if (contextSubject) return contextSubject;
+    return subjectsWithSyllabus.length === 1 ? subjectsWithSyllabus[0] : null;
+  }, [subjects, selectedSubjectId, contextSubject, subjectsWithSyllabus]);
+
+  // Keep the displayed subject/exam/title in step with the resolved subject
+  // when it came from the fallback rather than from navigation context.
+  React.useEffect(() => {
+    if (!activeSubject || activeSubject.name === assessmentState.subject) return;
+    setAssessmentState((prev) => ({
+      ...prev,
+      subject: activeSubject.name,
+      exam: `${activeSubject.name} Assessment`,
+      title: prev.title.startsWith('General') ? prev.title.replace('General', activeSubject.name) : prev.title,
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSubject, initialContext]);
 
   const chaptersTree: SyllabusChapter[] = React.useMemo(() => {
     if (!activeSubject) return [];
@@ -227,6 +255,13 @@ export function TeacherPaperBuilder() {
 
   const updateState = (updates: Partial<AssessmentState>) => {
     setAssessmentState((prev) => ({ ...prev, ...updates }));
+  };
+
+  // A different subject has a different syllabus, so any chapter/topic picks
+  // and the question plan built against the old one must be cleared.
+  const changeSubject = (id: string) => {
+    updateState({ selectedChapters: [], selectedTopics: [], chapterQuestionPlan: {} });
+    setSelectedSubjectId(id || null);
   };
 
   const showToast = (msg: string) => {
@@ -569,21 +604,31 @@ export function TeacherPaperBuilder() {
       <div className="bg-white border-b border-slate-200 px-6 py-3 flex items-center justify-between flex-shrink-0">
         {/* Left: Dropdown selectors for Context */}
         <div className="flex items-center gap-3 text-[12.5px] font-bold">
-          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50/80 text-indigo-900 border border-indigo-200/80 rounded-xl cursor-pointer hover:bg-indigo-100 transition-colors">
+          {/* Exam label is derived from the subject, so it is display-only. */}
+          <div className="flex items-center px-3 py-1.5 bg-indigo-50/80 text-indigo-900 border border-indigo-200/80 rounded-xl">
             <span>{assessmentState.exam}</span>
-            <ChevronDown className="w-3.5 h-3.5 text-indigo-600" />
           </div>
 
-          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50/80 text-indigo-900 border border-indigo-200/80 rounded-xl cursor-pointer hover:bg-indigo-100 transition-colors">
-            <span>{assessmentState.subject}</span>
-            <ChevronDown className="w-3.5 h-3.5 text-indigo-600" />
+          {/* Subject: a real selector — changes the syllabus the wizard works on. */}
+          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50/80 text-indigo-900 border border-indigo-200/80 rounded-xl hover:bg-indigo-100 transition-colors">
+            <select
+              aria-label="Subject"
+              value={activeSubject?.id ?? ''}
+              onChange={(e) => changeSubject(e.target.value)}
+              className="bg-transparent font-bold text-[12.5px] outline-none cursor-pointer max-w-[140px]"
+            >
+              {!activeSubject && <option value="">{assessmentState.subject}</option>}
+              {subjectsWithSyllabus.map((s: any) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
           </div>
 
-          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 border border-slate-200 rounded-xl cursor-pointer hover:bg-slate-200 transition-colors">
-            <span className="text-slate-600 font-normal">
-              🏫 {batchId ? `Batch ${batchId}` : classId ? `Class ${classId}` : 'Ahmedabad Branch'}
+          {/* Batches picked in Step 1 — display-only here. */}
+          <div className="flex items-center px-3 py-1.5 bg-slate-100 border border-slate-200 rounded-xl">
+            <span className="text-slate-600 font-normal truncate max-w-[220px]">
+              🏫 {assessmentState.batches.length > 0 ? assessmentState.batches.join(', ') : 'No batch selected'}
             </span>
-            <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
           </div>
         </div>
 
@@ -735,6 +780,24 @@ export function TeacherPaperBuilder() {
               onNext={() => handleNextStep(3)}
               onPrev={() => setCurrentStep(1)}
             />
+          )}
+
+          {currentStep === 3 && !contextSubject && subjectsWithSyllabus.length > 1 && (
+            <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-2xl">
+              <label className="block text-[12.5px] font-bold text-amber-900 mb-2">
+                Which subject is this paper for?
+              </label>
+              <select
+                value={activeSubject?.id ?? ''}
+                onChange={(e) => changeSubject(e.target.value)}
+                className="w-full p-2.5 bg-white border border-amber-300 rounded-xl text-[13px] font-semibold text-slate-800"
+              >
+                <option value="">Select a subject…</option>
+                {subjectsWithSyllabus.map((s: any) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </div>
           )}
 
           {currentStep === 3 && (

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import {
   ClipboardList, Plus, Search, Calendar, ChevronRight, ChevronLeft,
-  BarChart2, AlertTriangle, CheckCircle2, Users, Target, Zap, BookOpen, FileText
+  BarChart2, AlertTriangle, CheckCircle2, Users, Target, Zap, BookOpen, FileText, Printer
 } from 'lucide-react';
 import { useExams, useExam, usePaper, useBatches, useExamResults } from '@/hooks/useApi';
 import { useDashboardStore } from '@/store/dashboard-store';
@@ -12,6 +12,24 @@ import { ExamGradingPanel } from './ExamGradingPanel';
 
 type View = 'list' | 'analysis';
 type DetailTab = 'analysis' | 'students' | 'paper';
+
+// The order a real school/institute paper groups question types in — MCQs and
+// objective types first, subjective (Short/Long Answer) last, matching how
+// students actually expect to work through a physical paper. Only types that
+// have at least one question in THIS paper get a section rendered.
+const SECTION_ORDER: { type: string; label: string }[] = [
+  { type: 'MCQ', label: 'Multiple Choice Questions' },
+  { type: 'MULTI_CORRECT', label: 'Multiple Correct Answer Type' },
+  { type: 'NUMERICAL', label: 'Numerical Answer Type Questions' },
+  { type: 'MATCH_THE_FOLLOWING', label: 'Match the Following' },
+  { type: 'PASSAGE_BASED', label: 'Passage Based Questions' },
+  { type: 'SHORT_ANSWER', label: 'Short Answer Type Questions' },
+  { type: 'LONG_ANSWER', label: 'Long Answer Type Questions' },
+];
+
+function sectionLetter(index: number): string {
+  return String.fromCharCode(65 + index);
+}
 
 export function TeacherTestsExams() {
   const { setTeacherNav, setTeacherCtx } = useDashboardStore();
@@ -172,7 +190,14 @@ export function TeacherTestsExams() {
         {/* Tab Content — Paper (the questions actually published, reviewable
             after the fact — Paper Builder's own Preview step was previously
             the ONLY place a teacher could see this, and only once, before
-            publishing) */}
+            publishing).
+            Formatted as a real school/institute question paper — institute
+            name, exam/subject/class header, marks & time, then questions
+            grouped into sections by type (MCQs first, subjective last) — not
+            a flat internal list. Difficulty/topic tags stay visible on screen
+            (useful for the teacher reviewing it) but are hidden on Print via
+            `print:hidden`, since a paper handed to students never shows the
+            answer key metadata. */}
         {detailTab === 'paper' && (
           papers.length === 0 ? (
             <div className="p-8 text-center bg-slate-50 border border-slate-200 rounded-2xl text-slate-400">
@@ -181,23 +206,33 @@ export function TeacherTestsExams() {
             </div>
           ) : (
             <div className="space-y-4">
-              {papers.length > 1 && (
-                <div className="flex flex-wrap gap-2">
-                  {papers.map((p) => (
-                    <button
-                      key={p.id}
-                      onClick={() => setSelectedPaperId(p.id)}
-                      className={`px-3.5 py-1.5 text-[12px] font-bold rounded-lg border transition-colors ${
-                        activePaperId === p.id
-                          ? 'bg-indigo-600 border-indigo-600 text-white'
-                          : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-300'
-                      }`}
-                    >
-                      {p.title}
-                    </button>
-                  ))}
-                </div>
-              )}
+              <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
+                {papers.length > 1 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {papers.map((p) => (
+                      <button
+                        key={p.id}
+                        onClick={() => setSelectedPaperId(p.id)}
+                        className={`px-3.5 py-1.5 text-[12px] font-bold rounded-lg border transition-colors ${
+                          activePaperId === p.id
+                            ? 'bg-indigo-600 border-indigo-600 text-white'
+                            : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-300'
+                        }`}
+                      >
+                        {p.title}
+                      </button>
+                    ))}
+                  </div>
+                ) : <div />}
+                {paperDetail && (
+                  <button
+                    onClick={() => window.print()}
+                    className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white text-[12.5px] font-bold rounded-xl hover:bg-slate-800 transition-colors"
+                  >
+                    <Printer className="w-3.5 h-3.5" /> Print / Export Paper
+                  </button>
+                )}
+              </div>
 
               {paperLoading ? (
                 <div className="p-8 text-center text-slate-400 text-[13px]">Loading paper…</div>
@@ -207,33 +242,7 @@ export function TeacherTestsExams() {
                   <p className="text-[13px]">Couldn't load this paper's questions.</p>
                 </div>
               ) : (
-                <div className="flex flex-col gap-3">
-                  {paperDetail.items.map((item: any, i: number) => (
-                    <div key={item.id} className="bg-white border border-slate-100 rounded-2xl p-4 shadow-sm">
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex items-start gap-3">
-                          <span className="w-6 h-6 rounded-lg bg-slate-100 text-slate-500 text-[11px] font-black flex items-center justify-center flex-shrink-0 mt-0.5">
-                            {i + 1}
-                          </span>
-                          <div>
-                            <div className="flex items-center gap-2 mb-1">
-                              <span className={`text-[9px] font-bold px-2 py-0.5 rounded capitalize ${
-                                item.question.difficulty === 'HARD' ? 'bg-rose-100 text-rose-700' :
-                                item.question.difficulty === 'MEDIUM' ? 'bg-amber-100 text-amber-700' :
-                                'bg-emerald-100 text-emerald-700'
-                              }`}>{item.question.difficulty}</span>
-                              {item.question.topic?.name && (
-                                <span className="text-[11px] font-semibold text-slate-500">{item.question.topic.name}</span>
-                              )}
-                            </div>
-                            <p className="text-[13.5px] text-slate-800 leading-snug">{item.question.content}</p>
-                          </div>
-                        </div>
-                        <span className="text-[12px] font-bold text-slate-600 whitespace-nowrap flex-shrink-0">{item.marks} Marks</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                <PrintableQuestionPaper exam={examDetail} paper={paperDetail} batchLabel={batchLabel} />
               )}
             </div>
           )
@@ -417,6 +426,115 @@ export function TeacherTestsExams() {
             )}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The actual question paper, laid out the way a school/institute physically
+ * hands one out — institute name, exam/subject/class header, time & max
+ * marks, then questions grouped into sections by type (objective first,
+ * subjective last) with continuous numbering — instead of a flat internal
+ * list of question cards. Difficulty and topic tags stay visible for the
+ * teacher's own review but carry `print:hidden` (Tailwind's built-in print
+ * variant): a paper actually handed to students never shows that metadata,
+ * so it drops out the moment "Print / Export Paper" is used.
+ */
+function PrintableQuestionPaper({ exam, paper, batchLabel }: { exam: any; paper: any; batchLabel: string }) {
+  const instituteName = paper?.institute?.name || exam?.institute?.name || 'Institute';
+  const subjectName = paper?.blueprint?.subject?.name || exam?.blueprint?.subject?.name || 'General';
+  const totalMarks = paper?.blueprint?.totalMarks ?? paper.items.reduce((s: number, i: any) => s + (i.marks || 0), 0);
+  const duration = exam?.durationMinutes ?? paper?.blueprint?.duration;
+  const dateLabel = exam?.scheduledDate ? new Date(exam.scheduledDate).toLocaleDateString() : 'Not scheduled';
+  const instructions: string | undefined = paper?.blueprint?.instructions;
+
+  const sections = SECTION_ORDER
+    .map((section) => ({
+      ...section,
+      items: paper.items.filter((item: any) => item.question.type === section.type),
+    }))
+    .filter((section) => section.items.length > 0);
+
+  let counter = 0;
+
+  return (
+    <div
+      id="printable-question-paper"
+      className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-10 shadow-sm print:shadow-none print:border-none print:rounded-none print:p-0"
+    >
+      <style>{`
+        @media print {
+          body * { visibility: hidden !important; }
+          #printable-question-paper, #printable-question-paper * { visibility: visible !important; }
+          #printable-question-paper { position: absolute; inset: 0; width: 100%; padding: 28px; }
+        }
+      `}</style>
+
+      {/* Header */}
+      <div className="text-center border-b-2 border-slate-800 pb-3 mb-4">
+        <h2 className="text-[19px] sm:text-[21px] font-black uppercase tracking-wide text-slate-900">{instituteName}</h2>
+      </div>
+      <div className="text-center mb-4">
+        <h3 className="text-[15px] sm:text-[16px] font-bold text-slate-800">{exam?.title ?? paper.title}</h3>
+        <p className="text-[12.5px] font-semibold text-slate-600 mt-0.5">
+          Subject: {subjectName}{batchLabel ? ` · Class/Batch: ${batchLabel}` : ''}
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[12.5px] font-bold text-slate-700 border-y border-slate-300 py-2 mb-4">
+        <span>Time: {duration ? `${duration} Minutes` : 'N/A'}</span>
+        <span>Date: {dateLabel}</span>
+        <span>Maximum Marks: {totalMarks}</span>
+      </div>
+      {instructions && (
+        <div className="mb-5 text-[12px] text-slate-600 bg-slate-50 border border-slate-100 rounded-xl p-3 print:bg-white print:border-slate-300">
+          <span className="font-bold text-slate-700">General Instructions: </span>{instructions}
+        </div>
+      )}
+
+      {/* Sections */}
+      <div className="space-y-6">
+        {sections.map((section, sIdx) => {
+          const uniformMarks = section.items.every((i: any) => i.marks === section.items[0].marks)
+            ? section.items[0].marks
+            : null;
+          return (
+            <div key={section.type}>
+              <h4 className="text-[12.5px] font-black text-slate-800 uppercase tracking-wide border-b border-slate-300 pb-1.5 mb-3">
+                Section {sectionLetter(sIdx)} — {section.label}
+                {uniformMarks != null && (
+                  <span className="font-semibold normal-case text-slate-500"> ({uniformMarks} Mark{uniformMarks === 1 ? '' : 's'} each)</span>
+                )}
+              </h4>
+              <div className="space-y-3.5">
+                {section.items.map((item: any) => {
+                  counter += 1;
+                  return (
+                    <div key={item.id} className="flex items-start justify-between gap-4">
+                      <div className="flex items-start gap-2.5 flex-1">
+                        <span className="font-bold text-slate-800 text-[13px] flex-shrink-0">{counter}.</span>
+                        <div className="flex-1">
+                          <p className="text-[13.5px] text-slate-800 leading-snug">{item.question.content}</p>
+                          <div className="print:hidden flex items-center gap-2 mt-1">
+                            <span className={`text-[9px] font-bold px-2 py-0.5 rounded capitalize ${
+                              item.question.difficulty === 'HARD' ? 'bg-rose-100 text-rose-700' :
+                              item.question.difficulty === 'MEDIUM' ? 'bg-amber-100 text-amber-700' :
+                              'bg-emerald-100 text-emerald-700'
+                            }`}>{item.question.difficulty}</span>
+                            {item.question.topic?.name && (
+                              <span className="text-[10.5px] font-medium text-slate-400">{item.question.topic.name}</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <span className="text-[12px] font-bold text-slate-600 whitespace-nowrap flex-shrink-0">[{item.marks}]</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

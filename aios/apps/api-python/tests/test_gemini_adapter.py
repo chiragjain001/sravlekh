@@ -38,18 +38,70 @@ async def test_a_single_text_part_is_sent_as_a_plain_string():
 
 
 @pytest.mark.asyncio
-async def test_image_content_is_rejected_rather_than_silently_dropped():
-    """No arbitrary-URL image support yet (see the adapter's module docstring)
-    — must fail loudly, not send text-only and pretend the image was seen."""
+async def test_data_url_image_is_sent_inline_as_bytes():
+    captured = []
+    png = "data:image/png;base64,aGVsbG8="
+    with patch("src.providers.gemini_adapter.Client", fake_client("ok", captured)):
+        adapter = GeminiAdapter(api_key="test-key")
+        await adapter.generate(
+            GenerateRequest(content=[TextPart("Transcribe."), ImagePart(png)], model="gemini-3.6-flash", temperature=0.0)
+        )
+
+    text, image = captured[0]["contents"]
+    assert text == "Transcribe."
+    assert image.inline_data.data == b"hello"
+    assert image.inline_data.mime_type == "image/png"
+
+
+@pytest.mark.asyncio
+async def test_http_image_is_fetched_and_sent_inline():
+    captured = []
+    response = SimpleNamespace(content=b"PNGDATA", headers={"content-type": "image/png"}, raise_for_status=lambda: None)
+    http_client = MagicMock()
+    http_client.__aenter__ = AsyncMock(return_value=SimpleNamespace(get=AsyncMock(return_value=response)))
+    http_client.__aexit__ = AsyncMock(return_value=False)
+    with patch("src.providers.gemini_adapter.Client", fake_client("ok", captured)),          patch("src.providers.gemini_adapter.httpx.AsyncClient", return_value=http_client):
+        adapter = GeminiAdapter(api_key="test-key")
+        await adapter.generate(
+            GenerateRequest(
+                content=[TextPart("Transcribe."), ImagePart("https://example.test/page.png")],
+                model="gemini-3.6-flash",
+                temperature=0.0,
+            )
+        )
+
+    assert captured[0]["contents"][1].inline_data.data == b"PNGDATA"
+
+
+@pytest.mark.asyncio
+async def test_image_fetch_failure_is_normalized_and_never_leaks_the_signed_url():
+    import httpx
+
+    http_client = MagicMock()
+    http_client.__aenter__ = AsyncMock(
+        return_value=SimpleNamespace(get=AsyncMock(side_effect=httpx.ConnectError("boom")))
+    )
+    http_client.__aexit__ = AsyncMock(return_value=False)
+    with patch("src.providers.gemini_adapter.Client", fake_client()),          patch("src.providers.gemini_adapter.httpx.AsyncClient", return_value=http_client):
+        adapter = GeminiAdapter(api_key="test-key")
+        with pytest.raises(AdapterInvalidRequestError) as exc:
+            await adapter.generate(
+                GenerateRequest(
+                    content=[ImagePart("https://bucket.test/p.png?X-Amz-Signature=SECRET")],
+                    model="gemini-3.6-flash",
+                    temperature=0.0,
+                )
+            )
+    assert "SECRET" not in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_non_http_image_scheme_is_rejected():
     with patch("src.providers.gemini_adapter.Client", fake_client()):
         adapter = GeminiAdapter(api_key="test-key")
         with pytest.raises(AdapterInvalidRequestError):
             await adapter.generate(
-                GenerateRequest(
-                    content=[TextPart("Transcribe this."), ImagePart("https://example.test/page.png")],
-                    model="gemini-3.6-flash",
-                    temperature=0.0,
-                )
+                GenerateRequest(content=[ImagePart("file:///etc/passwd")], model="gemini-3.6-flash", temperature=0.0)
             )
 
 

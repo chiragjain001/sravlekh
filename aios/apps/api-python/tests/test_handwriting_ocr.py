@@ -52,7 +52,7 @@ async def test_unknown_block_type_raises():
 
 @pytest.mark.asyncio
 async def test_missing_api_key_raises_for_a_real_block_type():
-    settings = Settings(DATABASE_URL="postgresql://x", JWT_SECRET="x" * 32, OPENAI_API_KEY="")
+    settings = Settings(DATABASE_URL="postgresql://x", JWT_SECRET="x" * 32, OPENAI_API_KEY="", GEMINI_API_KEY="")
     with patch("src.ocr.handwriting_ocr.get_settings", return_value=settings):
         with pytest.raises(ValueError, match="OPENAI_API_KEY"):
             await extract_text("https://example.com/img.png", "HANDWRITTEN_TEXT", REGISTRY_MODEL)
@@ -65,7 +65,7 @@ async def test_missing_api_key_raises_for_a_real_block_type():
 async def test_multimodal_request_shape_exactly_one_text_part_then_one_image_part():
     adapter_class = mock_adapter({"extractedText": "hello", "confidence": 0.9})
     with patch("src.ocr.handwriting_ocr.get_settings", return_value=SETTINGS_WITH_KEY), \
-         patch("src.ocr.handwriting_ocr.OpenAIAdapter", adapter_class):
+         patch("src.providers.factory.OpenAIAdapter", adapter_class):
         await extract_text("https://example.com/page.png", "HANDWRITTEN_TEXT", REGISTRY_MODEL)
 
     request = adapter_class.return_value.generate.await_args.args[0]
@@ -83,7 +83,7 @@ async def test_multimodal_request_shape_exactly_one_text_part_then_one_image_par
 async def test_request_carries_the_registry_model_correct_temperature_and_no_max_tokens():
     adapter_class = mock_adapter({"extractedText": "hello", "confidence": 0.9})
     with patch("src.ocr.handwriting_ocr.get_settings", return_value=SETTINGS_WITH_KEY), \
-         patch("src.ocr.handwriting_ocr.OpenAIAdapter", adapter_class):
+         patch("src.providers.factory.OpenAIAdapter", adapter_class):
         await extract_text("https://example.com/page.png", "HANDWRITTEN_TEXT", REGISTRY_MODEL)
 
     request = adapter_class.return_value.generate.await_args.args[0]
@@ -102,7 +102,7 @@ async def test_prompt_text_still_combines_the_block_type_instruction_and_format_
     "<block prompt>\\n\\n<format instructions>" string as before the migration."""
     adapter_class = mock_adapter({"extractedText": "x", "confidence": 0.9})
     with patch("src.ocr.handwriting_ocr.get_settings", return_value=SETTINGS_WITH_KEY), \
-         patch("src.ocr.handwriting_ocr.OpenAIAdapter", adapter_class):
+         patch("src.providers.factory.OpenAIAdapter", adapter_class):
         await extract_text("https://example.com/page.png", "HANDWRITTEN_TEXT", REGISTRY_MODEL)
 
     text = adapter_class.return_value.generate.await_args.args[0].content[0].text
@@ -120,7 +120,7 @@ async def test_each_block_type_sends_its_own_instruction_text():
     ]:
         adapter_class = mock_adapter({"extractedText": "x", "confidence": 0.9})
         with patch("src.ocr.handwriting_ocr.get_settings", return_value=SETTINGS_WITH_KEY), \
-             patch("src.ocr.handwriting_ocr.OpenAIAdapter", adapter_class):
+             patch("src.providers.factory.OpenAIAdapter", adapter_class):
             await extract_text("https://example.com/page.png", block_type, REGISTRY_MODEL)
 
         text = adapter_class.return_value.generate.await_args.args[0].content[0].text
@@ -132,7 +132,7 @@ async def test_adapter_response_is_parsed_into_an_ocr_extraction_result():
     """Parsing stays above the adapter — the adapter returns raw text."""
     adapter_class = mock_adapter({"extractedText": "transcribed", "confidence": 0.42})
     with patch("src.ocr.handwriting_ocr.get_settings", return_value=SETTINGS_WITH_KEY), \
-         patch("src.ocr.handwriting_ocr.OpenAIAdapter", adapter_class):
+         patch("src.providers.factory.OpenAIAdapter", adapter_class):
         result = await extract_text("https://example.com/page.png", "HANDWRITTEN_TEXT", REGISTRY_MODEL)
 
     assert isinstance(result, OCRExtractionResult)
