@@ -30,7 +30,11 @@ WORKDIR /app
 # prisma-client-py shells out to the Node CLI to fetch its query engine, so Node
 # has to be present in the final image too — not only at build time.
 RUN apt-get update \
- && apt-get install --no-install-recommends -y nodejs npm \
+# fonts-*: the checked-copy PDF embeds real text, so it needs real fonts. Noto
+# covers Devanagari and mathematical symbols; DejaVu is the Latin fallback.
+# Without them Hindi renders as empty boxes — pdf_fonts.py logs which role is
+# missing rather than failing the PDF, so this is easy to miss in a slim image.
+ && apt-get install --no-install-recommends -y nodejs npm fonts-noto-core fonts-dejavu-core \
  && rm -rf /var/lib/apt/lists/*
 
 COPY apps/api-python/requirements.txt ./

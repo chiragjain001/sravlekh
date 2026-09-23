@@ -12,6 +12,8 @@ import { AuthenticatedUser } from '../auth/auth.types';
 jest.mock('axios');
 import axios from 'axios';
 
+const mockedAxios = axios as jest.Mocked<typeof axios>;
+
 describe('OcrService', () => {
   let service: OcrService;
   let prisma: { document: { findUnique: jest.Mock }; pageRegion: { findMany: jest.Mock } };
@@ -57,16 +59,38 @@ describe('OcrService', () => {
       });
     }
 
-    it('skips a region that already has an OCRResult', async () => {
+    it('skips a region already read from its CURRENT box', async () => {
       mockDocument();
       prisma.pageRegion.findMany.mockResolvedValueOnce([
-        { id: 'region-1', pageImage: { rawImageUrl: 'raw-1', processedImageUrl: null }, ocrBlocks: [{ results: [{ id: 'r1' }] }] },
+        {
+          id: 'region-1', boundingBox: { x: 0.1, y: 0.2, width: 0.6, height: 0.3 },
+          pageImage: { rawImageUrl: 'raw-1', processedImageUrl: null },
+          ocrBlocks: [{ boundingBox: { x: 0.1, y: 0.2, width: 0.6, height: 0.3 }, results: [{ id: 'r1' }] }],
+        },
       ]);
 
       const result = await service.enqueueForDocument('inst-1', 'doc-1', teacher);
 
       expect(queue.add).not.toHaveBeenCalled();
       expect(result).toEqual({ enqueuedCount: 0, totalRegions: 1 });
+    });
+
+    it('re-reads a region the teacher has moved or resized since it was read', async () => {
+      // The stored transcript belongs to the OLD box — somewhere else on the
+      // page. Leaving it would grade this answer on another answer's text.
+      mockDocument();
+      prisma.pageRegion.findMany.mockResolvedValueOnce([
+        {
+          id: 'region-1', boundingBox: { x: 0.1, y: 0.5, width: 0.6, height: 0.3 },
+          pageImage: { rawImageUrl: 'raw-1', processedImageUrl: null },
+          ocrBlocks: [{ boundingBox: { x: 0.1, y: 0.2, width: 0.6, height: 0.3 }, results: [{ id: 'r1' }] }],
+        },
+      ]);
+
+      const result = await service.enqueueForDocument('inst-1', 'doc-1', teacher);
+
+      expect(queue.add).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({ enqueuedCount: 1, totalRegions: 1 });
     });
 
     it('enqueues a job with the storage key (not a pre-signed URL) and blockType=HANDWRITTEN_TEXT', async () => {
@@ -94,6 +118,18 @@ describe('OcrService', () => {
       await service.enqueueForDocument('inst-1', 'doc-1', teacher);
 
       expect(queue.add).toHaveBeenCalledWith('extract', expect.objectContaining({ imageKey: 'processed-1' }), expect.any(Object));
+    });
+  });
+
+  describe('requestOcrExtraction — provider rate limits', () => {
+    it('raises a rate-limit error the processor can reschedule, not a generic failure', async () => {
+      storage.getSignedDownloadUrl.mockResolvedValueOnce('https://signed/img');
+      mockedAxios.isAxiosError.mockImplementation((e: unknown) => !!(e as { isAxiosError?: boolean })?.isAxiosError);
+      mockedAxios.post.mockRejectedValueOnce({ isAxiosError: true, response: { status: 429, headers: { 'retry-after': '37' } } });
+
+      await expect(
+        service.requestOcrExtraction({ instituteId: 'inst-1', questionRegionId: 'region-1', imageKey: 'raw-1', blockType: 'HANDWRITTEN_TEXT' }),
+      ).rejects.toMatchObject({ name: 'ProviderRateLimitError', retryAfterMs: 37_000 });
     });
   });
 

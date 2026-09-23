@@ -134,7 +134,7 @@ export function useLiveSync() {
     // just fetched, so there is nothing to invalidate yet.
     const isFirst = since.current === null;
     since.current = data.now;
-    if (isFirst || data.entities.length === 0) return;
+    if (isFirst || !data.entities || data.entities.length === 0) return;
 
     const prefixes = new Set<string>();
     for (const entity of data.entities) {
@@ -2245,6 +2245,116 @@ export function useTriggerOcr() {
       const msg = axios.isAxiosError(error) ? error.response?.data?.message : 'Failed to trigger OCR';
       toast.error(msg);
     },
+  });
+}
+
+/** The API's error envelope varies by layer ({error:{message}} or {message}). */
+function apiErrorMessage(error: unknown, fallback: string): string {
+  if (!axios.isAxiosError(error)) return fallback;
+  const data = error.response?.data;
+  return data?.error?.message ?? data?.message ?? fallback;
+}
+
+export function useDeletePageRegion() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ regionId, documentId, discardMarks }: { regionId: string; documentId: string; discardMarks?: boolean }) => {
+      const res = await apiClient.delete(`/institutes/${user?.instituteId}/page-regions/${regionId}`, {
+        params: discardMarks ? { discardMarks: true } : undefined,
+      });
+      return res.data;
+    },
+    onSuccess: (_r, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['documents', user?.instituteId, variables.documentId] });
+    },
+    // No toast here: the caller handles REGION_HAS_FINAL_MARKS by asking the
+    // teacher whether to discard those marks, which is not an error.
+  });
+}
+
+export function useDetectRegions() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ documentId }: { documentId: string }) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/documents/${documentId}/detect-regions`);
+      return res.data as { pagesProcessed: number; created: number; unmapped: number; needsMapping: boolean };
+    },
+    onSuccess: (result, variables) => {
+      if (result.created === 0) {
+        toast('No new answer regions were suggested — mark them yourself.', { icon: 'ℹ️' });
+      } else {
+        toast.success(
+          `${result.created} region(s) suggested` +
+            (result.unmapped ? ` — ${result.unmapped} need you to pick the question` : ''),
+        );
+      }
+      queryClient.invalidateQueries({ queryKey: ['documents', user?.instituteId, variables.documentId] });
+    },
+    onError: (error) => toast.error(apiErrorMessage(error, 'Could not suggest regions — mark them yourself')),
+  });
+}
+
+// ── Digital Answer Sheets: checked copy (whole-sheet AI check + review) ─────
+
+export function useCheckedCopy(attemptId: string | null, opts?: { poll?: boolean }) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['checked-copy', user?.instituteId, attemptId],
+    queryFn: async () => {
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/attempts/${attemptId}/checked-copy`);
+      return res.data;
+    },
+    enabled: !!user?.instituteId && !!attemptId,
+    // Poll only while OCR/AI jobs could still be landing, i.e. while some answer
+    // is waiting on the machine rather than on the teacher.
+    refetchInterval: opts?.poll ? 4000 : false,
+  });
+}
+
+export function useRunAiCheck() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ attemptId }: { attemptId: string }) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/attempts/${attemptId}/checked-copy/ai-check`);
+      return res.data as { enqueuedCount: number; needsOcrCount: number; illegibleCount: number };
+    },
+    onSuccess: (result, variables) => {
+      toast.success(result.enqueuedCount ? `AI is checking ${result.enqueuedCount} answer(s)…` : 'No answers are waiting for an AI check');
+      queryClient.invalidateQueries({ queryKey: ['checked-copy', user?.instituteId, variables.attemptId] });
+    },
+    onError: (error) => toast.error(apiErrorMessage(error, 'Failed to start the AI check')),
+  });
+}
+
+export function useSubmitCheckedCopy() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ attemptId, ...body }: { attemptId: string; confirmed: boolean; items: unknown[] }) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/attempts/${attemptId}/checked-copy/submit`, body);
+      return res.data as { updatedCount: number; unchangedCount: number; scoreRecord: { obtainedMarks: number; totalMarks: number; percentage: number; isFinalized: boolean } | null; pdfUrl: string | null };
+    },
+    onSuccess: (_result, variables) => {
+      toast.success('Marks submitted — the student\'s score is updated');
+      queryClient.invalidateQueries({ queryKey: ['checked-copy', user?.instituteId, variables.attemptId] });
+      queryClient.invalidateQueries({ queryKey: ['evaluation-work-items', user?.instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['students'] });
+    },
+    onError: (error) => toast.error(apiErrorMessage(error, 'Failed to submit marks')),
+  });
+}
+
+export function useCheckedCopyPdf() {
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async ({ attemptId }: { attemptId: string }) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/attempts/${attemptId}/checked-copy/pdf`);
+      return res.data as { url: string; status: 'DRAFT' | 'FINAL' };
+    },
+    onError: (error) => toast.error(apiErrorMessage(error, 'Could not generate the PDF')),
   });
 }
 

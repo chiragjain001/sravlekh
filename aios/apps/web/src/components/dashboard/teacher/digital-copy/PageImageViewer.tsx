@@ -11,13 +11,38 @@ export interface ViewerRegion {
   label?: string;
 }
 
+export type Box = { x: number; y: number; width: number; height: number };
+
 interface PageImageViewerProps {
   imageUrl: string;
   regions: ViewerRegion[];
   selectedRegionId?: string | null;
   onSelectRegion?: (id: string) => void;
-  onDrawRegion?: (box: { x: number; y: number; width: number; height: number }) => void;
+  onDrawRegion?: (box: Box) => void;
   drawEnabled?: boolean;
+  /** Enables dragging the selected region and its corner handles. */
+  onMoveRegion?: (id: string, box: Box) => void;
+}
+
+/** The corner a handle drags, as (x, y) multipliers of the box's own edges. */
+const HANDLES = [
+  { id: 'nw', cx: 0, cy: 0, cursor: 'nwse-resize' },
+  { id: 'ne', cx: 1, cy: 0, cursor: 'nesw-resize' },
+  { id: 'sw', cx: 0, cy: 1, cursor: 'nesw-resize' },
+  { id: 'se', cx: 1, cy: 1, cursor: 'nwse-resize' },
+] as const;
+
+const MIN_SIDE = 0.02;
+
+function clampBox(box: Box): Box {
+  const width = Math.max(MIN_SIDE, Math.min(box.width, 1));
+  const height = Math.max(MIN_SIDE, Math.min(box.height, 1));
+  return {
+    x: Math.min(Math.max(0, box.x), 1 - width),
+    y: Math.min(Math.max(0, box.y), 1 - height),
+    width,
+    height,
+  };
 }
 
 const REGION_COLOR: Record<string, string> = {
@@ -29,10 +54,48 @@ const REGION_COLOR: Record<string, string> = {
   UNCLASSIFIED: 'border-rose-400 bg-rose-400/10',
 };
 
-export function PageImageViewer({ imageUrl, regions, selectedRegionId, onSelectRegion, onDrawRegion, drawEnabled }: PageImageViewerProps) {
+export function PageImageViewer({ imageUrl, regions, selectedRegionId, onSelectRegion, onDrawRegion, drawEnabled, onMoveRegion }: PageImageViewerProps) {
   const [zoom, setZoom] = useState(100);
   const imgRef = useRef<HTMLImageElement>(null);
   const [drag, setDrag] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  // Live box while the teacher drags a region or one of its corners; committed
+  // on mouse-up so the API sees one update, not one per mouse-move.
+  const [edit, setEdit] = useState<{ id: string; box: Box; origin: { x: number; y: number }; start: Box; handle: string | null } | null>(null);
+
+  const beginEdit = (e: React.MouseEvent, region: ViewerRegion, handle: string | null) => {
+    if (!onMoveRegion) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const p = toNormalized(e.clientX, e.clientY);
+    setEdit({ id: region.id, box: region.boundingBox, origin: p, start: region.boundingBox, handle });
+  };
+
+  const moveEdit = (e: React.MouseEvent) => {
+    if (!edit) return;
+    const p = toNormalized(e.clientX, e.clientY);
+    const dx = p.x - edit.origin.x;
+    const dy = p.y - edit.origin.y;
+    const { start, handle } = edit;
+    let next: Box;
+    if (!handle) {
+      next = { ...start, x: start.x + dx, y: start.y + dy };
+    } else {
+      const left = handle.includes('w') ? start.x + dx : start.x;
+      const top = handle.includes('n') ? start.y + dy : start.y;
+      const right = handle.includes('e') ? start.x + start.width + dx : start.x + start.width;
+      const bottom = handle.includes('s') ? start.y + start.height + dy : start.y + start.height;
+      next = { x: Math.min(left, right), y: Math.min(top, bottom), width: Math.abs(right - left), height: Math.abs(bottom - top) };
+    }
+    setEdit({ ...edit, box: clampBox(next) });
+  };
+
+  const endEdit = () => {
+    if (!edit) return;
+    const { id, box, start } = edit;
+    setEdit(null);
+    const unchanged = (['x', 'y', 'width', 'height'] as const).every((k) => Math.abs(box[k] - start[k]) < 1e-4);
+    if (!unchanged) onMoveRegion?.(id, { x: +box.x.toFixed(4), y: +box.y.toFixed(4), width: +box.width.toFixed(4), height: +box.height.toFixed(4) });
+  };
 
   const toNormalized = (clientX: number, clientY: number) => {
     const rect = imgRef.current?.getBoundingClientRect();
@@ -49,11 +112,19 @@ export function PageImageViewer({ imageUrl, regions, selectedRegionId, onSelectR
     setDrag({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
   };
   const handleMouseMove = (e: React.MouseEvent) => {
+    if (edit) {
+      moveEdit(e);
+      return;
+    }
     if (!drag) return;
     const p = toNormalized(e.clientX, e.clientY);
     setDrag((d) => (d ? { ...d, x1: p.x, y1: p.y } : d));
   };
   const handleMouseUp = () => {
+    if (edit) {
+      endEdit();
+      return;
+    }
     if (!drag) return;
     const box = {
       x: Math.min(drag.x0, drag.x1),
@@ -92,31 +163,47 @@ export function PageImageViewer({ imageUrl, regions, selectedRegionId, onSelectR
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
-            onMouseLeave={() => drag && handleMouseUp()}
+            onMouseLeave={() => (drag || edit) && handleMouseUp()}
           />
 
-          {regions.map((r) => (
-            <div
-              key={r.id}
-              onClick={() => onSelectRegion?.(r.id)}
-              className={`absolute border-2 cursor-pointer transition-all ${REGION_COLOR[r.regionType] ?? REGION_COLOR.UNCLASSIFIED} ${
-                selectedRegionId === r.id ? 'ring-2 ring-offset-1 ring-indigo-400' : ''
-              }`}
-              style={{
-                left: `${r.boundingBox.x * 100}%`,
-                top: `${r.boundingBox.y * 100}%`,
-                width: `${r.boundingBox.width * 100}%`,
-                height: `${r.boundingBox.height * 100}%`,
-              }}
-              title={r.label ?? r.regionType}
-            >
-              {r.label && (
-                <span className="absolute -top-5 left-0 text-[9px] font-bold px-1 py-0.5 bg-slate-900 text-white rounded whitespace-nowrap">
-                  {r.label}
-                </span>
-              )}
-            </div>
-          ))}
+          {regions.map((r) => {
+            const selected = selectedRegionId === r.id;
+            const box = edit?.id === r.id ? edit.box : r.boundingBox;
+            const editable = !!onMoveRegion && selected && !drawEnabled;
+            return (
+              <div
+                key={r.id}
+                onClick={() => onSelectRegion?.(r.id)}
+                onMouseDown={(e) => (editable ? beginEdit(e, { ...r, boundingBox: box }, null) : undefined)}
+                className={`absolute border-2 transition-colors ${REGION_COLOR[r.regionType] ?? REGION_COLOR.UNCLASSIFIED} ${
+                  selected ? 'ring-2 ring-offset-1 ring-indigo-400' : ''
+                }`}
+                style={{
+                  left: `${box.x * 100}%`,
+                  top: `${box.y * 100}%`,
+                  width: `${box.width * 100}%`,
+                  height: `${box.height * 100}%`,
+                  cursor: editable ? 'move' : 'pointer',
+                }}
+                title={editable ? 'Drag to move, corners to resize' : (r.label ?? r.regionType)}
+              >
+                {r.label && (
+                  <span className="absolute -top-5 left-0 text-[9px] font-bold px-1 py-0.5 bg-slate-900 text-white rounded whitespace-nowrap">
+                    {r.label}
+                  </span>
+                )}
+                {editable &&
+                  HANDLES.map((h) => (
+                    <span
+                      key={h.id}
+                      onMouseDown={(e) => beginEdit(e, { ...r, boundingBox: box }, h.id)}
+                      className="absolute w-2.5 h-2.5 -ml-1.5 -mt-1.5 bg-white border-2 border-indigo-500 rounded-sm"
+                      style={{ left: `${h.cx * 100}%`, top: `${h.cy * 100}%`, cursor: h.cursor }}
+                    />
+                  ))}
+              </div>
+            );
+          })}
 
           {drag && (
             <div

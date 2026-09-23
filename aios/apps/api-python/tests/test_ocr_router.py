@@ -25,6 +25,7 @@ def make_region(institute_id="inst-1", has_bundle=True):
         )
     return SimpleNamespace(
         id="region-1",
+        boundingBox={"x": 0.1, "y": 0.2, "width": 0.6, "height": 0.3},
         pageImage=SimpleNamespace(page=SimpleNamespace(document=SimpleNamespace(documentBundle=bundle))),
     )
 
@@ -39,7 +40,9 @@ def make_db(existing_block=None, region=None):
     return SimpleNamespace(
         pageregion=SimpleNamespace(find_unique=AsyncMock(return_value=region if region is not None else make_region())),
         ocrblock=SimpleNamespace(
-            find_first=AsyncMock(return_value=existing_block),
+            # Keyed on the box that was read, not just the region: find_many +
+            # a box comparison is what makes a resized region re-OCR.
+            find_many=AsyncMock(return_value=[existing_block] if existing_block else []),
             create=AsyncMock(return_value=SimpleNamespace(id="block-new")),
         ),
         ocrresult=SimpleNamespace(create=AsyncMock(side_effect=create_ocr_result)),
@@ -78,7 +81,7 @@ async def test_creates_a_new_ocr_block_when_none_exists_for_this_block_type():
 
 @pytest.mark.asyncio
 async def test_reuses_an_existing_ocr_block_for_the_same_region_and_type():
-    fake_db = make_db(existing_block=SimpleNamespace(id="block-existing"))
+    fake_db = make_db(existing_block=SimpleNamespace(id="block-existing", boundingBox={"x": 0.1, "y": 0.2, "width": 0.6, "height": 0.3}))
     reg_model, reg_version = patch_registry()
     with patch("src.routers.ocr.db", fake_db), reg_model, reg_version, \
          patch("src.routers.ocr.extract_text", AsyncMock(return_value=OCRExtractionResult(extractedText="hi", confidence=0.7))):
@@ -123,7 +126,7 @@ async def test_c3_rejects_a_region_belonging_to_a_different_institute():
             await extract(OCRExtractRequest(instituteId="inst-1", questionRegionId="region-1", imageUrl="https://x/img.png", blockType="HANDWRITTEN_TEXT"))
 
     assert exc_info.value.status_code == 404
-    fake_db.ocrblock.find_first.assert_not_called()
+    fake_db.ocrblock.find_many.assert_not_called()
     fake_db.ocrresult.create.assert_not_called()
     extract_mock.assert_not_called()
 
@@ -224,3 +227,48 @@ async def test_no_active_ocr_model_fails_explicitly_without_calling_the_provider
     # No orphan OCRBlock left behind by a deconfigured registry.
     fake_db.ocrblock.create.assert_not_awaited()
     fake_db.ocrresult.create.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_the_region_crop_is_what_is_read_not_the_whole_page():
+    """A page can hold several answers. Each extraction must be given only its own
+    region, otherwise every answer on the page transcribes to the same text."""
+    fake_db = make_db(existing_block=None)
+    reg_model, reg_version = patch_registry()
+    with patch("src.routers.ocr.db", fake_db), reg_model, reg_version, \
+         patch("src.routers.ocr.extract_text", AsyncMock(return_value=OCRExtractionResult(extractedText="hi", confidence=0.9))) as extract_mock:
+        await extract(OCRExtractRequest(instituteId="inst-1", questionRegionId="region-1", imageUrl="https://x/img.png", blockType="HANDWRITTEN_TEXT"))
+
+    assert extract_mock.await_args.kwargs["crop"] == {"x": 0.1, "y": 0.2, "width": 0.6, "height": 0.3}
+    # The block records the box it was read from, so a later resize is detectable.
+    assert fake_db.ocrblock.create.await_args.kwargs["data"]["boundingBox"].data == {"x": 0.1, "y": 0.2, "width": 0.6, "height": 0.3}
+
+
+@pytest.mark.asyncio
+async def test_a_region_moved_since_the_last_reading_gets_a_new_block_not_the_stale_one():
+    stale_block = SimpleNamespace(id="block-old", boundingBox={"x": 0.9, "y": 0.9, "width": 0.05, "height": 0.05})
+    fake_db = make_db(existing_block=stale_block)
+    reg_model, reg_version = patch_registry()
+    with patch("src.routers.ocr.db", fake_db), reg_model, reg_version, \
+         patch("src.routers.ocr.extract_text", AsyncMock(return_value=OCRExtractionResult(extractedText="hi", confidence=0.9))):
+        await extract(OCRExtractRequest(instituteId="inst-1", questionRegionId="region-1", imageUrl="https://x/img.png", blockType="HANDWRITTEN_TEXT"))
+
+    fake_db.ocrblock.create.assert_awaited_once()
+    assert fake_db.ocrresult.create.await_args.kwargs["data"]["ocrBlockId"] == "block-new"
+
+
+@pytest.mark.asyncio
+async def test_a_region_without_a_usable_box_is_refused_rather_than_read_whole_page():
+    fake_db = make_db(region=SimpleNamespace(
+        id="region-1", boundingBox=None,
+        pageImage=SimpleNamespace(page=SimpleNamespace(document=SimpleNamespace(
+            documentBundle=SimpleNamespace(assessmentDelivery=SimpleNamespace(assessment=SimpleNamespace(instituteId="inst-1")))))),
+    ))
+    reg_model, reg_version = patch_registry()
+    with patch("src.routers.ocr.db", fake_db), reg_model, reg_version, \
+         patch("src.routers.ocr.extract_text", AsyncMock()) as extract_mock:
+        with pytest.raises(HTTPException) as exc:
+            await extract(OCRExtractRequest(instituteId="inst-1", questionRegionId="region-1", imageUrl="https://x/img.png", blockType="HANDWRITTEN_TEXT"))
+
+    assert exc.value.status_code == 422
+    extract_mock.assert_not_awaited()

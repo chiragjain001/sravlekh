@@ -465,13 +465,27 @@ describe('EvaluationsService', () => {
 
       await service.getWorkItems('inst-1', { aiFlag: 'low_confidence' }, teacher);
 
-      expect(prisma.response.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
-            OR: [{ evaluation: { status: EvaluationStatus.AI_SUGGESTED, currentVersion: { aiRecommendation: { flags: { has: 'low_confidence' } } } } }],
-          }),
-        }),
-      );
+      const where = prisma.response.findMany.mock.calls[0][0].where;
+      expect(where.AND).toContainEqual({
+        OR: [{ evaluation: { status: EvaluationStatus.AI_SUGGESTED, currentVersion: { aiRecommendation: { flags: { has: 'low_confidence' } } } } }],
+      });
+    });
+
+    it('covers handwritten answers of any question type, not only subjective ones', async () => {
+      // A numerical worked out in a booklet has no capture-time mark — it needs
+      // a human like any other handwritten answer.
+      prisma.response.findMany.mockResolvedValueOnce([]);
+      prisma.response.count.mockResolvedValueOnce(0);
+
+      await service.getWorkItems('inst-1', {}, teacher);
+
+      const where = prisma.response.findMany.mock.calls[0][0].where;
+      expect(where.AND).toContainEqual({
+        OR: [
+          { question: { is: { type: { in: ['SHORT_ANSWER', 'LONG_ANSWER', 'PASSAGE_BASED'] } } } },
+          { evidenceType: 'PAGE_REGION' },
+        ],
+      });
     });
 
     it('scopes by instituteId and applies batchId/subjectId filters', async () => {
@@ -484,7 +498,7 @@ describe('EvaluationsService', () => {
         expect.objectContaining({
           where: expect.objectContaining({
             attempt: { assessmentDelivery: { assessment: { instituteId: 'inst-1' }, batchId: 'batch-1' } },
-            question: expect.objectContaining({ subjectId: 'sub-1' }),
+            question: { is: { subjectId: 'sub-1' } },
           }),
         }),
       );

@@ -1,12 +1,18 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, ScanEye, UserCheck, RefreshCw, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react';
 import {
-  useDocument, usePageImageUrl, useCreatePageRegion, useUpdatePageRegion,
+  ChevronLeft, ChevronRight, ScanEye, UserCheck, RefreshCw, CheckCircle2, AlertTriangle, Loader2, ClipboardCheck,
+  Sparkles, Trash2, SplitSquareVertical, Combine,
+} from 'lucide-react';
+import {
+  useDocument, usePageImageUrl, useCreatePageRegion, useUpdatePageRegion, useDeletePageRegion, useDetectRegions,
   useTriggerOcr, useConfirmIdentity, useStudents, useQuestions, useReprocessDocument,
 } from '@/hooks/useApi';
-import { PageImageViewer, ViewerRegion } from './PageImageViewer';
+import axios from 'axios';
+import { sameBox } from '@/lib/region-box';
+import { PageImageViewer, ViewerRegion, Box } from './PageImageViewer';
+import { CheckedCopyReview } from './CheckedCopyReview';
 import { AiConfidenceBadge } from '@/components/shared/AiConfidenceBadge';
 
 const STATUS_STYLE: Record<string, string> = {
@@ -30,9 +36,12 @@ export function DocumentDetailPanel({ documentId, batchId, subjectId, onClose }:
   const [drawMode, setDrawMode] = useState(false);
   const [newRegionType, setNewRegionType] = useState<'QUESTION_ANSWER' | 'ROLL_NUMBER_FIELD' | 'HEADER' | 'MARGIN' | 'SIGNATURE'>('QUESTION_ANSWER');
   const [studentPickerValue, setStudentPickerValue] = useState('');
+  const [reviewing, setReviewing] = useState(false);
 
   const createRegion = useCreatePageRegion();
   const updateRegion = useUpdatePageRegion();
+  const deleteRegion = useDeletePageRegion();
+  const detectRegions = useDetectRegions();
   const triggerOcr = useTriggerOcr();
   const confirmIdentity = useConfirmIdentity();
   const reprocess = useReprocessDocument();
@@ -44,7 +53,8 @@ export function DocumentDetailPanel({ documentId, batchId, subjectId, onClose }:
 
   const page = doc?.pages?.[pageIndex];
   const pageImage = page?.images?.[0];
-  const { data: imageResp, isLoading: imageLoading } = usePageImageUrl(documentId, pageImage?.id ?? null);
+  // The image endpoint is keyed by Page id (documents/:id/pages/:pageId/image), not PageImage id.
+  const { data: imageResp, isLoading: imageLoading } = usePageImageUrl(documentId, page?.id ?? null);
 
   const regions: ViewerRegion[] = useMemo(
     () => (pageImage?.regions ?? []).map((r: any) => ({
@@ -63,9 +73,63 @@ export function DocumentDetailPanel({ documentId, batchId, subjectId, onClose }:
   const identityResolution = doc?.identityResolution;
   const isIdentityResolved = identityResolution?.status === 'MANUALLY_CONFIRMED' || identityResolution?.status === 'AUTO_RESOLVED';
 
-  const handleDrawRegion = (box: { x: number; y: number; width: number; height: number }) => {
+  const handleDrawRegion = (box: Box) => {
     if (!pageImage) return;
     createRegion.mutate({ pageImageId: pageImage.id, documentId, boundingBox: box, regionType: newRegionType });
+  };
+
+  /** Moving or resizing a box never touches marks — it only invalidates the OCR read from the old box. */
+  const handleMoveRegion = (regionId: string, box: Box) => {
+    updateRegion.mutate({ regionId, documentId, boundingBox: box });
+  };
+
+  /**
+   * Deleting a region deletes the answer it is evidence for. When that answer
+   * already carries marks a teacher confirmed, the API refuses until the
+   * teacher says those marks may go — asked here, never assumed.
+   */
+  const handleDeleteRegion = (regionId: string) => {
+    deleteRegion.mutate(
+      { regionId, documentId },
+      {
+        onSuccess: () => setSelectedRegionId((id) => (id === regionId ? null : id)),
+        onError: (error) => {
+          const code = axios.isAxiosError(error) ? (error.response?.data as { code?: string } | undefined)?.code : undefined;
+          if (code === 'REGION_HAS_FINAL_MARKS') {
+            if (window.confirm('This answer already has marks you confirmed. Deleting the region discards those marks. Delete it anyway?')) {
+              deleteRegion.mutate({ regionId, documentId, discardMarks: true });
+            }
+            return;
+          }
+          window.alert('Could not delete this region. Try again.');
+        },
+      },
+    );
+  };
+
+  /** One box holding two answers: cut it in half and map each half separately. */
+  const handleSplitRegion = (region: { id: string; boundingBox: Box; regionType: string }) => {
+    if (!pageImage) return;
+    const half = region.boundingBox.height / 2;
+    updateRegion.mutate({ regionId: region.id, documentId, boundingBox: { ...region.boundingBox, height: half } });
+    createRegion.mutate({
+      pageImageId: pageImage.id,
+      documentId,
+      boundingBox: { ...region.boundingBox, y: region.boundingBox.y + half, height: half },
+      regionType: region.regionType,
+    });
+  };
+
+  /** One answer spread over two boxes: grow the first to cover both, drop the second. */
+  const handleMergeRegions = (first: { id: string; boundingBox: Box }, second: { id: string; boundingBox: Box }) => {
+    const x = Math.min(first.boundingBox.x, second.boundingBox.x);
+    const y = Math.min(first.boundingBox.y, second.boundingBox.y);
+    const right = Math.max(first.boundingBox.x + first.boundingBox.width, second.boundingBox.x + second.boundingBox.width);
+    const bottom = Math.max(first.boundingBox.y + first.boundingBox.height, second.boundingBox.y + second.boundingBox.height);
+    updateRegion.mutate(
+      { regionId: first.id, documentId, boundingBox: { x, y, width: right - x, height: bottom - y } },
+      { onSuccess: () => handleDeleteRegion(second.id) },
+    );
   };
 
   const handleConfirmIdentity = () => {
@@ -86,8 +150,16 @@ export function DocumentDetailPanel({ documentId, batchId, subjectId, onClose }:
     );
   }
 
+  if (reviewing && doc.attemptId) {
+    return <CheckedCopyReview attemptId={doc.attemptId} onBack={() => { setReviewing(false); refetch(); }} />;
+  }
+
   const totalOcrRegions = (pageImage?.regions ?? []).filter((r: any) => r.regionType === 'QUESTION_ANSWER' && r.questionId).length;
-  const ocrDoneRegions = (pageImage?.regions ?? []).filter((r: any) => r.ocrBlocks?.some((b: any) => b.results?.length)).length;
+  // "Done" means read from the box as it is NOW — a moved or resized region
+  // needs reading again (shared/region-box.ts on the server).
+  const ocrDoneRegions = (pageImage?.regions ?? []).filter(
+    (r: any) => r.questionId && r.ocrBlocks?.some((b: any) => b.results?.length && sameBox(b.boundingBox, r.boundingBox)),
+  ).length;
 
   return (
     <div className="space-y-4 animate-fadein">
@@ -125,6 +197,21 @@ export function DocumentDetailPanel({ documentId, batchId, subjectId, onClose }:
           </div>
         )}
       </div>
+
+      {/* Whole-sheet AI check + review */}
+      {isIdentityResolved && (
+        <div className="p-4 rounded-2xl border border-indigo-200 bg-indigo-50/40 flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <p className="text-[13px] font-bold text-slate-800">Check this answer sheet</p>
+            <p className="text-[12px] text-slate-500">After OCR: let AI mark every answer tag-wise, review and edit, then submit the final marks.</p>
+          </div>
+          <button onClick={() => setReviewing(true)} disabled={!doc.attemptId}
+            title={!doc.attemptId ? 'Confirm the student first' : undefined}
+            className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white text-[12.5px] font-bold rounded-xl hover:bg-indigo-700 disabled:opacity-40">
+            <ClipboardCheck className="w-4 h-4" /> Check &amp; review marks
+          </button>
+        </div>
+      )}
 
       {/* Page navigator + viewer */}
       {doc.pages?.length > 0 && page && (
@@ -166,6 +253,7 @@ export function DocumentDetailPanel({ documentId, batchId, subjectId, onClose }:
                 selectedRegionId={selectedRegionId}
                 onSelectRegion={setSelectedRegionId}
                 onDrawRegion={drawMode ? handleDrawRegion : undefined}
+                onMoveRegion={handleMoveRegion}
                 drawEnabled={drawMode}
               />
             ) : (
@@ -179,22 +267,57 @@ export function DocumentDetailPanel({ documentId, batchId, subjectId, onClose }:
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <p className="text-[12.5px] font-bold text-slate-700">Regions on this page</p>
-              <button onClick={() => refetch()} className="p-1.5 text-slate-400 hover:text-indigo-600">
-                <RefreshCw className="w-3.5 h-3.5" />
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => detectRegions.mutate({ documentId })}
+                  disabled={detectRegions.isPending}
+                  title="Suggest answer regions for pages that have none. You confirm, correct or delete each one."
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 text-[11.5px] font-bold text-indigo-700 border border-indigo-200 rounded-lg hover:bg-indigo-50 disabled:opacity-40"
+                >
+                  {detectRegions.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                  Suggest regions
+                </button>
+                <button onClick={() => refetch()} className="p-1.5 text-slate-400 hover:text-indigo-600">
+                  <RefreshCw className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
+            {(pageImage?.regions ?? []).some((r: any) => r.detectionMethod === 'AUTO_LAYOUT_DETECTION' && !r.questionId) && (
+              <p className="text-[11.5px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                Some suggested regions have no question yet — pick one for each, or delete it.
+              </p>
+            )}
             <div className="space-y-2 max-h-[300px] overflow-y-auto">
               {(pageImage?.regions ?? []).length === 0 && (
-                <p className="text-[12px] text-slate-400 py-4 text-center border border-dashed border-slate-200 rounded-xl">No regions marked yet. Use "+ Mark Region" and drag on the image.</p>
+                <p className="text-[12px] text-slate-400 py-4 text-center border border-dashed border-slate-200 rounded-xl">
+                  No regions marked yet. Use &quot;Suggest regions&quot;, or &quot;+ Mark Region&quot; and drag on the image.
+                </p>
               )}
-              {(pageImage?.regions ?? []).map((r: any) => {
-                const latestOcr = r.ocrBlocks?.[0]?.results?.[0];
+              {(pageImage?.regions ?? []).map((r: any, index: number) => {
+                const pageRegions = pageImage?.regions ?? [];
+                const currentBlock = r.ocrBlocks?.find((b: any) => sameBox(b.boundingBox, r.boundingBox));
+                const latestOcr = currentBlock?.results?.[0];
+                const staleOcr = !latestOcr && r.ocrBlocks?.some((b: any) => b.results?.length);
+                const suggested = r.detectionMethod === 'AUTO_LAYOUT_DETECTION';
+                const next = pageRegions[index + 1];
                 return (
                   <div key={r.id} onClick={() => setSelectedRegionId(r.id)}
                     className={`p-2.5 border rounded-xl cursor-pointer ${selectedRegionId === r.id ? 'border-indigo-300 bg-indigo-50/50' : 'border-slate-200 hover:border-slate-300'}`}>
-                    <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center justify-between mb-1 gap-1">
                       <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">{r.regionType.replace(/_/g, ' ')}</span>
-                      {latestOcr && <AiConfidenceBadge confidence={latestOcr.confidence} label="OCR" />}
+                      <div className="flex items-center gap-1">
+                        {suggested && (
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700" title="Suggested by AI — confirm, correct or delete it">
+                            SUGGESTED{r.detectionConfidence ? ` ${Math.round(r.detectionConfidence * 100)}%` : ''}
+                          </span>
+                        )}
+                        {latestOcr && <AiConfidenceBadge confidence={latestOcr.confidence} label="OCR" />}
+                        {staleOcr && (
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700" title="This box changed after it was read — run OCR again">
+                            RE-READ NEEDED
+                          </span>
+                        )}
+                      </div>
                     </div>
                     {r.regionType === 'QUESTION_ANSWER' && (
                       <select
@@ -212,6 +335,32 @@ export function DocumentDetailPanel({ documentId, batchId, subjectId, onClose }:
                         {latestOcr.extractedText}
                       </p>
                     )}
+
+                    {/* Region edits. Moving/resizing happens on the image itself. */}
+                    <div className="flex items-center gap-1 mt-2" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        onClick={() => handleSplitRegion(r)}
+                        title="Split this box in half — for one box holding two answers"
+                        className="flex items-center gap-1 px-2 py-1 text-[11px] font-bold text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50"
+                      >
+                        <SplitSquareVertical className="w-3 h-3" /> Split
+                      </button>
+                      <button
+                        onClick={() => next && handleMergeRegions(r, next)}
+                        disabled={!next}
+                        title={next ? 'Merge with the next region — for one answer spread over two boxes' : 'Nothing to merge with'}
+                        className="flex items-center gap-1 px-2 py-1 text-[11px] font-bold text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-40"
+                      >
+                        <Combine className="w-3 h-3" /> Merge next
+                      </button>
+                      <button
+                        onClick={() => handleDeleteRegion(r.id)}
+                        title="Delete this region"
+                        className="ml-auto flex items-center gap-1 px-2 py-1 text-[11px] font-bold text-rose-600 border border-rose-200 rounded-lg hover:bg-rose-50"
+                      >
+                        <Trash2 className="w-3 h-3" /> Delete
+                      </button>
+                    </div>
                   </div>
                 );
               })}

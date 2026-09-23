@@ -1,7 +1,7 @@
 import { ConflictException } from '@nestjs/common';
 import { EvaluationStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { SUBJECTIVE_QUESTION_TYPES } from '../evaluations/evaluation-status.util';
+import { NEEDS_HUMAN_EVALUATION_FILTER } from '../evaluations/evaluation-status.util';
 
 /**
  * 32-AI-GOVERNANCE-POLICY.md §2 / 27-AI-EVALUATION-ARCHITECTURE.md §7, fix #3:
@@ -24,10 +24,17 @@ export async function assertNoUnevaluatedSubjectiveResponses(
   const unevaluatedCount = await prisma.response.count({
     where: {
       ...responseScope,
-      question: { type: { in: [...SUBJECTIVE_QUESTION_TYPES] } },
-      OR: [
-        { evaluation: null },
-        { evaluation: { status: { in: [EvaluationStatus.PENDING, EvaluationStatus.AI_SUGGESTED] } } },
+      // Both conditions go under AND: each is its own OR, and two `OR` keys in
+      // one object would silently overwrite each other — the second would win
+      // and the gate would count answers it has no business counting.
+      AND: [
+        NEEDS_HUMAN_EVALUATION_FILTER,
+        {
+          OR: [
+            { evaluation: null },
+            { evaluation: { status: { in: [EvaluationStatus.PENDING, EvaluationStatus.AI_SUGGESTED] } } },
+          ],
+        },
       ],
     },
   });

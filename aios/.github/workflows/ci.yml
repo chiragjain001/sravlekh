@@ -110,6 +110,9 @@ jobs:
       # both toolchains are needed here even though this job otherwise only runs Python.
       - run: pnpm install --frozen-lockfile
       - run: pip install -r apps/api-python/requirements-dev.txt
+      # The checked-copy PDF tests assert that Hindi renders with no missing
+      # glyphs, which needs the same fonts the production image installs.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-noto-core fonts-dejavu-core
       - run: pnpm db:generate
       - working-directory: apps/api-python
         run: ruff check .

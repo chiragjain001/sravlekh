@@ -15,9 +15,9 @@ from fastapi.testclient import TestClient
 from jose import jwt
 
 from src.ai.blueprint_agent import BlueprintGenerationResult, DistributionRuleModel
+from src.ai.blueprint_model_registry import NoActiveBlueprintModelError
 from src.config import get_settings
 from src.main import app
-from src.ai.blueprint_model_registry import NoActiveBlueprintModelError
 from src.providers.errors import AdapterAuthError, AdapterRateLimitError
 
 BLUEPRINT = BlueprintGenerationResult(

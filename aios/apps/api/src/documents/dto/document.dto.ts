@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsInt, Min, IsEnum, IsNumber, Max, ValidateNested } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsInt, Min, IsEnum, IsNumber, Max, ValidateNested, IsBoolean } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { ProcessingStage, RegionType } from '@prisma/client';
@@ -75,4 +75,13 @@ export class UpdatePageRegionDto {
   @IsOptional()
   @IsString()
   questionId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Re-mapping a region to a different question discards the marks recorded against the old one. ' +
+      'Required (true) when those marks were already confirmed by a teacher.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  discardMarks?: boolean;
 }

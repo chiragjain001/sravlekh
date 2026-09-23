@@ -11,6 +11,8 @@ import { OCR_QUEUE, OcrJobData } from './ocr.constants';
 import { enqueueDeduped, jobKey } from '../infrastructure/queue/enqueue';
 import { QUEUE_POLICY } from '../infrastructure/queue/queue-policy';
 import { ensureDiagnosableMessage } from '../shared/logging/error-message';
+import { hasCurrentOcr } from '../shared/region-box';
+import { rateLimitFrom } from '../shared/provider-rate-limit';
 
 /**
  * 24-OCR-HANDWRITING-ARCHITECTURE.md. Only ever enqueues blockType=
@@ -53,8 +55,10 @@ export class OcrService {
 
     let enqueuedCount = 0;
     for (const region of regions) {
-      const alreadyExtracted = region.ocrBlocks.some((block) => block.results.length > 0);
-      if (alreadyExtracted) continue;
+      // "Already extracted" means extracted FROM THIS BOX. A region the teacher
+      // moved or resized after its first reading needs reading again — otherwise
+      // its answer keeps the transcript of wherever the box used to be.
+      if (hasCurrentOcr(region)) continue;
 
       const imageKey = region.pageImage.processedImageUrl ?? region.pageImage.rawImageUrl;
       // The dedupe that matters most: OCRResult is append-only by design
@@ -88,11 +92,19 @@ export class OcrService {
         { instituteId: job.instituteId, questionRegionId: job.questionRegionId, imageUrl, blockType: job.blockType },
         {
           headers: internalToken ? { 'X-Internal-Token': internalToken } : undefined,
-          timeout: 20_000, // 24 §8: single-block extraction target < 4s p95; generous margin for a cold vision-model call
+          // 24 §8's target is < 4s p95 for the extraction itself. The budget is
+          // wider because this one request also covers fetching the page image,
+          // cropping it, and any pacing wait api-python adds to stay inside the
+          // provider's requests-per-minute quota.
+          timeout: 60_000,
         },
       );
       this.logger.debug(`OCR extraction for region ${job.questionRegionId} completed in ${Date.now() - startedAt}ms`);
     } catch (err) {
+      // A rate limit is "come back shortly", not a failure: the processor
+      // reschedules it rather than spending an attempt (shared/provider-rate-limit.ts).
+      const rateLimited = rateLimitFrom(err);
+      if (rateLimited) throw rateLimited;
       this.logger.warn(`OCR extraction HTTP call failed for region ${job.questionRegionId} after ${Date.now() - startedAt}ms`, err as Error);
       throw ensureDiagnosableMessage(err);
     }

@@ -22,7 +22,9 @@ from langchain_core.output_parsers import PydanticOutputParser
 from pydantic import BaseModel, Field
 
 from src.config import get_settings
-from src.providers.factory import select_adapter
+from src.image_fetch import fetch_image_bytes
+from src.ocr.region_box import crop_to_data_url
+from src.providers.factory import active_provider, adapter_for
 from src.providers.types import GenerateRequest, ImagePart, TextPart
 
 NO_EXTRACTION_BLOCK_TYPES = {"DIAGRAM_SKETCH", "TABLE"}
@@ -63,10 +65,18 @@ class NoExtractionResult(BaseModel):
     requires_visual_evaluation: bool = True
 
 
-async def extract_text(image_url: str, block_type: str, model: str) -> OCRExtractionResult | NoExtractionResult:
+async def extract_text(
+    image_url: str, block_type: str, model: str, crop: dict | None = None
+) -> OCRExtractionResult | NoExtractionResult:
     """`model` is the registry-resolved AIModelVersion.versionLabel, supplied by
     the caller (routers/ocr.py). Required, not defaulted: a default would
-    reintroduce exactly the hardcoded fallback P1 B1 Stage 3 removes."""
+    reintroduce exactly the hardcoded fallback P1 B1 Stage 3 removes.
+
+    `crop` is the answer region's page-normalised {x, y, width, height}. It is
+    how the model is shown ONE answer: without it the whole page goes to the
+    model, and on a page holding two answers each answer's transcript contained
+    both (and the second answer's marks were graded against the first's text).
+    """
     if block_type in NO_EXTRACTION_BLOCK_TYPES:
         return NoExtractionResult()
 
@@ -74,8 +84,14 @@ async def extract_text(image_url: str, block_type: str, model: str) -> OCRExtrac
     if prompt_text is None:
         raise ValueError(f"Unknown OCR block type: {block_type}")
 
+    if crop is not None:
+        raw, _mime = await fetch_image_bytes(image_url)
+        image_url = crop_to_data_url(raw, crop)
+
     settings = get_settings()
-    adapter, model = select_adapter(settings, model)
+    # `model` is the registry label for the active provider (routers/ocr.py
+    # resolved it against that provider's rows), so it is used as given.
+    adapter = adapter_for(settings, active_provider(settings))
 
     parser = PydanticOutputParser(pydantic_object=OCRExtractionResult)
 

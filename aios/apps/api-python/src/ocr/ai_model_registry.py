@@ -22,22 +22,28 @@ MODEL_NAME = "gpt-4o"
 VERSION_LABEL = "gpt-4o"
 
 
-async def resolve_ocr_ai_model_id() -> str:
-    provider = await db.aiprovider.find_first(where={"name": PROVIDER_NAME})
+# The provider actually in use decides which rows these resolve
+# (providers/factory.py). The defaults keep OpenAI's historical rows as the
+# default so existing installs are unaffected; a Gemini-backed deployment
+# resolves its own AIProvider/AIModel/AIModelVersion chain, so the model
+# recorded on every AIRecommendation is the model that ran and deactivating
+# it is a real kill switch for that provider.
+async def resolve_ocr_ai_model_id(provider_name: str = PROVIDER_NAME, model_name: str = MODEL_NAME) -> str:
+    provider = await db.aiprovider.find_first(where={"name": provider_name})
     if provider is None:
-        provider = await db.aiprovider.create(data={"name": PROVIDER_NAME})
+        provider = await db.aiprovider.create(data={"name": provider_name})
 
     model = await db.aimodel.find_first(
-        where={"aiProviderId": provider.id, "name": MODEL_NAME, "purpose": "OCR"}
+        where={"aiProviderId": provider.id, "name": model_name, "purpose": "OCR"}
     )
     if model is None:
         model = await db.aimodel.create(
-            data={"aiProviderId": provider.id, "name": MODEL_NAME, "purpose": "OCR"}
+            data={"aiProviderId": provider.id, "name": model_name, "purpose": "OCR"}
         )
     return model.id
 
 
-async def resolve_active_ocr_model_version(ai_model_id: str):
+async def resolve_active_ocr_model_version(ai_model_id: str, version_label: str = VERSION_LABEL):
     """Returns the active AIModelVersion row, or None if OCR is deconfigured.
 
     Two distinct "not found" cases, deliberately handled differently — identical
@@ -58,7 +64,7 @@ async def resolve_active_ocr_model_version(ai_model_id: str):
     audited model and the executed model the same thing.
     """
     version = await db.aimodelversion.find_first(
-        where={"aiModelId": ai_model_id, "versionLabel": VERSION_LABEL, "isActive": True},
+        where={"aiModelId": ai_model_id, "versionLabel": version_label, "isActive": True},
         order={"createdAt": "desc"},
     )
     if version is not None:
@@ -69,5 +75,5 @@ async def resolve_active_ocr_model_version(ai_model_id: str):
         return None
 
     return await db.aimodelversion.create(
-        data={"aiModelId": ai_model_id, "versionLabel": VERSION_LABEL, "isActive": True}
+        data={"aiModelId": ai_model_id, "versionLabel": version_label, "isActive": True}
     )

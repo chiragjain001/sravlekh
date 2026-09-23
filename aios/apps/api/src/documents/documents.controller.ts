@@ -1,19 +1,4 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Patch,
-  Body,
-  Param,
-  Query,
-  Headers,
-  UseInterceptors,
-  UploadedFiles,
-  HttpCode,
-  HttpStatus,
-  ParseBoolPipe,
-  Optional,
-} from '@nestjs/common';
+import { Controller, Get, Post, Patch, Body, Param, Query, Headers, UseInterceptors, UploadedFiles, HttpCode, HttpStatus, ParseBoolPipe, Optional, Delete } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiConsumes } from '@nestjs/swagger';
 import { DocumentsService } from './documents.service';
@@ -24,7 +9,10 @@ import { AuthenticatedUser } from '../auth/auth.types';
 import { UserRole } from '@prisma/client';
 
 const MAX_FILES_PER_UPLOAD = 60; // generous headroom above a typical booklet's page count
-const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 07-SECURITY-SPECIFICATION.md §9: 10 MB/file for photo capture
+// The multipart ceiling only has to be the LARGEST allowed upload (a PDF
+// booklet). Per-type limits — 10 MB an image, 25 MB a PDF — are enforced in the
+// service, against the sniffed type rather than the declared one.
+const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 @ApiTags('documents')
 @ApiBearerAuth()
@@ -46,9 +34,9 @@ export class DocumentsController {
   @Post('document-bundles/:bundleId/documents')
   @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
   @HttpCode(HttpStatus.ACCEPTED)
-  @UseInterceptors(FilesInterceptor('files', MAX_FILES_PER_UPLOAD, { limits: { fileSize: MAX_FILE_SIZE_BYTES } }))
+  @UseInterceptors(FilesInterceptor('files', MAX_FILES_PER_UPLOAD, { limits: { fileSize: MAX_UPLOAD_BYTES } }))
   @ApiConsumes('multipart/form-data')
-  @ApiOperation({ summary: 'Upload page images for one booklet — one or more image files, one per page' })
+  @ApiOperation({ summary: 'Upload one booklet: either its page images (one file per page) or a single PDF, which is rendered into pages' })
   uploadDocument(
     @Param('instituteId') instituteId: string,
     @Param('bundleId') bundleId: string,
@@ -104,6 +92,29 @@ export class DocumentsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.documentsService.reprocess(instituteId, documentId, dto, user);
+  }
+
+  @Post('documents/:documentId/detect-regions')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Suggest answer regions for pages that have none — the teacher confirms, corrects or deletes each one' })
+  detectRegions(
+    @Param('instituteId') instituteId: string,
+    @Param('documentId') documentId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.documentsService.detectRegions(instituteId, documentId, user);
+  }
+
+  @Delete('page-regions/:regionId')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Delete a region. Refused with REGION_HAS_FINAL_MARKS if its answer has confirmed marks, unless discardMarks=true' })
+  deleteRegion(
+    @Param('instituteId') instituteId: string,
+    @Param('regionId') regionId: string,
+    @Query('discardMarks') discardMarks: string | undefined,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.documentsService.deleteRegion(instituteId, regionId, discardMarks === 'true', user);
   }
 
   @Post('page-images/:pageImageId/regions')

@@ -3,9 +3,9 @@ import { QUEUE_POLICY, RUN_WORKERS, workerOptions } from './queue-policy';
 const QUEUES = Object.entries(QUEUE_POLICY);
 
 describe('QUEUE_POLICY', () => {
-  it('covers all six queues', () => {
+  it('covers every queue the app registers', () => {
     expect(QUEUES.map(([name]) => name).sort()).toEqual([
-      'aiEvaluation', 'masteryRecalc', 'noticeDispatch', 'ocr', 'reportGeneration', 'scoreAggregation',
+      'aiEvaluation', 'masteryRecalc', 'noticeDispatch', 'ocr', 'pdfSplit', 'reportGeneration', 'scoreAggregation',
     ]);
   });
 

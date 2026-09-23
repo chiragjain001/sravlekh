@@ -13,10 +13,10 @@ from src.ai.blueprint_agent import (
     BlueprintGenerationResult,
     generate_blueprint_from_prompt,
 )
+from src.ai.blueprint_model_registry import NoActiveBlueprintModelError
 from src.config import Settings
 from src.providers.errors import AdapterAuthError, AdapterRateLimitError
 from src.providers.types import TextPart
-from src.ai.blueprint_model_registry import NoActiveBlueprintModelError
 
 SETTINGS_WITH_KEY = Settings(DATABASE_URL="postgresql://x", JWT_SECRET="x" * 32, OPENAI_API_KEY="sk-test")
 SETTINGS_GEMINI_ONLY = Settings(DATABASE_URL="postgresql://x", JWT_SECRET="x" * 32, GEMINI_API_KEY="gem-test")

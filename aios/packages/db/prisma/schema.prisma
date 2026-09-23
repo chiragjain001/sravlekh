@@ -1535,6 +1535,10 @@ model Document {
   expectedPageCount Int?
   layoutType        DocumentLayoutType @default(TEMPLATE_KNOWN)
   status            DocumentStatus     @default(UPLOADED)
+  // Set when the booklet arrived as a PDF: the storage key of the ORIGINAL
+  // upload, kept alongside the page images rendered from it so a re-render is
+  // possible without asking the teacher to upload again. Null for image uploads.
+  sourceFileKey     String?
   createdAt         DateTime           @default(now())
 
   documentBundle    DocumentBundle?    @relation(fields: [documentBundleId], references: [id])
@@ -1640,6 +1644,9 @@ model ProcessingJob {
   attemptCount Int                @default(0)
   startedAt   DateTime?
   completedAt DateTime?
+  // Why a stage failed, in words a teacher can act on ("this PDF is password-
+  // protected"). Set by the pdf-split worker; null for everything else.
+  errorMessage String?
 
   document  Document             @relation(fields: [documentId], references: [id], onDelete: Cascade)
   artifacts ProcessingArtifact[]
@@ -1775,6 +1782,11 @@ model EvaluationVersion {
   teacherComment     String?
   aiRecommendationId String?
   disputeReason      String?
+  // Tag-wise marks as the author of this version saw/edited them:
+  // { verdict, mistakeTag, tags: [{ tag, maxMarks, marksAwarded, note }], note,
+  //   modelSolution?, referenceUsed? }. Nullable — versions written before
+  // tag-wise marking, and manual decisions made without one, have none.
+  gradingBreakdown   Json?
   createdAt          DateTime         @default(now())
 
   evaluation      Evaluation                 @relation("EvaluationVersions", fields: [evaluationId], references: [id], onDelete: Cascade)
@@ -1821,6 +1833,10 @@ model AIRecommendation {
   suggestedCriterionScores Json?
   confidence          Float
   flags               String[]
+  // The model's tag-wise split, verdict, mistake type and — when the question
+  // had no reference answer — its own model solution. Same shape as
+  // EvaluationVersion.gradingBreakdown.
+  gradingBreakdown    Json?
   createdAt           DateTime @default(now())
 
   response        Response        @relation(fields: [responseId], references: [id], onDelete: Cascade)

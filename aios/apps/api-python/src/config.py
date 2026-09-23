@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     # AI (OpenAI)
     OPENAI_API_KEY: str = ""
 
+    # Provider requests per minute, per model, paced inside this process
+    # (providers/rate_limit.py). 0 disables pacing. Default 10 matches Gemini's
+    # free-tier GenerateRequestsPerMinutePerProjectPerModel quota, which a single
+    # booklet's detection + OCR + evaluation burst otherwise exceeds.
+    PROVIDER_MAX_RPM: int = 10
+
     # AI (Gemini) — dev-only fallback for blueprint_agent.py when no OpenAI key
     # is configured. See GEMINI_FALLBACK_MODEL in that file for why this isn't
     # governed by the OpenAI-specific model registry.

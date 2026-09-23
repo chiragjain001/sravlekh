@@ -1,6 +1,7 @@
 import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
+import { deferIfRateLimited } from '../shared/provider-rate-limit';
 import { OcrService } from './ocr.service';
 import { OCR_QUEUE, OcrJobData } from './ocr.constants';
 import { reportDeadLetter } from '../shared/logging/dead-letter';
@@ -19,8 +20,14 @@ export class OcrProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<OcrJobData>): Promise<void> {
-    await this.ocrService.requestOcrExtraction(job.data);
+  async process(job: Job<OcrJobData>, token?: string): Promise<void> {
+    try {
+      await this.ocrService.requestOcrExtraction(job.data);
+    } catch (err) {
+      // Rate-limited jobs are rescheduled, not retried immediately or failed.
+      await deferIfRateLimited(job, err, token, (m) => this.logger.warn(m));
+      throw err;
+    }
   }
 
   @OnWorkerEvent('failed')

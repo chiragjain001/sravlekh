@@ -90,6 +90,17 @@ export const QUEUE_POLICY = {
   },
 
   /**
+   * PDF SPLIT — one job per uploaded PDF booklet, rendering every page through
+   * api-python. Heavier per job than OCR (a whole file, not one region) and
+   * rarer, so it runs at low concurrency; a booklet that fails to render is
+   * failed on the document rather than retried forever.
+   */
+  pdfSplit: {
+    concurrency: fromEnv('QUEUE_CONCURRENCY_PDF_SPLIT', 2),
+    jobOptions: { removeOnComplete: true, removeOnFail: { count: 500, age: 14 * DAY } },
+  },
+
+  /**
    * SCORE AGGREGATION — the highest-volume queue: one job per evaluation
    * decision, and a teacher grades in bursts.
    *

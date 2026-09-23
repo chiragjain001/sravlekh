@@ -60,7 +60,7 @@ async def test_http_image_is_fetched_and_sent_inline():
     http_client = MagicMock()
     http_client.__aenter__ = AsyncMock(return_value=SimpleNamespace(get=AsyncMock(return_value=response)))
     http_client.__aexit__ = AsyncMock(return_value=False)
-    with patch("src.providers.gemini_adapter.Client", fake_client("ok", captured)),          patch("src.providers.gemini_adapter.httpx.AsyncClient", return_value=http_client):
+    with patch("src.providers.gemini_adapter.Client", fake_client("ok", captured)),          patch("src.image_fetch.httpx.AsyncClient", return_value=http_client):
         adapter = GeminiAdapter(api_key="test-key")
         await adapter.generate(
             GenerateRequest(
@@ -82,7 +82,7 @@ async def test_image_fetch_failure_is_normalized_and_never_leaks_the_signed_url(
         return_value=SimpleNamespace(get=AsyncMock(side_effect=httpx.ConnectError("boom")))
     )
     http_client.__aexit__ = AsyncMock(return_value=False)
-    with patch("src.providers.gemini_adapter.Client", fake_client()),          patch("src.providers.gemini_adapter.httpx.AsyncClient", return_value=http_client):
+    with patch("src.providers.gemini_adapter.Client", fake_client()),          patch("src.image_fetch.httpx.AsyncClient", return_value=http_client):
         adapter = GeminiAdapter(api_key="test-key")
         with pytest.raises(AdapterInvalidRequestError) as exc:
             await adapter.generate(

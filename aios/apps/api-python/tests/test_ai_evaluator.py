@@ -54,7 +54,8 @@ def make_db(response, ocr_block=None, ocr_result=None, question_version=None, cr
         criterion_scores_captured = []
     return SimpleNamespace(
         response=SimpleNamespace(find_unique=AsyncMock(return_value=response), find_many=AsyncMock(return_value=[])),
-        ocrblock=SimpleNamespace(find_first=AsyncMock(return_value=ocr_block)),
+        pageregion=SimpleNamespace(find_unique=AsyncMock(return_value=SimpleNamespace(id="region-1", boundingBox={"x": 0.1, "y": 0.2, "width": 0.6, "height": 0.3}))),
+        ocrblock=SimpleNamespace(find_many=AsyncMock(return_value=[ocr_block] if ocr_block else [])),
         ocrresult=SimpleNamespace(find_first=AsyncMock(return_value=ocr_result)),
         rubriccriterion=SimpleNamespace(find_many=AsyncMock(return_value=[])),
         questionversion=SimpleNamespace(find_first=AsyncMock(return_value=question_version)),
@@ -94,23 +95,121 @@ def mock_llm(result_dict):
 # it silently no-ops against a module's __dict__ unless the key already matches exactly).
 
 
+def registry_patches(adapter_class, prompt_version=None):
+    """The five patches every LLM-reaching test needs, as one context manager."""
+    from contextlib import ExitStack
+
+    stack = ExitStack()
+    stack.enter_context(patch("src.providers.factory.OpenAIAdapter", adapter_class))
+    stack.enter_context(patch("src.evaluation.ai_evaluator.get_settings", return_value=SETTINGS_WITH_KEY))
+    stack.enter_context(patch("src.evaluation.ai_evaluator.resolve_evaluation_ai_model_id", AsyncMock(return_value="model-1")))
+    stack.enter_context(
+        patch(
+            "src.evaluation.ai_evaluator.resolve_active_evaluation_model_version",
+            AsyncMock(return_value=SimpleNamespace(id="mv-1", versionLabel="gpt-4o")),
+        )
+    )
+    stack.enter_context(
+        patch(
+            "src.evaluation.ai_evaluator.resolve_evaluation_prompt_version_id",
+            prompt_version or AsyncMock(return_value="pv-1"),
+        )
+    )
+    return stack
+
+
 @pytest.mark.asyncio
-async def test_evaluates_independently_when_no_reference_answer():
-    """Reference answer is now optional. When missing, LLM evaluates using independent knowledge."""
+async def test_no_reference_answer_is_graded_by_the_model_solving_it_itself_and_flagged():
+    """No longer a skip: the no-reference template is sent, registered under its
+    own prompt version, and the result carries the model's solution plus a
+    no_reference_answer flag so the reviewing teacher can see it."""
+    from src.evaluation.ai_model_registry import (
+        PROMPT_TEMPLATE_NO_REFERENCE,
+        PROMPT_VERSION_LABEL_NO_REFERENCE,
+    )
+
     response = make_response(make_question(solution=None))
     fake_db = make_db(response)
-    llm_class = mock_llm({"suggestedMarks": 3.0, "confidence": 0.85, "suggestedCriterionScores": None})
-    with patch("src.evaluation.ai_evaluator.db", fake_db), \
-         patch("src.providers.factory.OpenAIAdapter", llm_class), \
-         patch("src.evaluation.ai_evaluator.get_settings", return_value=SETTINGS_WITH_KEY), \
-         patch("src.evaluation.ai_evaluator.resolve_evaluation_ai_model_id", AsyncMock(return_value="model-1")), \
-         patch("src.evaluation.ai_evaluator.resolve_active_evaluation_model_version", AsyncMock(return_value=SimpleNamespace(id="mv-1", versionLabel="gpt-4o"))), \
-         patch("src.evaluation.ai_evaluator.resolve_evaluation_prompt_version_id", AsyncMock(return_value="pv-1")):
+    adapter_class = mock_llm({
+        "suggestedMarks": 3, "confidence": 0.8, "offTopicSuspected": False,
+        "verdict": "PARTIALLY_CORRECT", "mistakeTag": "CONCEPT_ERROR",
+        "modelSolution": "Light energy is converted to chemical energy (glucose).",
+        "breakdown": [
+            {"tag": "concept", "maxMarks": 3, "marksAwarded": 2, "note": "Missing chlorophyll"},
+            {"tag": "KEY_POINTS", "maxMarks": 2, "marksAwarded": 1},
+        ],
+    })
+    prompt_version = AsyncMock(return_value="pv-noref")
+    with patch("src.evaluation.ai_evaluator.db", fake_db), registry_patches(adapter_class, prompt_version):
         result = await evaluate_response("inst-1", "resp-1", "user-1")
-    # Should process successfully and include "no_reference_used" flag
-    assert result.get("skipped") is not True
-    assert "no_reference_used" in result.get("flags", [])
-    fake_db.airecommendation.create.assert_awaited_once()
+
+    sent_prompt = adapter_class.return_value.generate.await_args.args[0].content[0].text
+    assert "Reference answer" not in sent_prompt
+    assert "First solve the question yourself" in sent_prompt
+    assert prompt_version.await_args.args[2:] == (PROMPT_VERSION_LABEL_NO_REFERENCE, PROMPT_TEMPLATE_NO_REFERENCE)
+
+    created = fake_db.airecommendation.create.await_args.kwargs["data"]
+    assert created["flags"] == ["no_reference_answer"]
+    assert created["suggestedMarks"] == 3
+    breakdown = created["gradingBreakdown"].data
+    assert breakdown["referenceUsed"] is False
+    assert breakdown["modelSolution"].startswith("Light energy")
+    assert breakdown["verdict"] == "PARTIALLY_CORRECT"
+    assert [t["tag"] for t in breakdown["tags"]] == ["CONCEPT", "KEY_POINTS"]
+    version = fake_db.evaluationversion.create.await_args.kwargs["data"]
+    assert version["mistakeTagType"] == "CONCEPT_ERROR"
+    assert result["gradingBreakdown"]["tags"][0]["marksAwarded"] == 2
+
+
+@pytest.mark.asyncio
+async def test_breakdown_total_wins_over_suggested_marks_and_each_part_is_clamped():
+    """The teacher edits the parts, so the total is their sum — and a part
+    awarded more than its own max cannot inflate it."""
+    response = make_response(make_question())
+    fake_db = make_db(response)
+    adapter_class = mock_llm({
+        "suggestedMarks": 5, "confidence": 0.9,
+        "breakdown": [
+            {"tag": "FORMULA", "maxMarks": 1, "marksAwarded": 3},
+            {"tag": "CALCULATION", "maxMarks": 2, "marksAwarded": 1},
+            {"tag": "FINAL_ANSWER", "maxMarks": 2, "marksAwarded": 0},
+        ],
+    })
+    with patch("src.evaluation.ai_evaluator.db", fake_db), registry_patches(adapter_class):
+        result = await evaluate_response("inst-1", "resp-1", "user-1")
+
+    assert result["suggestedMarks"] == 2  # 1 (clamped from 3) + 1 + 0
+    breakdown = fake_db.airecommendation.create.await_args.kwargs["data"]["gradingBreakdown"].data
+    assert breakdown["tags"][0]["marksAwarded"] == 1
+    assert breakdown["referenceUsed"] is True
+    assert breakdown["modelSolution"] is None
+
+
+@pytest.mark.asyncio
+async def test_breakdown_whose_parts_do_not_add_up_to_the_question_marks_is_flagged():
+    response = make_response(make_question())  # marksAvailable=5
+    fake_db = make_db(response)
+    adapter_class = mock_llm({
+        "suggestedMarks": 3, "confidence": 0.9,
+        "breakdown": [{"tag": "CONCEPT", "maxMarks": 2, "marksAwarded": 2}, {"tag": "EXAMPLE", "maxMarks": 2, "marksAwarded": 1}],
+    })
+    with patch("src.evaluation.ai_evaluator.db", fake_db), registry_patches(adapter_class):
+        await evaluate_response("inst-1", "resp-1", "user-1")
+
+    assert "breakdown_mismatch" in fake_db.airecommendation.create.await_args.kwargs["data"]["flags"]
+
+
+@pytest.mark.asyncio
+async def test_unknown_verdict_and_mistake_tag_are_dropped_not_written_to_the_enum_column():
+    response = make_response(make_question())
+    fake_db = make_db(response)
+    adapter_class = mock_llm({"suggestedMarks": 2, "confidence": 0.9, "verdict": "MOSTLY_OK", "mistakeTag": "SPELLING"})
+    with patch("src.evaluation.ai_evaluator.db", fake_db), registry_patches(adapter_class):
+        await evaluate_response("inst-1", "resp-1", "user-1")
+
+    breakdown = fake_db.airecommendation.create.await_args.kwargs["data"]["gradingBreakdown"].data
+    assert breakdown["verdict"] is None and breakdown["mistakeTag"] is None
+    assert "mistakeTagType" not in fake_db.evaluationversion.create.await_args.kwargs["data"]
 
 
 @pytest.mark.asyncio
@@ -154,7 +253,7 @@ async def test_skips_page_region_evidence_with_no_ocr_result():
 async def test_skips_page_region_evidence_flagged_requires_visual_evaluation():
     response = make_response(make_question(), evidence_type="PAGE_REGION", question_region_id="region-1")
     ocr_result = SimpleNamespace(id="ocr-1", extractedText=None, confidence=0.0, requiresVisualEvaluation=True)
-    fake_db = make_db(response, ocr_block=SimpleNamespace(id="block-1"), ocr_result=ocr_result)
+    fake_db = make_db(response, ocr_block=SimpleNamespace(id="block-1", boundingBox={"x": 0.1, "y": 0.2, "width": 0.6, "height": 0.3}), ocr_result=ocr_result)
     with patch("src.evaluation.ai_evaluator.db", fake_db):
         result = await evaluate_response("inst-1", "resp-1", "user-1")
     assert result == {"skipped": True, "reason": "illegible_handwriting"}
@@ -213,7 +312,7 @@ async def test_flags_low_confidence_below_threshold():
 async def test_flags_ocr_low_confidence_from_the_underlying_ocr_result():
     response = make_response(make_question(), evidence_type="PAGE_REGION", question_region_id="region-1")
     ocr_result = SimpleNamespace(id="ocr-1", extractedText="plants use sunlight", confidence=0.5, requiresVisualEvaluation=False)
-    fake_db = make_db(response, ocr_block=SimpleNamespace(id="block-1"), ocr_result=ocr_result)
+    fake_db = make_db(response, ocr_block=SimpleNamespace(id="block-1", boundingBox={"x": 0.1, "y": 0.2, "width": 0.6, "height": 0.3}), ocr_result=ocr_result)
     llm_class = mock_llm({"suggestedMarks": 3, "confidence": 0.9, "note": "ok", "offTopicSuspected": False})
 
     with patch("src.evaluation.ai_evaluator.db", fake_db), \
@@ -255,7 +354,7 @@ async def test_flags_ocr_low_confidence_from_the_underlying_ocr_result():
 async def test_ocr_confidence_routing_boundary_matrix(confidence, should_skip, expect_ocr_low_confidence_flag):
     response = make_response(make_question(), evidence_type="PAGE_REGION", question_region_id="region-1")
     ocr_result = SimpleNamespace(id="ocr-1", extractedText="plants use sunlight", confidence=confidence, requiresVisualEvaluation=False)
-    fake_db = make_db(response, ocr_block=SimpleNamespace(id="block-1"), ocr_result=ocr_result)
+    fake_db = make_db(response, ocr_block=SimpleNamespace(id="block-1", boundingBox={"x": 0.1, "y": 0.2, "width": 0.6, "height": 0.3}), ocr_result=ocr_result)
     llm_class = mock_llm({"suggestedMarks": 3, "confidence": 0.9, "note": "ok", "offTopicSuspected": False})
 
     with patch("src.evaluation.ai_evaluator.db", fake_db), \
@@ -286,7 +385,7 @@ async def test_illegible_handwriting_skip_never_writes_anything_an_authoritative
     path is exactly that — no Evaluation, no EvaluationVersion, no AIRecommendation."""
     response = make_response(make_question(), evidence_type="PAGE_REGION", question_region_id="region-1")
     ocr_result = SimpleNamespace(id="ocr-1", extractedText="garbled illegible text", confidence=0.1, requiresVisualEvaluation=False)
-    fake_db = make_db(response, ocr_block=SimpleNamespace(id="block-1"), ocr_result=ocr_result)
+    fake_db = make_db(response, ocr_block=SimpleNamespace(id="block-1", boundingBox={"x": 0.1, "y": 0.2, "width": 0.6, "height": 0.3}), ocr_result=ocr_result)
 
     with patch("src.evaluation.ai_evaluator.db", fake_db):
         result = await evaluate_response("inst-1", "resp-1", "user-1")
@@ -493,6 +592,7 @@ def test_build_prompt_renders_the_registered_template_with_correctly_substituted
     assert "Reference answer:\nPlants convert light to chemical energy." in holistic
     assert "Student's answer:\nPlants use sunlight." in holistic
     assert "Return JSON." in holistic
+    assert "Score against these specific criteria" not in holistic  # no criteria -> no block
 
     rubric_scored = _build_prompt(
         template=PROMPT_TEMPLATE,
@@ -503,8 +603,7 @@ def test_build_prompt_renders_the_registered_template_with_correctly_substituted
         criteria=[SimpleNamespace(description="Mentions chlorophyll", maxMarks=2)],
         format_instructions="Return JSON.",
     )
-    assert "Rubric criteria for evaluation:" in rubric_scored
-    assert "Mentions chlorophyll (max 2 marks)" in rubric_scored
+    assert "Score against these specific criteria:\n- Mentions chlorophyll (max 2 marks)" in rubric_scored
 
 
 def test_build_prompt_safely_handles_curly_braces_in_free_text_fields():
@@ -621,7 +720,7 @@ async def test_configured_max_tokens_is_actually_enforced_in_the_provider_reques
         await evaluate_response("inst-1", "resp-1", "user-1")
 
     sent_request = adapter_class.return_value.generate.await_args.args[0]
-    assert sent_request.max_tokens == EVALUATION_MAX_TOKENS == 800
+    assert sent_request.max_tokens == EVALUATION_MAX_TOKENS == 4096
 
 
 @pytest.mark.asyncio
@@ -692,20 +791,20 @@ async def test_bumping_the_prompt_version_label_creates_a_new_row_never_edits_th
         resolve_evaluation_prompt_version_id,
     )
 
-    assert PROMPT_VERSION_LABEL == "v2"
+    assert PROMPT_VERSION_LABEL == "v3"
 
     fake_db = SimpleNamespace(
         promptversion=SimpleNamespace(
-            find_first=AsyncMock(return_value=None),  # no "v2" row yet — "v1" existing is irrelevant to this lookup
-            create=AsyncMock(return_value=SimpleNamespace(id="pv-v2-new")),
+            find_first=AsyncMock(return_value=None),  # no "v3" row yet — older labels are irrelevant to this lookup
+            create=AsyncMock(return_value=SimpleNamespace(id="pv-v3-new")),
         )
     )
     with patch("src.evaluation.ai_model_registry.db", fake_db):
         prompt_id = await resolve_evaluation_prompt_version_id("model-1", "user-1")
 
-    assert prompt_id == "pv-v2-new"
-    assert fake_db.promptversion.find_first.await_args.kwargs["where"]["versionLabel"] == "v2"
-    assert fake_db.promptversion.create.await_args.kwargs["data"]["versionLabel"] == "v2"
+    assert prompt_id == "pv-v3-new"
+    assert fake_db.promptversion.find_first.await_args.kwargs["where"]["versionLabel"] == "v3"
+    assert fake_db.promptversion.create.await_args.kwargs["data"]["versionLabel"] == "v3"
     assert fake_db.promptversion.create.await_args.kwargs["data"]["promptTemplate"] == PROMPT_TEMPLATE
 
 
@@ -789,3 +888,82 @@ async def test_truncated_completion_is_discarded_rather_than_graded_on_partial_o
     fake_db.airecommendation.create.assert_not_awaited()
     fake_db.evaluationversion.create.assert_not_awaited()
     fake_db.evaluation.update_many.assert_not_awaited()
+
+
+# ── Teacher authority: a late AI result may never replace an approved mark ──
+
+
+def approved_version(source="TEACHER"):
+    return SimpleNamespace(id="v-teacher-1", source=source, marksAwarded=4.0)
+
+
+@pytest.mark.parametrize("source", ["TEACHER", "REVIEWER"])
+@pytest.mark.asyncio
+async def test_an_ai_job_landing_after_the_teacher_approved_is_skipped(source):
+    """A job queued before the teacher submitted can run after. Chaining an AI
+    version on top would move the current-version pointer off the human's mark,
+    which silently drops it out of ScoreRecord."""
+    response = make_response(
+        make_question(),
+        evaluation=SimpleNamespace(id="eval-1", currentEvaluationVersionId="v-teacher-1", currentVersion=approved_version(source)),
+    )
+    fake_db = make_db(response)
+    adapter_class = mock_llm({"suggestedMarks": 1, "confidence": 0.9})
+    with patch("src.evaluation.ai_evaluator.db", fake_db), registry_patches(adapter_class):
+        result = await evaluate_response("inst-1", "resp-1", "user-1")
+
+    assert result == {"skipped": True, "reason": "already_reviewed_by_teacher"}
+    adapter_class.return_value.generate.assert_not_awaited()
+    fake_db.airecommendation.create.assert_not_awaited()
+    fake_db.evaluationversion.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_an_earlier_ai_suggestion_does_not_block_a_re_run():
+    response = make_response(
+        make_question(),
+        evaluation=SimpleNamespace(id="eval-1", currentEvaluationVersionId="v-ai-1",
+                                   currentVersion=SimpleNamespace(id="v-ai-1", source="AI", marksAwarded=2.0)),
+    )
+    fake_db = make_db(response)
+    adapter_class = mock_llm({"suggestedMarks": 3, "confidence": 0.9})
+    with patch("src.evaluation.ai_evaluator.db", fake_db), registry_patches(adapter_class):
+        result = await evaluate_response("inst-1", "resp-1", "user-1")
+
+    assert result["suggestedMarks"] == 3
+    fake_db.evaluationversion.create.assert_awaited_once()
+
+
+# ── OCR evidence belongs to the box it was read from ────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_transcript_read_from_a_box_the_teacher_has_since_moved_is_not_used():
+    """The region was resized after the reading, so that text is evidence for a
+    different part of the page: route to the human queue, don't grade on it."""
+    ocr_result = SimpleNamespace(id="ocr-1", extractedText="Answer text", confidence=0.95,
+                                 requiresVisualEvaluation=False, processedAt=1)
+    stale_block = SimpleNamespace(id="block-old", boundingBox={"x": 0.8, "y": 0.8, "width": 0.1, "height": 0.1})
+    response = make_response(make_question(), evidence_type="PAGE_REGION", question_region_id="region-1")
+    fake_db = make_db(response, ocr_block=stale_block, ocr_result=ocr_result)
+    adapter_class = mock_llm({"suggestedMarks": 4, "confidence": 0.9})
+    with patch("src.evaluation.ai_evaluator.db", fake_db), registry_patches(adapter_class):
+        result = await evaluate_response("inst-1", "resp-1", "user-1")
+
+    assert result == {"skipped": True, "reason": "illegible_handwriting"}
+    adapter_class.return_value.generate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_transcript_read_from_the_current_box_is_used():
+    ocr_result = SimpleNamespace(id="ocr-1", extractedText="Rayleigh scattering", confidence=0.95,
+                                 requiresVisualEvaluation=False, processedAt=1)
+    response = make_response(make_question(), evidence_type="PAGE_REGION", question_region_id="region-1")
+    fake_db = make_db(response, ocr_block=SimpleNamespace(id="block-1", boundingBox={"x": 0.1, "y": 0.2, "width": 0.6, "height": 0.3}), ocr_result=ocr_result)
+    adapter_class = mock_llm({"suggestedMarks": 4, "confidence": 0.9})
+    with patch("src.evaluation.ai_evaluator.db", fake_db), registry_patches(adapter_class):
+        result = await evaluate_response("inst-1", "resp-1", "user-1")
+
+    assert result["suggestedMarks"] == 4
+    sent_prompt = adapter_class.return_value.generate.await_args.args[0].content[0].text
+    assert "Rayleigh scattering" in sent_prompt

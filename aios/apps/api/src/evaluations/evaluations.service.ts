@@ -18,7 +18,7 @@ import { AuditAction, UserRole, EvaluationSource, EvaluationStatus, RubricScorin
 import { AuthenticatedUser } from '../auth/auth.types';
 import { DecideEvaluationDto, EvaluationDecision, OverrideEvaluationDto, QueryEvaluationWorkItemsDto } from './dto/evaluation.dto';
 import { SCORE_AGGREGATION_QUEUE, ScoreAggregationJobData } from './score-aggregation.constants';
-import { SUBJECTIVE_QUESTION_TYPES } from './evaluation-status.util';
+import { NEEDS_HUMAN_EVALUATION_FILTER, needsHumanEvaluation, SUBJECTIVE_QUESTION_TYPES } from './evaluation-status.util';
 import { enqueueDeduped, jobKey } from '../infrastructure/queue/enqueue';
 import { QUEUE_POLICY } from '../infrastructure/queue/queue-policy';
 
@@ -40,7 +40,12 @@ const REPROCESS_IDEMPOTENCY_TTL_SECONDS = 60 * 60;
  * the one list, since it decides both what the governance gate examines and
  * what the score aggregator trusts.
  */
-const RUBRIC_ADDITIVE_MODES: RubricScoringMode[] = [RubricScoringMode.CRITERION_ADDITIVE, RubricScoringMode.STEP_WISE];
+export const RUBRIC_ADDITIVE_MODES: RubricScoringMode[] = [RubricScoringMode.CRITERION_ADDITIVE, RubricScoringMode.STEP_WISE];
+
+/** A question's rubric with only its current (highest) version loaded, as getEvaluableResponse includes it. */
+export type RubricWithCurrentVersion = Prisma.RubricGetPayload<{
+  include: { versions: { include: { criteria: true } } };
+}>;
 
 @Injectable()
 export class EvaluationsService {
@@ -199,9 +204,14 @@ export class EvaluationsService {
     return newVersion;
   }
 
-  /** Shared by decide() (ADJUST/REJECT_RESCORE) and override() — the criteria-required-vs-holistic branching and validation is identical for both. */
-  private resolveMarksAndCriteria(
-    response: Awaited<ReturnType<EvaluationsService['getEvaluableResponse']>>,
+  /**
+   * Shared by decide() (ADJUST/REJECT_RESCORE), override() and CheckedCopyService.submit()
+   * — the criteria-required-vs-holistic branching and validation is identical for all three.
+   * Typed structurally (not as getEvaluableResponse's return) so a caller with its own
+   * include shape can use it; it reads only these fields.
+   */
+  resolveMarksAndCriteria(
+    response: { marksAvailable: number; question: { rubric: RubricWithCurrentVersion | null } },
     dto: { marksAwarded?: number; criterionScores?: { rubricCriterionId: string; marksAwarded: number; note?: string }[]; teacherComment?: string },
   ): { marksAwarded: number; criterionScoresData: Prisma.EvaluationCriterionScoreCreateWithoutEvaluationVersionInput[] } {
     const rubric = response.question.rubric;
@@ -292,8 +302,10 @@ export class EvaluationsService {
 
     const where: Prisma.ResponseWhereInput = {
       attemptId: { not: null },
-      question: { type: { in: [...SUBJECTIVE_QUESTION_TYPES] }, ...(query.subjectId && { subjectId: query.subjectId }) },
-      OR: eligibility,
+      // Subjective questions anywhere, plus anything handwritten on a page —
+      // a numerical worked out in a booklet needs a human too.
+      AND: [NEEDS_HUMAN_EVALUATION_FILTER, { OR: eligibility }],
+      ...(query.subjectId && { question: { is: { subjectId: query.subjectId } } }),
       attempt: {
         assessmentDelivery: {
           assessment: { instituteId },
@@ -369,8 +381,10 @@ export class EvaluationsService {
     if (!response || !response.attemptId || response.attempt?.assessmentDelivery.assessment.instituteId !== instituteId) {
       throw new NotFoundException('Response not found');
     }
-    if (!SUBJECTIVE_QUESTION_TYPES.includes(response.question.type)) {
-      throw new BadRequestException('Only subjective (SHORT_ANSWER/LONG_ANSWER/PASSAGE_BASED) responses go through evaluation — objective responses are scored directly at capture.');
+    if (!needsHumanEvaluation(response)) {
+      throw new BadRequestException(
+        'Only subjective answers, or answers handwritten on a scanned page, go through evaluation — objective responses captured digitally are scored at capture.',
+      );
     }
 
     return response;

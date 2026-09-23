@@ -15,56 +15,92 @@ from src.database import db
 PROVIDER_NAME = "OpenAI"
 MODEL_NAME = "gpt-4o"
 VERSION_LABEL = "gpt-4o"
-# P1 B3: bumped from "v1". The old v1 row's promptTemplate was a two-sentence
-# placeholder that never matched the prompt ai_evaluator.py actually sent (see
-# PROMPT_TEMPLATE below) — 32-AI-GOVERNANCE-POLICY.md §7 forbids retroactively
-# rewriting a historical PromptVersion's content, so the fix is a new labeled
-# version, not an edit to "v1" in place. Existing AIRecommendation rows keep
-# pointing at "v1" — an honest record of what was (wrongly) claimed at the time,
-# not silently made to look correct in hindsight.
-PROMPT_VERSION_LABEL = "v2"
+# P1 B3 bumped "v1" -> "v2" because v1's stored template never matched what was
+# sent. "v3" adds step/tag-wise marking (the `breakdown` in the output schema)
+# and splits into two templates — with and without a reference answer — each
+# its own PromptVersion row. 32-AI-GOVERNANCE-POLICY.md §7 forbids rewriting a
+# historical PromptVersion's content, so changed text is always a new label;
+# existing AIRecommendation rows keep pointing at "v2".
+PROMPT_VERSION_LABEL = "v3"
+PROMPT_VERSION_LABEL_NO_REFERENCE = "v3-no-reference"
 
-# With reference answer (original)
+# Shared by both templates below. Plain text with {max_marks} as its only
+# placeholder — it is concatenated into each template before .format() runs.
+_MARKING_INSTRUCTIONS = (
+    "Mark it the way an experienced board examiner would, step by step:\n"
+    "- Split the {max_marks} marks into 2-5 tagged parts that fit this question, whose maxMarks add up to exactly "
+    "{max_marks}. For numericals/derivations use tags like FORMULA, SUBSTITUTION, CALCULATION, FINAL_ANSWER, UNITS; "
+    "for theory use tags like CONCEPT, KEY_POINTS, EXPLANATION, EXAMPLE, DIAGRAM.\n"
+    "- Award each part on its own merit: a wrong final answer does not cancel marks for a correct formula or method, "
+    "and an early slip carried forward correctly is penalised once, not at every later step.\n"
+    "- suggestedMarks must equal the sum of the parts' marksAwarded.\n"
+    "- verdict: CORRECT (full marks), PARTIALLY_CORRECT, INCORRECT (zero marks), or NOT_ATTEMPTED (blank or unrelated).\n"
+    "- mistakeTag: the main kind of error if any marks were lost (CONCEPT_ERROR, FORMULA_ERROR, CALCULATION_ERROR, "
+    "CARELESS, NOT_ATTEMPTED, PRESENTATION_ERROR), otherwise null.\n"
+    "- note: one or two sentences for the teacher saying where marks were lost.\n"
+    "- The student's answer was transcribed from handwriting, so ignore obvious transcription noise.\n"
+    "- If the answer has little relevance to the question, set offTopicSuspected=true."
+)
+
+# ai_evaluator.py renders these exact constants (imported, not copied), and
+# resolve_evaluation_prompt_version_id persists the same one as
+# PromptVersion.promptTemplate — so the audited text and the sent text cannot
+# drift. str.format() does one pass over the template's own braces and does not
+# re-scan substituted values, so format_instructions (JSON-schema braces) and
+# free-text fields are inserted literally.
 PROMPT_TEMPLATE = (
     "Question (worth {max_marks} marks):\n{question_content}\n\n"
     "Reference answer:\n{reference_answer}\n\n"
     "Student's answer:\n{student_answer}\n"
     "{criteria_block}\n\n"
-    "Grade the student's answer against the reference answer. Be fair and consistent. "
-    "If the student's answer appears to have little relevance to the question, set offTopicSuspected=true.\n\n"
-    "{format_instructions}"
+    "Grade the student's answer against the reference answer. Be fair and consistent, and accept a correct "
+    "method or wording even when it differs from the reference. Set modelSolution to null.\n"
+    + _MARKING_INSTRUCTIONS
+    + "\n\n{format_instructions}"
 )
 
-# Without reference answer (new v3 - LLM solves independently)
-PROMPT_TEMPLATE_V3 = (
+PROMPT_TEMPLATE_NO_REFERENCE = (
     "Question (worth {max_marks} marks):\n{question_content}\n\n"
     "Student's answer:\n{student_answer}\n"
     "{criteria_block}\n\n"
-    "You are an expert evaluator. Grade this student's answer based on your own knowledge and understanding of the subject. "
-    "First solve the question yourself, then evaluate the student's answer against your solution. "
-    "Grade fairly, awarding full marks only if the student's answer is correct/complete, "
-    "partial marks for partial correctness, and zero if incorrect. "
-    "If the student's answer appears to have little relevance to the question, set offTopicSuspected=true.\n\n"
-    "{format_instructions}"
+    "No reference answer was provided. First solve the question yourself and put a concise model answer in "
+    "modelSolution (for a numerical: the key steps and the final value with units). Then grade the student's "
+    "answer against your own solution. If the question is ambiguous or opinion-based, or you are not sure of the "
+    "correct answer, lower your confidence accordingly — a teacher reviews every mark.\n"
+    + _MARKING_INSTRUCTIONS
+    + "\n\n{format_instructions}"
 )
 
 
-async def resolve_evaluation_ai_model_id() -> str:
-    provider = await db.aiprovider.find_first(where={"name": PROVIDER_NAME})
+def prompt_for(has_reference: bool) -> tuple[str, str]:
+    """(versionLabel, template) for this evaluation's branch."""
+    if has_reference:
+        return PROMPT_VERSION_LABEL, PROMPT_TEMPLATE
+    return PROMPT_VERSION_LABEL_NO_REFERENCE, PROMPT_TEMPLATE_NO_REFERENCE
+
+
+# The provider actually in use decides which rows these resolve
+# (providers/factory.py). The defaults keep OpenAI's historical rows as the
+# default so existing installs are unaffected; a Gemini-backed deployment
+# resolves its own AIProvider/AIModel/AIModelVersion chain, so the model
+# recorded on every AIRecommendation is the model that ran and deactivating
+# it is a real kill switch for that provider.
+async def resolve_evaluation_ai_model_id(provider_name: str = PROVIDER_NAME, model_name: str = MODEL_NAME) -> str:
+    provider = await db.aiprovider.find_first(where={"name": provider_name})
     if provider is None:
-        provider = await db.aiprovider.create(data={"name": PROVIDER_NAME})
+        provider = await db.aiprovider.create(data={"name": provider_name})
 
     model = await db.aimodel.find_first(
-        where={"aiProviderId": provider.id, "name": MODEL_NAME, "purpose": "EVALUATION"}
+        where={"aiProviderId": provider.id, "name": model_name, "purpose": "EVALUATION"}
     )
     if model is None:
         model = await db.aimodel.create(
-            data={"aiProviderId": provider.id, "name": MODEL_NAME, "purpose": "EVALUATION"}
+            data={"aiProviderId": provider.id, "name": model_name, "purpose": "EVALUATION"}
         )
     return model.id
 
 
-async def resolve_active_evaluation_model_version(ai_model_id: str):
+async def resolve_active_evaluation_model_version(ai_model_id: str, version_label: str = VERSION_LABEL):
     """Returns the active AIModelVersion row, or None if evaluation is deconfigured.
 
     Two distinct "not found" cases, deliberately handled differently:
@@ -90,7 +126,7 @@ async def resolve_active_evaluation_model_version(ai_model_id: str):
     an audit label applied after the fact (27 §8a).
     """
     version = await db.aimodelversion.find_first(
-        where={"aiModelId": ai_model_id, "versionLabel": VERSION_LABEL, "isActive": True},
+        where={"aiModelId": ai_model_id, "versionLabel": version_label, "isActive": True},
         order={"createdAt": "desc"},
     )
     if version is not None:
@@ -101,20 +137,25 @@ async def resolve_active_evaluation_model_version(ai_model_id: str):
         return None
 
     return await db.aimodelversion.create(
-        data={"aiModelId": ai_model_id, "versionLabel": VERSION_LABEL, "isActive": True}
+        data={"aiModelId": ai_model_id, "versionLabel": version_label, "isActive": True}
     )
 
 
-async def resolve_evaluation_prompt_version_id(ai_model_id: str, created_by_user_id: str) -> str:
+async def resolve_evaluation_prompt_version_id(
+    ai_model_id: str,
+    created_by_user_id: str,
+    version_label: str = PROMPT_VERSION_LABEL,
+    template: str = PROMPT_TEMPLATE,
+) -> str:
     prompt = await db.promptversion.find_first(
-        where={"aiModelId": ai_model_id, "versionLabel": PROMPT_VERSION_LABEL}
+        where={"aiModelId": ai_model_id, "versionLabel": version_label}
     )
     if prompt is None:
         prompt = await db.promptversion.create(
             data={
                 "aiModelId": ai_model_id,
-                "versionLabel": PROMPT_VERSION_LABEL,
-                "promptTemplate": PROMPT_TEMPLATE,
+                "versionLabel": version_label,
+                "promptTemplate": template,
                 "createdByUserId": created_by_user_id,
             }
         )

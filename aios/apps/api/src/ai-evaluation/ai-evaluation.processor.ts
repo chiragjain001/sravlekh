@@ -1,6 +1,7 @@
 import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
+import { deferIfRateLimited } from '../shared/provider-rate-limit';
 import { AiEvaluationService } from './ai-evaluation.service';
 import { AI_EVALUATION_QUEUE, AiEvaluationJobData } from './ai-evaluation.constants';
 import { reportDeadLetter } from '../shared/logging/dead-letter';
@@ -14,11 +15,17 @@ export class AiEvaluationProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<AiEvaluationJobData>): Promise<void> {
-    if (job.data.type === 'single') {
-      await this.aiEvaluationService.requestSingleEvaluation(job.data);
-    } else {
-      await this.aiEvaluationService.requestBatchEvaluation(job.data);
+  async process(job: Job<AiEvaluationJobData>, token?: string): Promise<void> {
+    try {
+      if (job.data.type === 'single') {
+        await this.aiEvaluationService.requestSingleEvaluation(job.data);
+      } else {
+        await this.aiEvaluationService.requestBatchEvaluation(job.data);
+      }
+    } catch (err) {
+      // Rate-limited jobs are rescheduled, not retried immediately or failed.
+      await deferIfRateLimited(job, err, token, (m) => this.logger.warn(m));
+      throw err;
     }
   }
 

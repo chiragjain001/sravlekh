@@ -259,20 +259,25 @@ describe('AssessmentsService', () => {
       expect(prisma.assessmentDelivery.update).not.toHaveBeenCalled();
     });
 
-    it("only counts unevaluated SUBJECTIVE responses — the count query scopes to SHORT_ANSWER/LONG_ANSWER/PASSAGE_BASED", async () => {
+    it("only counts answers a human must mark — subjective question types, plus anything handwritten on a page", async () => {
       mockGradedDelivery(ExamStatus.EVALUATING, StakesLevel.GRADED);
       prisma.response.count.mockResolvedValueOnce(0);
       prisma.assessmentDelivery.update.mockResolvedValueOnce({ id: 'd1', status: ExamStatus.LOCKED });
 
       await service.updateDeliveryStatus('inst-1', 'd1', { status: ExamStatus.LOCKED, version: 0 }, admin);
 
-      expect(prisma.response.count).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
-            question: { type: { in: ['SHORT_ANSWER', 'LONG_ANSWER', 'PASSAGE_BASED'] } },
-          }),
-        }),
-      );
+      const where = prisma.response.count.mock.calls[0][0].where;
+      // Both clauses must survive: they are two separate ORs, so they live
+      // under AND rather than overwriting each other.
+      expect(where.AND).toEqual([
+        {
+          OR: [
+            { question: { is: { type: { in: ['SHORT_ANSWER', 'LONG_ANSWER', 'PASSAGE_BASED'] } } } },
+            { evidenceType: 'PAGE_REGION' },
+          ],
+        },
+        { OR: [{ evaluation: null }, { evaluation: { status: { in: ['PENDING', 'AI_SUGGESTED'] } } }] },
+      ]);
     });
 
     // Phase 15 compliance audit (20 §Phase-15 / 13-TESTING-STRATEGY.md v2

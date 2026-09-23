@@ -1,8 +1,15 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
 from src.auth import verify_internal_token
 from src.evaluation.ai_evaluator import evaluate_delivery_batch, evaluate_response
+from src.evaluation.checked_copy_pdf import (
+    CheckedCopyRequest,
+    InconsistentTotalsError,
+    render_checked_copy,
+)
+from src.providers.errors import AdapterRateLimitError
+from src.routers.http_errors import rate_limited
 
 router = APIRouter(prefix="/evaluation", tags=["AI Evaluation"])
 
@@ -28,7 +35,10 @@ async def ai_evaluate(request: AIEvaluateRequest):
     requestedByUserId}, matching the OCR precedent (Phase 11) of Python doing
     its own DB reads rather than the caller pre-fetching context NestJS would
     otherwise have to duplicate. See docs/33 Phase 13 write-up."""
-    result = await evaluate_response(request.instituteId, request.responseId, request.requestedByUserId)
+    try:
+        result = await evaluate_response(request.instituteId, request.responseId, request.requestedByUserId)
+    except AdapterRateLimitError as e:
+        raise rate_limited(e) from None
     return {"success": True, "data": result}
 
 
@@ -39,3 +49,15 @@ async def ai_evaluate_batch(request: AIEvaluateBatchRequest):
     into many NestJS-side jobs — matches the doc's own framing literally."""
     result = await evaluate_delivery_batch(request.instituteId, request.assessmentDeliveryId, request.requestedByUserId)
     return {"success": True, "data": result}
+
+
+@router.post("/checked-copy-pdf", dependencies=[Depends(verify_internal_token)])
+async def checked_copy_pdf(request: CheckedCopyRequest):
+    """Internal-only. Renders the checked answer sheet NestJS assembled
+    (CheckedCopyService) into a PDF and returns the bytes; NestJS stores it."""
+    try:
+        pdf = await render_checked_copy(request)
+    except InconsistentTotalsError as e:
+        # Never print a total that doesn't add up — surface it to the caller instead.
+        raise HTTPException(status_code=422, detail=str(e)) from None
+    return Response(content=pdf, media_type="application/pdf")

@@ -1,7 +1,7 @@
 # PRODUCTION READINESS AUDIT & GAP REGISTER
 
 STATUS: LIVING DOCUMENT — Phase 1 deliverable of the production-readiness programme.
-Created: 2026-09-03. Updated as gaps close.
+Created: 2026-09-03. Updated as gaps close. Last update: 2026-09-20 (§5, digital answer sheet).
 
 This document is **evidence-based**. Every "Current State" below was verified by reading source
 code or executing a command in this repository — not by trusting `docs/00-33`. Where this audit
@@ -252,3 +252,100 @@ spec. No coverage was lost — it moved to where the behaviour now lives.
 ---
 
 *Phases 1–3 complete. Next: P4 billing, P5 deployment, P6 backup/restore, P7 E2E.*
+
+---
+
+## 5. Digital Answer Sheet — hardening & end-to-end verification (2026-09-20)
+
+Scope: the AI-assisted answer-sheet flow end to end — upload (images **and PDF**), region
+suggestion and correction, OCR, AI evaluation with tag-wise marks, teacher review, final
+submission, ScoreRecord/mastery, and the checked-copy PDF. Full description:
+`DIGITAL-ANSWER-SHEET-EVALUATION-FLOW.md`.
+
+### 5.1 Verified baselines (executed, this session)
+
+| Suite | Command | Result |
+| :--- | :--- | :--- |
+| `apps/api` | `npx jest` | **797 passed**, 7 skipped, 52 suites, 113 s |
+| `apps/api-python` | `python -m pytest -q` | **316 passed**, 28 s |
+| `apps/web` | `npx vitest run` | **56 passed**, 6 files |
+| Typecheck | `tsc --noEmit` (api, web) | clean |
+| Lint | `eslint src` / `ruff check` | **0 errors** (136 pre-existing TS warnings, none new); ruff clean |
+| Build | `nest build`, `next build` | both pass |
+| Migration drift | `prisma migrate diff --from-url <staging> --to-schema-datamodel` | **empty** — a freshly migrated database matches the schema exactly |
+
+### 5.2 Defects found and fixed (all had real consequences)
+
+| # | Defect | Consequence | Fix |
+| :-- | :--- | :--- | :--- |
+| 1 | OCR was sent the **whole page** for every region | On a page with two answers, each answer's transcript contained both — the second answer was graded against the first's text | Each region is cropped and read on its own (`ocr/region_box.py`); `OCRBlock.boundingBox` records the box that was read |
+| 2 | A handwritten **NUMERICAL** counted as "objective, scored at capture" | A real 4-mark answer contributed **0** to the student's total, never appeared in the evaluation queue, and could not be graded | `needsHumanEvaluation()` — subjective question types **or** `PAGE_REGION` evidence; mirrored in Python; applied to the queue, the LOCK gate, score aggregation and the review sheet |
+| 3 | A **late AI job could overwrite an approved mark** | Moving the current-version pointer off the teacher's version silently dropped it from ScoreRecord | `ai_evaluator.py` skips with `already_reviewed_by_teacher`; `runAiCheck` never queues approved answers; submit does compare-and-swap per answer |
+| 4 | Booklet page image never loaded in the review panel | Region marking was impossible — the panel passed a `PageImage` id to an endpoint keyed by `Page` id | One-line fix in `DocumentDetailPanel` |
+| 5 | AI recommendations recorded **"OpenAI / gpt-4o"** while Gemini did the work | Audit trail wrong; deactivating the model was not a kill switch | Registry chain resolved per active provider (`providers/factory.py`) |
+| 6 | Provider **429 answered as 500** | Queue burned three retries in ten seconds and dead-lettered work that would have succeeded (observed: 4 dead OCR jobs) | 429 + `Retry-After` from all three AI routes; jobs rescheduled without spending an attempt; in-process pacing to `PROVIDER_MAX_RPM` |
+| 7 | Upload trusted the client's `Content-Type` and used its **filename** in the storage key | A crafted upload could steer the object's name and served type | Signature sniffing, generated object names, per-type size limits |
+| 8 | Region delete/re-map **silently deleted confirmed marks** | A teacher could lose approved marks with one click | Refused with `REGION_HAS_FINAL_MARKS` unless explicitly discarded; the UI asks first |
+| 9 | Marks printed **over the student's handwriting** in the checked copy | Answers unreadable in the archived copy | Marks are placed beside the box, margin-first |
+| 10 | LOCK gate's two `OR` clauses overwrote each other (introduced while fixing #2, caught by its own spec) | The gate would have counted answers it should ignore | Both clauses composed under `AND`; the spec now asserts the composed shape |
+
+### 5.3 What was built on top
+
+PDF booklet upload (stored privately, rendered by pdfium through a retrying `pdf-split` queue,
+unreadable files failed with a reason); AI region suggestions with per-box confidence and unmapped
+fallback; full region editing (move, resize, split, merge, delete, re-map); reference-less grading
+where the model solves the question itself; tag-wise marks end to end (AI → review screen → stored
+version → PDF); the whole-sheet review screen and all-or-nothing submit; and a checked-copy PDF with
+embedded fonts, correct Devanagari shaping, LaTeX→Unicode maths and totals that are verified before
+anything is printed.
+
+### 5.4 End-to-end run (staging stack, real provider)
+
+`infra/staging/fixtures/`: `seed-fixture.js` (institute, teacher, student, 5-question paper —
+numerical without a reference answer, theory with one, Hindi, LaTeX, and an objective MCQ),
+`make-answer-sheet.py` (3-page booklet as PDF **and** images, with a right-method/wrong-arithmetic
+numerical, an incomplete theory answer and an off-topic answer), `run-e2e.js` (drives the flow over
+HTTP as the teacher and asserts on what each step produced).
+
+Observed on the disposable staging stack (`localhost:5433` / `localhost:6380`, migrations applied by
+the guarded script):
+
+| Stage | Result |
+| :--- | :--- |
+| PDF upload → render | 1 PDF → **3 pages**, `IDENTITY_PENDING`, queued and rendered by the worker |
+| Identity confirmation | attempt created and linked |
+| Region suggestion | **5 regions across 3 pages, all auto-mapped**, confidence 0.95–0.98 |
+| OCR | 4/4 answers read, self-reported confidence **0.98**, each transcript **its own answer** (the assertion that would have caught defect #1 is in the runner) |
+| AI evaluation | **BLOCKED — free-tier quota**: `gemini-3.6-flash` allows **20 requests/day**, spent by the day's detection/OCR runs. Jobs were rescheduled, not lost (rate-limit handling verified live). |
+| Teacher review → submit | 4 answers approved in one transaction |
+| ScoreRecord | **10/17, `isFinalized: true`**, written synchronously |
+| Reload | sheet `FINAL`, reviewer named, **tag-wise marks persisted exactly** |
+| Late AI check | refused to queue over approved answers (`enqueuedCount: 0`) |
+| Checked copy | 4-page PDF, 341 KB, downloaded and opened; scans embedded unchanged, marks in the margin |
+
+AI grading itself was verified live earlier the same day against the same provider (four cases:
+numerical with an arithmetic slip → 3/4 with the calculation tag zeroed; correct numerical → 4/4;
+partial theory → 2/5; off-topic → 0 with `offTopicSuspected`), plus 316 Python tests. What has **not**
+been observed is one uninterrupted run through *both* the AI stage and submission — the daily cap
+stops it. `run-e2e.js --resume <attemptId>` re-runs the second half without re-spending quota.
+
+### 5.5 Status
+
+| Area | Status | Evidence / what remains |
+| :--- | :--- | :--- |
+| Upload (images + PDF), validation, storage | **GREEN** | E2E render of a 3-page PDF; sniffing/limits/safe-key tests; private storage with signed URLs |
+| Region suggestion + teacher correction | **GREEN** | 5/5 auto-mapped in the E2E; unit tests for unmapped/objective/failed-page/rate-limited paths; full edit set in the UI |
+| OCR per region | **GREEN** | Per-answer transcripts at 0.98 in the E2E; stale-box invalidation tested on both sides |
+| Teacher governance (AI never final) | **GREEN** | Three independent enforcement points, each with tests; E2E confirms the score only moves on submit and a late AI check is refused |
+| Submission → ScoreRecord → reload persistence | **GREEN** | E2E: 10/17 finalized, FINAL after reload, tags exact |
+| Checked-copy PDF (incl. Hindi, maths, totals) | **GREEN** | 10 renderer tests incl. no-missing-glyph and byte-for-byte scan embedding; real copy generated in the E2E |
+| Concurrency & idempotency | **GREEN** | Per-answer CAS + all-or-nothing transaction; idempotent re-submit; dedupe keys on every queue |
+| Security & tenant isolation | **GREEN** | Cross-institute reads 404 at service level (tested); internal routes token-gated and re-check the tenant; provider errors never returned |
+| AI evaluation against a live provider **at production volume** | **YELLOW** | Works per answer; **the free-tier key allows 20 requests/day**, which cannot grade a class. Needs a paid key (then `PROVIDER_MAX_RPM` raised) before real use. |
+| OCR accuracy on **real** handwriting | **YELLOW** | Verified on synthetic handwriting only. Measure on real scripts before promising accuracy; confidence is self-reported, not calibrated. |
+| Migrations applied to production | **YELLOW** | Three additive migrations applied and drift-checked on staging; **not** applied to any shared/production database by this session, by design. |
+| Fonts in the deployed image | **YELLOW** | Dockerfile and CI now install `fonts-noto-core`/`fonts-dejavu-core`; the image has not been rebuilt/deployed here. |
+| Malware scanning / EXIF stripping on uploads | **RED (pre-existing, unchanged)** | Still no provider wired (07 §9, 17). Uploads are institute-scoped and private, but this remains an accepted gap. |
+
+---
+

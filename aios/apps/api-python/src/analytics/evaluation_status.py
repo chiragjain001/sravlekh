@@ -13,10 +13,14 @@ Change one, change the other.
 
 HUMAN_SOURCES = frozenset({"TEACHER", "REVIEWER"})
 
-# The same set assessments.service.ts's LOCK gate and ai_evaluator's batch query
-# use to mean "subjective". Objective responses are scored at capture time and
-# never get an Evaluation row at all.
+# Question types that are subjective wherever they are answered.
 SUBJECTIVE_QUESTION_TYPES = frozenset({"SHORT_ANSWER", "LONG_ANSWER", "PASSAGE_BASED"})
+
+# Handwriting on a scanned page. Nothing scores it automatically, whatever the
+# question type: a NUMERICAL worked out in a booklet is a page of working a
+# human has to mark, and treating it as "objective, scored at capture" made a
+# real 4-mark answer contribute 0 and never reach the evaluation queue.
+PAGE_REGION_EVIDENCE = "PAGE_REGION"
 
 
 def is_human_approved(version) -> bool:
@@ -38,11 +42,11 @@ def is_authoritative_response(response) -> bool:
     2. No Evaluation row, and this is a v1 answer-sheet response (attemptId is
        None) — ExamsService.gradeAnswerSheet writes Response.marksAwarded straight
        from the teacher's input, so the mark is already human-authored.
-    3. No Evaluation row on a v2 response — authoritative only if the question is
-       objective (scored at capture). A missing Evaluation row is NOT by itself
-       evidence that a response is objective: a subjective answer nobody has graded
-       yet also has none, and counting it would score an ungraded answer as a real
-       zero.
+    3. No Evaluation row on a v2 response — authoritative only if nothing about it
+       needs a human (see needs_human_evaluation): it was scored at capture. A
+       missing Evaluation row is NOT by itself evidence of that: an answer nobody
+       has graded yet also has none, and counting it would score an ungraded
+       answer as a real zero.
 
     Mirrored in TypeScript at evaluations/evaluation-status.util.isAuthoritativeResponse.
     """
@@ -51,4 +55,14 @@ def is_authoritative_response(response) -> bool:
         return is_human_approved(evaluation.currentVersion)
     if getattr(response, "attemptId", None) is None:
         return True
-    return response.question.type not in SUBJECTIVE_QUESTION_TYPES
+    return not needs_human_evaluation(response)
+
+
+def needs_human_evaluation(response) -> bool:
+    """True when this response has to be graded by a human (with or without AI help).
+
+    Mirrored in TypeScript at evaluation-status.util.needsHumanEvaluation.
+    """
+    if getattr(response, "evidenceType", None) == PAGE_REGION_EVIDENCE:
+        return True
+    return response.question.type in SUBJECTIVE_QUESTION_TYPES

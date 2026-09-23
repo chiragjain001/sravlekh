@@ -8,6 +8,7 @@ import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
 import { enqueueDeduped, jobKey } from '../infrastructure/queue/enqueue';
 import { QUEUE_POLICY } from '../infrastructure/queue/queue-policy';
 import { ensureDiagnosableMessage } from '../shared/logging/error-message';
+import { rateLimitFrom } from '../shared/provider-rate-limit';
 
 /**
  * 27-AI-EVALUATION-ARCHITECTURE.md §6: AI evaluation runs as a batched async
@@ -69,10 +70,14 @@ export class AiEvaluationService {
       await axios.post(
         `${baseUrl}/evaluation/ai-evaluate`,
         { instituteId: job.instituteId, responseId: job.responseId, requestedByUserId: job.requestedByUserId },
-        { headers: internalToken ? { 'X-Internal-Token': internalToken } : undefined, timeout: 20_000 },
+        // Above api-python's AI_CALL_HARD_TIMEOUT_SECONDS (40s) so Python times out and
+        // routes to the human queue first, instead of this side abandoning a live call.
+        { headers: internalToken ? { 'X-Internal-Token': internalToken } : undefined, timeout: 50_000 },
       );
       this.logger.debug(`AI evaluation for response ${job.responseId} completed in ${Date.now() - startedAt}ms`);
     } catch (err) {
+      const rateLimited = rateLimitFrom(err);
+      if (rateLimited) throw rateLimited;
       this.logger.warn(`AI evaluation HTTP call failed for response ${job.responseId} after ${Date.now() - startedAt}ms`, err as Error);
       throw ensureDiagnosableMessage(err);
     }
