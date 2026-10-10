@@ -16,6 +16,31 @@ import { JwtPayload, AuthenticatedUser } from './auth.types';
 
 const ALLOWLIST_CHECK_TTL_SECONDS = 60; // 09-CACHING-STRATEGY.md §1.5
 
+/**
+ * 09-CACHING-STRATEGY.md §1 — short-lived cache for the DB read that
+ * validateJwtPayload performs on EVERY authenticated request.
+ *
+ * WHY 60s: matches the JWT expiry precision we care about for security events.
+ * A user suspension or institute archive takes effect at the next cache miss,
+ * so within 60 seconds — the same window as a 15-minute access token already
+ * allows for the bulk of session lifetime. tokenVersion is part of the key, so
+ * a Founder force-logout (which bumps tokenVersion) takes effect on the very
+ * next request because the new version is a cache miss even while the old entry
+ * is still alive. There is no ambiguity: wrong tokenVersion = instant cache miss.
+ *
+ * WHY FAIL-OPEN: Redis down must not lock every user out of every request.
+ * The existing DB query runs as the fallback, matching the pre-cache behaviour.
+ */
+const JWT_USER_CACHE_TTL_SECONDS = 60;
+function jwtUserCacheKey(userId: string, tokenVersion: number): string {
+  return `auth:user:${userId}:${tokenVersion}`;
+}
+
+/** Cache-key prefix used to invalidate all tokenVersions for one user at once. */
+export function jwtUserCachePrefix(userId: string): string {
+  return `auth:user:${userId}:`;
+}
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -459,8 +484,27 @@ export class AuthService {
     this.failedLoginAttempts.delete(email.toLowerCase());
   }
 
-  /** Validate a JWT payload — called by JwtStrategy on every protected request. */
+  /**
+   * Validate a JWT payload — called by JwtStrategy on every protected request.
+   *
+   * CACHING (C-2 fix): the previous implementation did a DB round-trip on
+   * every request. Load testing found `/auth/me` alone at 131ms, all of it from
+   * this lookup; at 135 req/s saturation that is 135 DB queries/second for auth
+   * before any actual business logic runs. The cache removes that from the hot
+   * path while keeping all security invariants:
+   *
+   *  - tokenVersion is part of the cache key, so a Founder force-logout
+   *    (which bumps tokenVersion) is a cache miss on the very next request.
+   *  - 60s TTL: a suspension or institute-archive takes effect at the next
+   *    miss, within 60 seconds — the same window access-token expiry already
+   *    allows during normal session lifetime.
+   *  - Redis down: falls through to the DB query, exactly as before.
+   */
   async validateJwtPayload(payload: JwtPayload): Promise<AuthenticatedUser> {
+    const cacheKey = jwtUserCacheKey(payload.sub, payload.tokenVersion);
+    const cached = await this.cache.get<AuthenticatedUser>(cacheKey);
+    if (cached !== undefined) return cached;
+
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
       select: {
@@ -497,7 +541,7 @@ export class AuthService {
       throw new UnauthorizedException('Your institute is no longer active. Contact the platform administrator.');
     }
 
-    return {
+    const authenticatedUser: AuthenticatedUser = {
       id: user.id,
       email: user.email,
       name: user.name,
@@ -505,6 +549,24 @@ export class AuthService {
       instituteId: user.instituteId,
       avatarUrl: user.avatarUrl,
     };
+
+    // Write to cache AFTER all checks pass — we never cache a rejected payload.
+    await this.cache.set(cacheKey, authenticatedUser, JWT_USER_CACHE_TTL_SECONDS);
+    return authenticatedUser;
+  }
+
+  /**
+   * Explicitly invalidates the JWT user cache for a given user across all
+   * tokenVersions. Call this when a user is suspended, archived, or their
+   * role changes — so the new state takes effect within seconds rather than
+   * waiting for the 60s TTL to expire.
+   *
+   * This is a best-effort warm-cache flush: a Redis failure here degrades to
+   * the natural TTL expiry, not a hard failure. The caller must not depend on
+   * this being instantaneous.
+   */
+  async invalidateJwtCache(userId: string): Promise<void> {
+    await this.cache.delByPrefix(jwtUserCachePrefix(userId));
   }
 
   // ──────────────────────────────────────────────────────────────────────────

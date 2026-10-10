@@ -22,6 +22,18 @@ These are planning targets, not current production traffic — the architecture 
 
 ## 4. Database Scaling
 - **Connection pooling:** PgBouncer (or platform-managed equivalent) in front of PostgreSQL; NestJS and FastAPI each maintain bounded connection pools (e.g., 10–20 per instance) rather than one connection per request.
+
+### 4.1 Connection Pool Budget (Target: PostgreSQL `max_connections = 100` Default)
+To ensure multiple service replicas never exhaust PostgreSQL's connection limits, connection pool limits must be explicitly configured via `?connection_limit=` on `DATABASE_URL`:
+
+| Component | Replicas | Conns / Replica | Total Conns | Rationale |
+|---|---|---|---|---|
+| NestJS API Replicas | 5 | 10 | 50 | HTTP request traffic, bounded pool |
+| BullMQ Worker Processors | 3 | 5 | 15 | Report & Mastery background workers |
+| FastAPI Python Engine | 2 | 5 | 10 | Async analytics & OCR batch processors |
+| Admin / DB Migration / Backup | - | - | 5 | Headroom for migrations and maintenance |
+| **Total Reserved** | | | **80 / 100** | 20% safety margin below PG `max_connections=100` |
+
 - **Read replicas:** analytics-heavy, non-real-time-critical reads (Founder cross-tenant reports, historical trend charts) are routed to a read replica once tenant count/query volume justifies it (Phase 2 trigger, not Day 1 requirement) — the mastery-critical read path (`GET /analytics/student/:id/mastery`) stays on the primary until replica-lag guarantees are proven acceptable for a diagnostic-accuracy-sensitive feature.
 - **Indexing:** see 04-DATABASE-SCHEMA.md §7 — indexes are added proactively for every documented hot-path query, and reactively via slow-query-log review (see 12-LOGGING-MONITORING.md).
 - **Partitioning:** `AuditLog` and `Response` (highest-growth, append-mostly tables) are candidates for time-based partitioning once row counts justify it (tracked, not implemented Phase 1).

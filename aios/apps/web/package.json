@@ -4,7 +4,8 @@
   "private": true,
   "description": "AIOS Next.js 14 frontend",
   "scripts": {
-    "dev": "next dev -p 3000",
+    "dev": "next dev --turbo -p 3000",
+    "dev:webpack": "next dev -p 3000",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -12,7 +13,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@aios/db": "workspace:*",
     "@hookform/resolvers": "^3.6.0",
     "@radix-ui/react-slot": "^1.3.3",
     "@tanstack/react-query": "^5.45.1",

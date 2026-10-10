@@ -32,7 +32,9 @@ describe('TeachersService — tenant isolation and role gating (13-TESTING-STRAT
       subject: { findMany: jest.fn() },
       $transaction: jest.fn(async (fn: any) => fn({
         user: { create: jest.fn().mockResolvedValue({ id: 'user-1' }), update: jest.fn() },
-        teacherProfile: { create: jest.fn().mockResolvedValue({ id: 'tp-1' }), update: jest.fn() },
+        teacherProfile: { create: jest.fn().mockResolvedValue({ id: 'tp-1', userId: 'user-1' }), update: jest.fn() },
+        batch: { findMany: jest.fn().mockResolvedValue([{ id: 'batch-1' }]) },
+        batchTeacher: { create: jest.fn(), findMany: jest.fn().mockResolvedValue([]), updateMany: jest.fn() },
       })),
       auditLog: { create: jest.fn() },
     };
@@ -66,6 +68,12 @@ describe('TeachersService — tenant isolation and role gating (13-TESTING-STRAT
     it('rejects a duplicate email within the institute', async () => {
       prisma.user.findFirst.mockResolvedValueOnce({ id: 'existing' });
       await expect(service.create('inst-1', { name: 'B', email: 'dup@x.com' }, admin)).rejects.toThrow(ConflictException);
+    });
+
+    it('assigns batches when batchIds are provided on create', async () => {
+      prisma.user.findFirst.mockResolvedValueOnce(null);
+      const res = await service.create('inst-1', { name: 'Dr Priya', email: 'priya@x.com', batchIds: ['batch-1'] }, admin);
+      expect(res.id).toBe('tp-1');
     });
   });
 

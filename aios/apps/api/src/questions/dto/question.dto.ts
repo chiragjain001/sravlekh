@@ -9,7 +9,14 @@ import {
   IsBoolean,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { QuestionType, DifficultyLevel } from '@prisma/client';
+import {
+  QuestionType,
+  DifficultyLevel,
+  BloomsTaxonomyLevel,
+  QuestionVariantType,
+  QuestionSourceType,
+  QuestionStatus,
+} from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 
 export class CreateQuestionDto {
@@ -65,6 +72,70 @@ export class CreateQuestionDto {
   @IsOptional()
   @IsString()
   sourceRef?: string;
+
+  @ApiPropertyOptional({ enum: BloomsTaxonomyLevel })
+  @IsOptional()
+  @IsEnum(BloomsTaxonomyLevel)
+  bloomsLevel?: BloomsTaxonomyLevel;
+
+  @ApiPropertyOptional({ enum: QuestionSourceType })
+  @IsOptional()
+  @IsEnum(QuestionSourceType)
+  sourceType?: QuestionSourceType;
+
+  @ApiPropertyOptional({ description: 'Detailed source metadata (edition, chapter, page, year)' })
+  @IsOptional()
+  sourceDetails?: Record<string, any>;
+
+  @ApiPropertyOptional({ description: 'Estimated time to answer in seconds', example: 120 })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  expectedTimeSec?: number;
+
+  @ApiPropertyOptional({ description: 'Language code', default: 'en' })
+  @IsOptional()
+  @IsString()
+  language?: string;
+
+  @ApiPropertyOptional({ description: 'Question family ID for variants' })
+  @IsOptional()
+  @IsString()
+  familyId?: string;
+
+  @ApiPropertyOptional({ description: 'Parent question ID if this is a variant' })
+  @IsOptional()
+  @IsString()
+  parentQuestionId?: string;
+
+  @ApiPropertyOptional({ enum: QuestionVariantType })
+  @IsOptional()
+  @IsEnum(QuestionVariantType)
+  variantType?: QuestionVariantType;
+
+  @ApiPropertyOptional({ description: 'Mapped concept IDs', type: [String] })
+  @IsOptional()
+  @IsArray()
+  conceptIds?: string[];
+
+  @ApiPropertyOptional({ description: 'Mapped learning objective IDs', type: [String] })
+  @IsOptional()
+  @IsArray()
+  learningObjectiveIds?: string[];
+
+  @ApiPropertyOptional({ description: 'Extensible payload for Visual, CS/Code, or Case Study questions' })
+  @IsOptional()
+  typePayload?: any;
+
+  @ApiPropertyOptional({ description: 'Grade level ID' })
+  @IsOptional()
+  @IsString()
+  gradeLevelId?: string;
+
+  @ApiPropertyOptional({ description: 'Curriculum version ID' })
+  @IsOptional()
+  @IsString()
+  curriculumVersionId?: string;
 }
 
 export class UpdateQuestionDto {
@@ -130,6 +201,41 @@ export class QueryQuestionsDto {
   @IsOptional()
   @IsEnum(QuestionType)
   type?: QuestionType;
+
+  @ApiPropertyOptional({ enum: BloomsTaxonomyLevel })
+  @IsOptional()
+  @IsEnum(BloomsTaxonomyLevel)
+  bloomsLevel?: BloomsTaxonomyLevel;
+
+  @ApiPropertyOptional({ enum: QuestionStatus })
+  @IsOptional()
+  @IsEnum(QuestionStatus)
+  status?: QuestionStatus;
+
+  @ApiPropertyOptional({ enum: QuestionSourceType })
+  @IsOptional()
+  @IsEnum(QuestionSourceType)
+  sourceType?: QuestionSourceType;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  familyId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  conceptId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  gradeLevelId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  language?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

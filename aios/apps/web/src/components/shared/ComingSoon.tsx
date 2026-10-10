@@ -13,13 +13,13 @@ import type { LucideIcon } from 'lucide-react';
 // aren't.
 export function ComingSoon({ icon: Icon, title, description }: { icon: LucideIcon; title: string; description: string }) {
   return (
-    <div className="p-5 animate-fadein h-full">
-      <div className="card shadow-sm border border-slate-100 rounded-2xl w-full h-full flex flex-col items-center justify-center text-center p-10">
-        <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center mb-5">
+    <div className="p-3 sm:p-5 animate-fadein h-full flex flex-col">
+      <div className="card shadow-sm border border-slate-100 rounded-2xl w-full flex-1 flex flex-col items-center justify-center text-center p-6 sm:p-10 min-w-0 max-w-full overflow-hidden">
+        <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center mb-4 flex-shrink-0">
           <Icon className="w-7 h-7 text-slate-400" />
         </div>
-        <h2 className="text-[18px] font-bold text-slate-800 mb-2">{title}</h2>
-        <p className="text-[13.5px] text-slate-500 max-w-md">{description}</p>
+        <h2 className="text-[17px] sm:text-[18px] font-bold text-slate-800 mb-2 break-words max-w-md">{title}</h2>
+        <p className="text-[12.5px] sm:text-[13.5px] text-slate-500 max-w-md break-words">{description}</p>
       </div>
     </div>
   );

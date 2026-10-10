@@ -61,6 +61,7 @@ export interface CreateTeacherInput {
   email: string;
   qualification?: string;
   subjectIds?: string[];
+  batchIds?: string[];
 }
 
 export interface UpdateTeacherInput extends Partial<CreateTeacherInput> {

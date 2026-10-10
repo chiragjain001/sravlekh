@@ -10,6 +10,7 @@ interface StatCardProps {
   icon?: React.ReactNode;
   link?: string;
   onLinkClick?: () => void;
+  onClick?: () => void;
   color?: 'indigo' | 'emerald' | 'sky' | 'violet' | 'rose' | 'amber' | 'teal';
 }
 
@@ -31,37 +32,71 @@ export function StatCard({
   icon,
   link,
   onLinkClick,
+  onClick,
   color = 'indigo',
 }: StatCardProps) {
   const c = COLOR_MAP[color];
   return (
-    <div className="card-sm flex flex-col gap-2 hover:shadow-card-hover transition-shadow duration-200">
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-[12px] text-slate-500 font-medium">{label}</p>
-          <p className="text-[22px] font-bold text-slate-800 leading-none mt-1">{value}</p>
+    <div
+      onClick={onClick}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={
+        onClick
+          ? (e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onClick();
+              }
+            }
+          : undefined
+      }
+      className={`card-sm flex flex-col justify-between gap-2 transition-all duration-200 min-w-0 max-w-full overflow-hidden ${
+        onClick
+          ? 'cursor-pointer hover:shadow-card-hover hover:border-slate-300 active:scale-[0.99] group focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500'
+          : 'hover:shadow-card-hover'
+      }`}
+    >
+      <div className="flex items-start justify-between gap-2 min-w-0">
+        <div className="min-w-0 flex-1">
+          <p
+            className={`text-[12px] text-slate-500 font-medium truncate ${
+              onClick ? 'group-hover:text-slate-700 transition-colors' : ''
+            }`}
+            title={label}
+          >
+            {label}
+          </p>
+          <p className="text-[20px] sm:text-[22px] font-bold text-slate-800 leading-tight mt-1 truncate">{value}</p>
         </div>
         {icon && (
-          <div className={`p-2 rounded-lg ${c.bg} ${c.icon} ring-1 ${c.ring}`}>
+          <div
+            className={`p-2 rounded-xl ${c.bg} ${c.icon} ring-1 ${c.ring} flex-shrink-0 ${
+              onClick ? 'group-hover:scale-105 transition-transform duration-200' : ''
+            }`}
+          >
             {icon}
           </div>
         )}
       </div>
 
-      <div className="flex items-center justify-between mt-1">
+      <div className="flex items-center justify-between mt-1 min-w-0 gap-2">
         {change && (
-          <div className={`flex items-center gap-1 text-[11.5px] font-semibold ${changePositive ? 'text-emerald-600' : 'text-rose-600'}`}>
+          <div className={`flex items-center gap-1 text-[11px] sm:text-[11.5px] font-semibold truncate ${changePositive ? 'text-emerald-600' : 'text-rose-600'}`}>
             {changePositive
-              ? <TrendingUp className="w-3.5 h-3.5" />
-              : <TrendingDown className="w-3.5 h-3.5" />
+              ? <TrendingUp className="w-3.5 h-3.5 flex-shrink-0" />
+              : <TrendingDown className="w-3.5 h-3.5 flex-shrink-0" />
             }
-            {change}
+            <span className="truncate">{change}</span>
           </div>
         )}
         {link && (
           <button
-            onClick={onLinkClick}
-            className="text-[11.5px] text-indigo-600 font-medium hover:underline ml-auto"
+            onClick={(e) => {
+              e.stopPropagation();
+              onLinkClick?.();
+            }}
+            className="text-[11.5px] text-indigo-600 font-medium hover:underline ml-auto flex-shrink-0 cursor-pointer"
           >
             {link}
           </button>

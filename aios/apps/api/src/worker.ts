@@ -48,7 +48,7 @@ async function bootstrapWorker() {
 
   logger.log(
     `AIOS worker started [${process.env['NODE_ENV'] ?? 'development'}] — ` +
-      'consuming: ai-evaluation, ocr, score-aggregation, mastery-recalc, notice-dispatch, report-generation',
+      'consuming: ai-evaluation, ocr, score-aggregation, mastery-recalc, notice-dispatch, report-generation, attendance-missing-check',
   );
 
   const shutdown = async (signal: string) => {

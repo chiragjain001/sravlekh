@@ -137,7 +137,7 @@ async function main() {
   await prisma.studentProfile.upsert({
     where: { userId: users.STUDENT.id },
     update: { batchId: batch.id },
-    create: { userId: users.STUDENT.id, rollNumber: 'JEE-A-001', batchId: batch.id, tags: [] },
+    create: { userId: users.STUDENT.id, instituteId: institute.id, rollNumber: 'JEE-A-001', batchId: batch.id, tags: [] },
   });
 
   // 7. Question bank — a spread of approved questions per topic/difficulty/type

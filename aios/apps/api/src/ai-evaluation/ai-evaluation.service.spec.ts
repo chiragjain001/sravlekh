@@ -57,16 +57,32 @@ describe('AiEvaluationService', () => {
     expect(axios.post).toHaveBeenCalledWith(
       'http://python:8000/evaluation/ai-evaluate',
       { instituteId: 'inst-1', responseId: 'resp-1', requestedByUserId: 'user-1' },
-      expect.objectContaining({ headers: { 'X-Internal-Token': 'internal-token-1' } }),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'X-Internal-Token': 'internal-token-1',
+          'X-Correlation-Id': 'ai-eval-resp-1',
+        }),
+      }),
     );
   });
 
-  it('posts a batch evaluation request with a long timeout matching the 15-minute p95 target', async () => {
+  it('posts chunked batch evaluation requests with bounded 60s timeout until hasMore is false', async () => {
+    (axios.post as jest.Mock)
+      .mockResolvedValueOnce({ data: { data: { hasMore: true } } })
+      .mockResolvedValueOnce({ data: { data: { hasMore: false } } });
+
     await service.requestBatchEvaluation({ type: 'batch', instituteId: 'inst-1', assessmentDeliveryId: 'delivery-1', requestedByUserId: 'user-1' });
+    expect(axios.post).toHaveBeenCalledTimes(2);
     expect(axios.post).toHaveBeenCalledWith(
       'http://python:8000/evaluation/ai-evaluate-batch',
       { instituteId: 'inst-1', assessmentDeliveryId: 'delivery-1', requestedByUserId: 'user-1' },
-      expect.objectContaining({ timeout: 20 * 60_000 }),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'X-Internal-Token': 'internal-token-1',
+          'X-Correlation-Id': 'ai-eval-batch-delivery-1',
+        }),
+        timeout: 60_000,
+      }),
     );
   });
 
@@ -81,5 +97,13 @@ describe('AiEvaluationService', () => {
     await expect(
       service.requestSingleEvaluation({ type: 'single', instituteId: 'inst-1', responseId: 'resp-1', requestedByUserId: 'user-1' }),
     ).rejects.toThrow('down');
+  });
+
+  it('enforces safety bound of MAX_BATCH_CHUNKS to prevent runaway loop (C-3 fix)', async () => {
+    (axios.post as jest.Mock).mockResolvedValue({ data: { data: { hasMore: true } } });
+
+    await service.requestBatchEvaluation({ type: 'batch', instituteId: 'inst-1', assessmentDeliveryId: 'delivery-1', requestedByUserId: 'user-1' });
+
+    expect(axios.post).toHaveBeenCalledTimes(200);
   });
 });

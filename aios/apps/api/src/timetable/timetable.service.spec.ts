@@ -84,4 +84,15 @@ describe('TimetableService.createSlot — conflict checking (18-EDGE-CASES.md)',
       }),
     });
   });
+
+  it('rejects an actor from another institute trying to create a timetable slot (cross-tenant)', async () => {
+    const foreignActor = { ...teacherActor, instituteId: 'inst-OTHER' };
+    await expect(service.createSlot('inst-1', baseDto, foreignActor)).rejects.toThrow(ForbiddenException);
+    expect(prisma.timetableSlot.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects an actor from another institute trying to list timetable slots (cross-tenant)', async () => {
+    const foreignActor = { ...teacherActor, instituteId: 'inst-OTHER' };
+    await expect(service.findAll('inst-1', {}, foreignActor)).rejects.toThrow(ForbiddenException);
+  });
 });

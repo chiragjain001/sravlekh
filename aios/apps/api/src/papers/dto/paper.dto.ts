@@ -3,13 +3,16 @@ import {
   IsNotEmpty,
   IsOptional,
   IsNumber,
+  IsInt,
   IsArray,
   Min,
+  Max,
   ValidateNested,
+  IsEnum,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { DifficultyLevel, QuestionType } from '@prisma/client';
+import { DifficultyLevel, QuestionType, PaperFormat } from '@prisma/client';
 
 export class BlueprintDistributionRuleDto {
   @ApiProperty({ description: 'ID of the Topic to pull questions from' })
@@ -36,6 +39,11 @@ export class BlueprintDistributionRuleDto {
   @IsNumber()
   @Min(1)
   marksPerQuestion!: number;
+
+  @ApiPropertyOptional({ description: 'V2 - Theory section this rule belongs to' })
+  @IsOptional()
+  @IsString()
+  sectionId?: string;
 }
 
 export class CreateBlueprintDto {
@@ -69,6 +77,23 @@ export class CreateBlueprintDto {
   @ValidateNested({ each: true })
   @Type(() => BlueprintDistributionRuleDto)
   distribution!: BlueprintDistributionRuleDto[];
+
+  @ApiPropertyOptional({ enum: PaperFormat, description: 'V2 - Format of the paper (OMR, THEORY, HYBRID)', default: 'OMR' })
+  @IsOptional()
+  @IsEnum(PaperFormat)
+  format?: PaperFormat;
+
+  @ApiPropertyOptional({ description: 'V2 - Theory sections definitions' })
+  @IsOptional()
+  sections?: any;
+
+  @ApiPropertyOptional({ description: 'V2 - Requested difficulty distribution' })
+  @IsOptional()
+  difficultyDistribution?: any;
+
+  @ApiPropertyOptional({ description: 'V2 - Requested Bloom\'s Taxonomy distribution' })
+  @IsOptional()
+  bloomsDistribution?: any;
 }
 
 export class GeneratePaperDto {
@@ -157,4 +182,28 @@ export class ManualReplaceItemDto {
   @IsOptional()
   @IsString()
   solution?: string;
+}
+
+// ── Pagination ─────────────────────────────────────────────────────────────────────
+
+export class ListBlueprintsDto {
+  @ApiPropertyOptional({ default: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @ApiPropertyOptional({ default: 20, maximum: 100 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number = 20;
+
+  @ApiPropertyOptional({ description: 'Filter by subject ID' })
+  @IsOptional()
+  @IsString()
+  subjectId?: string;
 }

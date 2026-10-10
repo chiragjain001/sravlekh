@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
+import { UserRole, AssignmentStatus } from '@prisma/client';
 import { AssignmentsService } from './assignments.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../infrastructure/storage/storage.service';
@@ -70,6 +70,28 @@ describe('AssignmentsService — tenant isolation (13-TESTING-STRATEGY.md §7)',
       await expect(
         service.createAssignment('inst-1', { batchId: 'batch-1', topicId: 't-1', title: 'HW', dueDate: '2026-09-01T00:00:00Z' }, admin),
       ).resolves.toBeDefined();
+    });
+
+    it('rejects an actor from another institute trying to create an assignment (cross-tenant)', async () => {
+      const foreignAdmin = { ...admin, instituteId: 'inst-OTHER' };
+      await expect(
+        service.createAssignment('inst-1', { batchId: 'batch-1', topicId: 't-1', title: 'HW', dueDate: '2026-09-01T00:00:00Z' }, foreignAdmin),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.assignment.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects an actor from another institute trying to list assignments (cross-tenant)', async () => {
+      const foreignAdmin = { ...admin, instituteId: 'inst-OTHER' };
+      await expect(
+        service.findAll('inst-1', {}, foreignAdmin),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('rejects an actor from another institute trying to delete an assignment (cross-tenant)', async () => {
+      const foreignAdmin = { ...admin, instituteId: 'inst-OTHER' };
+      await expect(
+        service.deleteAssignment('inst-1', 'a-1', foreignAdmin),
+      ).rejects.toThrow(ForbiddenException);
     });
   });
 
@@ -336,20 +358,49 @@ describe('AssignmentsService — tenant isolation (13-TESTING-STRATEGY.md §7)',
     });
   });
 
-  describe('submitAssignment — cross-institute guard', () => {
-    it("rejects submitting to an assignment from a different institute's batch", async () => {
+  describe('deleteSubmission — retracting an assignment submission', () => {
+    it('allows a student to retract their pending submission and resets status to PENDING', async () => {
       prisma.assignment.findUnique.mockResolvedValueOnce({
-        id: 'a-1', batch: { instituteId: 'inst-OTHER' }, studentProfile: null,
+        id: 'a-1',
+        studentProfileId: 'sp-1',
+        status: AssignmentStatus.SUBMITTED,
+        submissionUrl: 'http://storage.aios.dev/file.pdf',
+        batch: null,
+        studentProfile: { id: 'sp-1', user: { instituteId: 'inst-1' } },
       });
-      await expect(
-        service.submitAssignment('inst-1', 'a-1', { submissionUrl: 'https://x' }, student),
-      ).rejects.toThrow(ForbiddenException);
+      prisma.studentProfile.findUnique.mockResolvedValueOnce({ id: 'sp-1', userId: student.id, batchId: 'b-1' });
+      prisma.assignment.update.mockResolvedValueOnce({
+        id: 'a-1',
+        submissionUrl: null,
+        submittedAt: null,
+        status: AssignmentStatus.PENDING,
+      });
+
+      const res = await service.deleteSubmission('inst-1', 'a-1', student);
+      expect(res.success).toBe(true);
+      expect(prisma.assignment.update).toHaveBeenCalledWith({
+        where: { id: 'a-1' },
+        data: { submissionUrl: null, submittedAt: null, status: AssignmentStatus.PENDING },
+      });
     });
 
-    it('rejects a non-student submitting', async () => {
-      await expect(
-        service.submitAssignment('inst-1', 'a-1', { submissionUrl: 'https://x' }, admin),
-      ).rejects.toThrow(ForbiddenException);
+    it('rejects retracting an assignment that has already been graded', async () => {
+      prisma.assignment.findUnique.mockResolvedValueOnce({
+        id: 'a-1',
+        studentProfileId: 'sp-1',
+        status: AssignmentStatus.GRADED,
+        submissionUrl: 'http://storage.aios.dev/file.pdf',
+        batch: null,
+        studentProfile: { id: 'sp-1', user: { instituteId: 'inst-1' } },
+      });
+      prisma.studentProfile.findUnique.mockResolvedValueOnce({ id: 'sp-1', userId: student.id, batchId: 'b-1' });
+
+      await expect(service.deleteSubmission('inst-1', 'a-1', student)).rejects.toThrow(BadRequestException);
+      expect(prisma.assignment.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects a non-student retracting', async () => {
+      await expect(service.deleteSubmission('inst-1', 'a-1', teacher)).rejects.toThrow(ForbiddenException);
     });
   });
 });

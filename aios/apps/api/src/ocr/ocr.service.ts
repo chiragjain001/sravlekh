@@ -91,7 +91,10 @@ export class OcrService {
         `${baseUrl}/ocr/extract`,
         { instituteId: job.instituteId, questionRegionId: job.questionRegionId, imageUrl, blockType: job.blockType },
         {
-          headers: internalToken ? { 'X-Internal-Token': internalToken } : undefined,
+          headers: {
+            ...(internalToken ? { 'X-Internal-Token': internalToken } : {}),
+            'X-Correlation-Id': `ocr-${job.questionRegionId}`,
+          },
           // 24 §8's target is < 4s p95 for the extraction itself. The budget is
           // wider because this one request also covers fetching the page image,
           // cropping it, and any pacing wait api-python adds to stay inside the

@@ -17,13 +17,22 @@ describe('buildDistributionRules', () => {
   function baseState(overrides: Partial<AssessmentState> = {}): AssessmentState {
     return {
       title: 'Test', type: 'Weekly Test', exam: 'X', subject: 'Physics', batches: [],
+      board: '', classGrade: '', language: 'English', academicYear: '2025-26',
+      paperFormat: 'OMR', teacherIntent: '',
       duration: 60, totalMarks: 0, negativeMarking: 'None', instructions: '',
       scheduleType: 'later', dueDate: '', startTime: '', endTime: '',
       shuffleQuestions: false, shuffleOptions: false, showSolutions: false,
-      selectedSources: [], selectedChapters: ['ch-1'], selectedTopics: ['t-1', 't-2'],
+      selectedSources: [], sourceWeights: {},
+      selectedChapters: ['ch-1'], selectedTopics: ['t-1', 't-2'],
+      sections: [],
       chapterQuestionPlan: {},
       questionTypes: ['MCQ'],
-      allowRepeat: false, avoidRecentDays: 0, minRating: 0, paperSetsCount: 1, strategy: 'general',
+      allowRepeat: false, avoidRecentDays: 0, minRating: 0, paperSetsCount: 1,
+      wordLimitEnabled: false, wordLimitPerMark: 30, includeAnswerLines: false, generalInstructions: [],
+      strategy: 'general',
+      difficultyDistribution: { easy: 30, medium: 40, hard: 30 },
+      bloomsDistribution: { remember: 15, understand: 20, apply: 25, analyze: 20, evaluate: 10, create: 10 },
+      avoidRepeatedQuestions: true, hotsPriority: false, ncertAlignment: true, boardAlignment: false,
       ...overrides,
     };
   }

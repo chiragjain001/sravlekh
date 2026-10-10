@@ -1,9 +1,12 @@
+import logging
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 
 from src.config import get_settings
-from src.database import db
+from src.database import db, ensure_db
+
+logger = logging.getLogger(__name__)
 
 security = HTTPBearer()
 
@@ -19,8 +22,14 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         raise credentials_exception()
 
     # The payload has the same structure as we defined in NestJS Auth.types.ts
-    # Let's verify the user in the database
-    user = await db.user.find_unique(where={"id": user_id})
+    # Let's verify the user in the database (with reconnection retry if remote pooler disconnected)
+    try:
+        user = await db.user.find_unique(where={"id": user_id})
+    except Exception as e:
+        logger.warning(f"Database error during auth verification ({e}), re-establishing connection and retrying...")
+        await ensure_db()
+        user = await db.user.find_unique(where={"id": user_id})
+
     if user is None:
         raise credentials_exception()
         

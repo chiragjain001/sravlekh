@@ -18,6 +18,17 @@ def test_openai_key_wins_when_both_are_configured():
     assert active_provider(settings(OPENAI_API_KEY="sk", GEMINI_API_KEY="g")) is OPENAI
 
 
+def test_ai_provider_config_forces_gemini_even_if_openai_key_present():
+    provider = active_provider(settings(AI_PROVIDER="gemini", OPENAI_API_KEY="sk", GEMINI_API_KEY="g"))
+    assert provider.key == "gemini"
+    assert provider.provider_name == "Google"
+
+
+def test_ai_evaluation_model_overrides_model_name():
+    provider = active_provider(settings(AI_PROVIDER="gemini", GEMINI_API_KEY="g", AI_EVALUATION_MODEL="gemini-3.5-flash-lite"))
+    assert provider.model_name == "gemini-3.5-flash-lite"
+
+
 def test_gemini_is_used_when_only_its_key_is_configured():
     assert active_provider(settings(OPENAI_API_KEY="", GEMINI_API_KEY="g")) is GEMINI
 

@@ -125,8 +125,8 @@ export function Step2Sources({ state, onChange, onNext, onPrev }: Step2SourcesPr
         </p>
       </div>
 
-      {/* Grid of Source Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+      {/* Grid of Source Cards: 1 row 2 cards on mobile & tablet */}
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-4">
         {QUESTION_SOURCES_DATA.map((source) => {
           const isSelected = state.selectedSources.includes(source.id);
           const Icon = source.icon;
@@ -135,52 +135,50 @@ export function Step2Sources({ state, onChange, onNext, onPrev }: Step2SourcesPr
             <div
               key={source.id}
               onClick={() => toggleSource(source.id)}
-              className={`p-5 rounded-2xl border-2 cursor-pointer transition-all flex flex-col justify-between relative space-y-4 ${
+              className={`p-3 sm:p-5 rounded-2xl border-2 cursor-pointer transition-all flex flex-col justify-between relative space-y-2 sm:space-y-3 select-none ${
                 isSelected
-                  ? 'border-indigo-600 bg-indigo-50/40 shadow-sm ring-4 ring-indigo-600/10'
+                  ? 'border-indigo-600 bg-indigo-50/40 shadow-sm ring-2 sm:ring-4 ring-indigo-600/10'
                   : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-2xs'
               }`}
             >
               {/* Checkmark Badge */}
               <div className="flex items-start justify-between">
-                <div className="w-10 h-10 rounded-xl bg-indigo-100/80 text-indigo-700 flex items-center justify-center font-bold">
-                  <Icon className="w-5 h-5" />
+                <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-indigo-100/80 text-indigo-700 flex items-center justify-center font-bold shrink-0">
+                  <Icon className="w-4 h-4 sm:w-5 sm:h-5" />
                 </div>
 
                 <div
-                  className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${
+                  className={`w-5 h-5 sm:w-6 sm:h-6 rounded-full border-2 flex items-center justify-center transition-all shrink-0 ${
                     isSelected
                       ? 'bg-indigo-600 border-indigo-600 text-white'
                       : 'border-slate-300 bg-white'
                   }`}
                 >
-                  {isSelected && <CheckCircle2 className="w-4 h-4 fill-indigo-600 text-white" />}
+                  {isSelected && <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 fill-indigo-600 text-white" />}
                 </div>
               </div>
 
               {/* Title & Description */}
               <div>
-                <h3 className="text-[14.5px] font-bold text-slate-800 leading-snug">{source.title}</h3>
-                <p className="text-[11.5px] text-slate-500 mt-1 leading-relaxed">{source.description}</p>
+                <h3 className="text-[12px] sm:text-[14.5px] font-bold text-slate-800 leading-snug line-clamp-2">
+                  {source.title}
+                </h3>
+                <p className="text-[10px] sm:text-[11.5px] text-slate-500 mt-0.5 sm:mt-1 leading-snug line-clamp-2 hidden xs:block">
+                  {source.description}
+                </p>
               </div>
 
               {/* Metrics Bar */}
-              <div className="grid grid-cols-2 gap-2 pt-3 border-t border-slate-100 text-[11px]">
+              <div className="grid grid-cols-2 gap-1.5 pt-2 border-t border-slate-100 text-[10px] sm:text-[11px]">
                 <div>
-                  <span className="text-slate-400 font-medium block">Available</span>
-                  <span className="font-extrabold text-slate-800">{source.questionsAvailable.toLocaleString()} Qs</span>
+                  <span className="text-slate-400 font-medium block text-[9px] sm:text-[10.5px]">Available</span>
+                  <span className="font-extrabold text-slate-800 text-[10.5px] sm:text-[11.5px] truncate block">
+                    {source.questionsAvailable.toLocaleString()} Qs
+                  </span>
                 </div>
-                <div>
-                  <span className="text-slate-400 font-medium block">Coverage</span>
-                  <span className="font-bold text-slate-700">{source.coverage}</span>
-                </div>
-                <div>
-                  <span className="text-slate-400 font-medium block">Updated</span>
-                  <span className="font-semibold text-slate-600">{source.lastUpdated}</span>
-                </div>
-                <div>
-                  <span className="text-slate-400 font-medium block">Quality</span>
-                  <span className={`inline-block px-1.5 py-0.2 rounded font-bold ${source.tagColor}`}>
+                <div className="text-right sm:text-left">
+                  <span className="text-slate-400 font-medium block text-[9px] sm:text-[10.5px]">Quality</span>
+                  <span className={`inline-block px-1.5 py-0.5 rounded font-bold text-[9.5px] sm:text-[10.5px] ${source.tagColor}`}>
                     {source.qualityScore}
                   </span>
                 </div>
@@ -190,23 +188,6 @@ export function Step2Sources({ state, onChange, onNext, onPrev }: Step2SourcesPr
         })}
       </div>
 
-      {/* Footer Navigation */}
-      <div className="flex items-center justify-between border-t border-slate-200 pt-5">
-        <button
-          onClick={onPrev}
-          className="px-6 py-2.5 border border-slate-300 text-slate-700 hover:bg-slate-50 font-bold text-[13px] rounded-xl transition-colors"
-        >
-          ← Back to Details
-        </button>
-
-        <button
-          onClick={onNext}
-          disabled={state.selectedSources.length === 0}
-          className="px-8 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[13.5px] rounded-xl shadow-md transition-all disabled:opacity-50"
-        >
-          Next: Syllabus Builder →
-        </button>
-      </div>
     </div>
   );
 }

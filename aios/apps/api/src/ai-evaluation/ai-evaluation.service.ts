@@ -70,9 +70,13 @@ export class AiEvaluationService {
       await axios.post(
         `${baseUrl}/evaluation/ai-evaluate`,
         { instituteId: job.instituteId, responseId: job.responseId, requestedByUserId: job.requestedByUserId },
-        // Above api-python's AI_CALL_HARD_TIMEOUT_SECONDS (40s) so Python times out and
-        // routes to the human queue first, instead of this side abandoning a live call.
-        { headers: internalToken ? { 'X-Internal-Token': internalToken } : undefined, timeout: 50_000 },
+        {
+          headers: {
+            ...(internalToken ? { 'X-Internal-Token': internalToken } : {}),
+            'X-Correlation-Id': `ai-eval-${job.responseId}`,
+          },
+          timeout: 50_000,
+        },
       );
       this.logger.debug(`AI evaluation for response ${job.responseId} completed in ${Date.now() - startedAt}ms`);
     } catch (err) {
@@ -83,19 +87,62 @@ export class AiEvaluationService {
     }
   }
 
-  /** 27 §9: up to ~15 minutes p95 for a 200-response delivery — the HTTP call is held open for the whole batch rather than polled, a known limitation for a future pass at real scale. */
+  /**
+   * Bounded chunked batch evaluation.
+   *
+   * WHY THE SAFETY BOUNDS (C-3 fix): the previous while(hasMore) loop had no
+   * maximum iteration count or elapsed-time guard. A Python-side bug returning
+   * `hasMore: true` indefinitely would hold a BullMQ worker slot forever,
+   * draining concurrency for every other pending evaluation job. At QUEUE_POLICY
+   * .aiEvaluation.concurrency=4, four such stuck jobs would silently freeze the
+   * entire AI evaluation pipeline with no 5xx anywhere.
+   *
+   * MAX_BATCH_CHUNKS: a 60-page exam with 10 subjective questions / 5 per chunk =
+   * 2 chunks per exam. 200 is orders of magnitude more than any legitimate batch
+   * and tight enough to catch a runaway loop within one BullMQ job.
+   *
+   * MAX_ELAPSED_MS: belt-and-suspenders. Even if chunk count is somehow bypassed,
+   * the job cannot consume a worker slot for more than 8 minutes total.
+   */
   async requestBatchEvaluation(job: Extract<AiEvaluationJobData, { type: 'batch' }>): Promise<void> {
     const baseUrl = this.config.get<string>('PYTHON_SERVICE_URL');
     const internalToken = this.config.get<string>('INTERNAL_SERVICE_TOKEN');
     const startedAt = Date.now();
 
+    const MAX_BATCH_CHUNKS = 200;
+    const MAX_ELAPSED_MS = 8 * 60_000;
+
     try {
-      await axios.post(
-        `${baseUrl}/evaluation/ai-evaluate-batch`,
-        { instituteId: job.instituteId, assessmentDeliveryId: job.assessmentDeliveryId, requestedByUserId: job.requestedByUserId },
-        { headers: internalToken ? { 'X-Internal-Token': internalToken } : undefined, timeout: 20 * 60_000 },
-      );
-      this.logger.debug(`AI batch evaluation for delivery ${job.assessmentDeliveryId} completed in ${Date.now() - startedAt}ms`);
+      let hasMore = true;
+      let chunks = 0;
+      while (hasMore && chunks < MAX_BATCH_CHUNKS && Date.now() - startedAt < MAX_ELAPSED_MS) {
+        const response = await axios.post(
+          `${baseUrl}/evaluation/ai-evaluate-batch`,
+          { instituteId: job.instituteId, assessmentDeliveryId: job.assessmentDeliveryId, requestedByUserId: job.requestedByUserId },
+          {
+            headers: {
+              ...(internalToken ? { 'X-Internal-Token': internalToken } : {}),
+              'X-Correlation-Id': `ai-eval-batch-${job.assessmentDeliveryId}`,
+            },
+            timeout: 60_000,
+          },
+        );
+        hasMore = response.data?.data?.hasMore === true;
+        chunks++;
+      }
+
+      if (hasMore) {
+        // Safety limit reached — not necessarily an error (the job was marked complete
+        // as far as BullMQ is concerned, and the next evaluation trigger will resume
+        // from where Python left off since it tracks PENDING responses). Log at warn
+        // so it is visible in production dashboards without failing the job itself.
+        this.logger.warn(
+          `AI batch evaluation for delivery ${job.assessmentDeliveryId} reached safety limit ` +
+            `after ${chunks} chunks / ${Date.now() - startedAt}ms — some responses may still be PENDING`,
+        );
+      } else {
+        this.logger.debug(`AI batch evaluation for delivery ${job.assessmentDeliveryId} completed in ${chunks} chunks / ${Date.now() - startedAt}ms`);
+      }
     } catch (err) {
       this.logger.warn(`AI batch evaluation HTTP call failed for delivery ${job.assessmentDeliveryId} after ${Date.now() - startedAt}ms`, err as Error);
       throw ensureDiagnosableMessage(err);

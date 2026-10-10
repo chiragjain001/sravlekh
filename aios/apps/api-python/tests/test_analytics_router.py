@@ -29,6 +29,59 @@ def make_student(student_id, name, topic_id, topic_name, mastery_value, trend=0.
     )
 
 
+def make_mock_db(students_or_rows):
+    """Mock database helper that supports both query_raw (C-4 fix) and studentprofile.find_many."""
+    async def query_raw(query, *args):
+        threshold = args[0] if len(args) > 0 else 0.50
+        batch_ids = args[1] if len(args) > 1 else ["batch-1"]
+
+        if not students_or_rows:
+            return []
+
+        if isinstance(students_or_rows[0], dict):
+            return students_or_rows
+
+        topics = {}
+        for s in students_or_rows:
+            for ms in s.masteryScores:
+                tid = ms.topicId
+                if tid not in topics:
+                    topics[tid] = {
+                        "batch_id": batch_ids[0] if batch_ids else "batch-1",
+                        "topic_id": tid,
+                        "topic_name": ms.topic.name,
+                        "values": [],
+                    }
+                topics[tid]["values"].append(ms.masteryValue)
+
+        rows = []
+        for tid, data in topics.items():
+            vals = data["values"]
+            total = len(vals)
+            struggling = sum(1 for v in vals if v < threshold)
+            avg_m = round(sum(vals) / total * 100, 1)
+            rows.append({
+                "batch_id": data["batch_id"],
+                "topic_id": tid,
+                "topic_name": data["topic_name"],
+                "avg_mastery": avg_m,
+                "struggling": struggling,
+                "total": total,
+            })
+        return rows
+
+    return SimpleNamespace(
+        query_raw=AsyncMock(side_effect=query_raw),
+        studentprofile=SimpleNamespace(find_many=AsyncMock(return_value=students_or_rows)),
+    )
+
+
+@pytest.fixture(autouse=True)
+def mock_ensure_db():
+    with patch("src.routers.analytics.ensure_db", AsyncMock()):
+        yield
+
+
 @pytest.mark.asyncio
 async def test_rejects_a_student_caller():
     with pytest.raises(HTTPException) as exc_info:
@@ -38,7 +91,7 @@ async def test_rejects_a_student_caller():
 
 @pytest.mark.asyncio
 async def test_empty_batch_returns_empty_data_not_an_error():
-    fake_db = SimpleNamespace(studentprofile=SimpleNamespace(find_many=AsyncMock(return_value=[])))
+    fake_db = make_mock_db([])
     with patch("src.routers.analytics.db", fake_db):
         result = await get_batch_heatmap("batch-1", current_user=SimpleNamespace(role="TEACHER"))
     assert result == {"success": True, "data": []}
@@ -53,7 +106,7 @@ async def test_aggregates_mastery_by_topic_without_crashing_on_the_trend_field()
         make_student("s1", "Aarav", "t1", "Kinematics", 0.30),  # masteryValue is 0.0-1.0 (see schema)
         make_student("s2", "Diya", "t1", "Kinematics", 0.80),
     ]
-    fake_db = SimpleNamespace(studentprofile=SimpleNamespace(find_many=AsyncMock(return_value=students)))
+    fake_db = make_mock_db(students)
     with patch("src.routers.analytics.db", fake_db):
         result = await get_batch_heatmap("batch-1", current_user=SimpleNamespace(role="TEACHER"))
 
@@ -75,7 +128,7 @@ async def test_struggling_count_moves_with_a_retuned_mastery_threshold():
         make_student("s1", "Aarav", "t1", "Kinematics", 0.30),
         make_student("s2", "Diya", "t1", "Kinematics", 0.60),
     ]
-    fake_db = SimpleNamespace(studentprofile=SimpleNamespace(find_many=AsyncMock(return_value=students)))
+    fake_db = make_mock_db(students)
 
     with patch("src.routers.analytics.db", fake_db):
         default_result = await get_batch_heatmap("batch-1", current_user=SimpleNamespace(role="TEACHER"))
@@ -92,7 +145,7 @@ async def test_struggling_threshold_boundary_is_strictly_less_than():
     # Exactly at the threshold (0.50 -> 50.0) must NOT count as struggling —
     # `<`, not `<=`, matching the pre-D1 hardcoded comparison exactly.
     students = [make_student("s1", "Aarav", "t1", "Kinematics", 0.50)]
-    fake_db = SimpleNamespace(studentprofile=SimpleNamespace(find_many=AsyncMock(return_value=students)))
+    fake_db = make_mock_db(students)
     with patch("src.routers.analytics.db", fake_db):
         result = await get_batch_heatmap("batch-1", current_user=SimpleNamespace(role="TEACHER"))
     assert result["data"][0]["studentsStruggling"] == 0
@@ -105,7 +158,7 @@ async def test_heatmap_status_bands_are_config_driven_not_derived_from_intervent
     get_mastery_threshold(). Retuning the intervention threshold must not move
     these bands; retuning the heatmap-specific config must."""
     students = [make_student("s1", "Aarav", "t1", "Kinematics", 0.45)]  # 45%
-    fake_db = SimpleNamespace(studentprofile=SimpleNamespace(find_many=AsyncMock(return_value=students)))
+    fake_db = make_mock_db(students)
 
     with patch("src.routers.analytics.db", fake_db), \
          patch("src.routers.analytics.get_mastery_threshold", return_value=0.90):
@@ -132,7 +185,7 @@ async def test_heatmap_status_bands_are_config_driven_not_derived_from_intervent
 @pytest.mark.asyncio
 async def test_heatmap_status_band_boundaries(average_mastery, expected_status):
     students = [make_student("s1", "Aarav", "t1", "Kinematics", average_mastery / 100)]
-    fake_db = SimpleNamespace(studentprofile=SimpleNamespace(find_many=AsyncMock(return_value=students)))
+    fake_db = make_mock_db(students)
     with patch("src.routers.analytics.db", fake_db):
         result = await get_batch_heatmap("batch-1", current_user=SimpleNamespace(role="TEACHER"))
     assert result["data"][0]["status"] == expected_status

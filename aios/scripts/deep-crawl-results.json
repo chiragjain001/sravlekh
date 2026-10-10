@@ -1,0 +1,447 @@
+{
+  "totalDiscoverable": 57,
+  "tested": 55,
+  "untested": 2,
+  "passed": 55,
+  "failed": 0,
+  "details": [
+    {
+      "route": "/login",
+      "role": "PUBLIC",
+      "status": "PASS"
+    },
+    {
+      "route": "http://localhost:3000/dashboard/admin?nav=Dashboard",
+      "role": "ADMIN",
+      "tab": "Dashboard",
+      "durationMs": 2014,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/admin?nav=Teachers",
+      "role": "ADMIN",
+      "tab": "Teachers",
+      "durationMs": 1205,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/admin?nav=Students",
+      "role": "ADMIN",
+      "tab": "Students",
+      "durationMs": 1149,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/admin?nav=Batches",
+      "role": "ADMIN",
+      "tab": "Batches",
+      "durationMs": 1500,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/admin?nav=Academics",
+      "role": "ADMIN",
+      "tab": "Academics",
+      "durationMs": 1749,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/admin?nav=Question%20Bank",
+      "role": "ADMIN",
+      "tab": "Question Bank",
+      "durationMs": 1115,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/admin?nav=Papers",
+      "role": "ADMIN",
+      "tab": "Papers",
+      "durationMs": 1901,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/admin?nav=Exams",
+      "role": "ADMIN",
+      "tab": "Exams",
+      "durationMs": 1558,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/admin?nav=Doubts",
+      "role": "ADMIN",
+      "tab": "Doubts",
+      "durationMs": 1492,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/admin?nav=Assignments",
+      "role": "ADMIN",
+      "tab": "Assignments",
+      "durationMs": 1141,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/admin?nav=Timetable",
+      "role": "ADMIN",
+      "tab": "Timetable",
+      "durationMs": 1878,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/admin?nav=Attendance",
+      "role": "ADMIN",
+      "tab": "Attendance",
+      "durationMs": 2019,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/admin?nav=Communication",
+      "role": "ADMIN",
+      "tab": "Communication",
+      "durationMs": 1072,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/admin?nav=Analytics%20%26%20Reports",
+      "role": "ADMIN",
+      "tab": "Analytics & Reports",
+      "durationMs": 1206,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/admin?nav=Reports",
+      "role": "ADMIN",
+      "tab": "Reports",
+      "durationMs": 1065,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/admin?nav=System%20Settings",
+      "role": "ADMIN",
+      "tab": "System Settings",
+      "durationMs": 1568,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/admin?nav=Settings",
+      "role": "ADMIN",
+      "tab": "Settings",
+      "durationMs": 1190,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/admin?nav=Audit%20Logs",
+      "role": "ADMIN",
+      "tab": "Audit Logs",
+      "durationMs": 1108,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/admin?nav=Analytics",
+      "role": "ADMIN",
+      "tab": "Analytics",
+      "durationMs": 1084,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/admin?nav=Evaluation%20Quality",
+      "role": "ADMIN",
+      "tab": "Evaluation Quality",
+      "durationMs": 1198,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/teacher?tab=today",
+      "role": "TEACHER",
+      "tab": "today",
+      "durationMs": 2929,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/teacher?tab=classes",
+      "role": "TEACHER",
+      "tab": "classes",
+      "durationMs": 2008,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/teacher?tab=question-bank",
+      "role": "TEACHER",
+      "tab": "question-bank",
+      "durationMs": 1918,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/teacher?tab=paper-builder",
+      "role": "TEACHER",
+      "tab": "paper-builder",
+      "durationMs": 2014,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/teacher?tab=assessments",
+      "role": "TEACHER",
+      "tab": "assessments",
+      "durationMs": 2016,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/teacher?tab=digital-copy",
+      "role": "TEACHER",
+      "tab": "digital-copy",
+      "durationMs": 2014,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/teacher?tab=evaluation-queue",
+      "role": "TEACHER",
+      "tab": "evaluation-queue",
+      "durationMs": 2021,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/teacher?tab=remedial-extra",
+      "role": "TEACHER",
+      "tab": "remedial-extra",
+      "durationMs": 1980,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/teacher?tab=doubt-center",
+      "role": "TEACHER",
+      "tab": "doubt-center",
+      "durationMs": 2016,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/teacher?tab=timetable",
+      "role": "TEACHER",
+      "tab": "timetable",
+      "durationMs": 1608,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/teacher?tab=settings",
+      "role": "TEACHER",
+      "tab": "settings",
+      "durationMs": 2021,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/student?nav=Overview",
+      "role": "STUDENT",
+      "tab": "Overview",
+      "durationMs": 1119,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/student?nav=My%20Tests",
+      "role": "STUDENT",
+      "tab": "My Tests",
+      "durationMs": 964,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/student?nav=Assignments",
+      "role": "STUDENT",
+      "tab": "Assignments",
+      "durationMs": 1211,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/student?nav=Study%20Plan",
+      "role": "STUDENT",
+      "tab": "Study Plan",
+      "durationMs": 1013,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/student?nav=Weak%20Topics",
+      "role": "STUDENT",
+      "tab": "Weak Topics",
+      "durationMs": 1003,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/student?nav=Doubt%20Center",
+      "role": "STUDENT",
+      "tab": "Doubt Center",
+      "durationMs": 1452,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/student?nav=Time%20Table",
+      "role": "STUDENT",
+      "tab": "Time Table",
+      "durationMs": 1569,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/student?nav=Extra%20Classes",
+      "role": "STUDENT",
+      "tab": "Extra Classes",
+      "durationMs": 1438,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/student?nav=Progress",
+      "role": "STUDENT",
+      "tab": "Progress",
+      "durationMs": 1402,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/student?nav=Leaderboard",
+      "role": "STUDENT",
+      "tab": "Leaderboard",
+      "durationMs": 1121,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/student?nav=Resources",
+      "role": "STUDENT",
+      "tab": "Resources",
+      "durationMs": 1055,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/student?nav=Settings",
+      "role": "STUDENT",
+      "tab": "Settings",
+      "durationMs": 1005,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/founder?nav=Overview",
+      "role": "FOUNDER",
+      "tab": "Overview",
+      "durationMs": 971,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/founder?nav=Institutes",
+      "role": "FOUNDER",
+      "tab": "Institutes",
+      "durationMs": 1362,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/founder?nav=Users",
+      "role": "FOUNDER",
+      "tab": "Users",
+      "durationMs": 1117,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/founder?nav=Analytics",
+      "role": "FOUNDER",
+      "tab": "Analytics",
+      "durationMs": 1274,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/founder?nav=Subscriptions",
+      "role": "FOUNDER",
+      "tab": "Subscriptions",
+      "durationMs": 1002,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/founder?nav=System%20Health",
+      "role": "FOUNDER",
+      "tab": "System Health",
+      "durationMs": 1004,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/founder?nav=Audit%20Logs",
+      "role": "FOUNDER",
+      "tab": "Audit Logs",
+      "durationMs": 987,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/founder?nav=Support%20Tickets",
+      "role": "FOUNDER",
+      "tab": "Support Tickets",
+      "durationMs": 903,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/founder?nav=Settings",
+      "role": "FOUNDER",
+      "tab": "Settings",
+      "durationMs": 907,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/founder?nav=Feature%20Management",
+      "role": "FOUNDER",
+      "tab": "Feature Management",
+      "durationMs": 831,
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "route": "http://localhost:3000/dashboard/founder?nav=Integrations",
+      "role": "FOUNDER",
+      "tab": "Integrations",
+      "durationMs": 1517,
+      "status": "PASS",
+      "error": null
+    }
+  ],
+  "consoleErrors": []
+}

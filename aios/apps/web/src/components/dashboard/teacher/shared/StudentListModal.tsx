@@ -31,29 +31,29 @@ export function StudentListModal({
   }
   function goAssign() {
     onClose();
-    setTeacherNav('assignments');
+    setTeacherNav('assessments');
   }
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center p-4 animate-fadein"
+      className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 animate-fadein"
       style={{ backdropFilter: 'blur(6px)', background: 'rgba(15,23,42,0.45)' }}
       onClick={onClose}
     >
       <div
-        className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col mx-4"
+        className="relative bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-2xl max-h-[88vh] sm:max-h-[85vh] flex flex-col overflow-hidden"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-start justify-between p-5 border-b border-slate-100">
-          <div className="flex-1 pr-3">
+        <div className="flex items-start justify-between p-4 sm:p-5 border-b border-slate-100">
+          <div className="flex-1 min-w-0 pr-3">
             <div className="flex items-center gap-2 mb-1">
               <div className="w-7 h-7 rounded-lg bg-rose-100 flex items-center justify-center flex-shrink-0">
                 <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
               </div>
-              <p className="text-[15px] font-bold text-slate-800 leading-tight">{topic} ({title})</p>
+              <p className="text-[14px] sm:text-[15px] font-bold text-slate-800 leading-tight truncate">{topic} ({title})</p>
             </div>
-            <p className="text-[12px] text-rose-600 font-semibold pl-9">
+            <p className="text-[11.5px] sm:text-[12px] text-rose-600 font-semibold pl-9">
               {weakCount} of {totalStudents} students · Avg {avgScore}%
             </p>
           </div>
@@ -66,7 +66,7 @@ export function StudentListModal({
         </div>
 
         {/* Progress bar */}
-        <div className="px-5 pt-4 pb-3">
+        <div className="px-4 sm:px-5 pt-3.5 sm:pt-4 pb-3">
           <div className="flex items-center justify-between text-[11px] text-slate-500 mb-1.5">
             <span>Students affected</span>
             <span className="font-bold text-rose-600">{pct}%</span>
@@ -80,12 +80,20 @@ export function StudentListModal({
         </div>
 
         {/* CTAs */}
-        <div className="px-5 pb-4 flex gap-2">
-          <button onClick={goSchedule} className="flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 text-white text-[11.5px] font-bold rounded-xl hover:bg-indigo-700 transition-colors">
-            <CalendarPlus className="w-3.5 h-3.5" /> Schedule Extra Class
+        <div className="px-4 sm:px-5 pb-3.5 sm:pb-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <button
+            onClick={goSchedule}
+            className="w-full inline-flex items-center justify-center gap-1.5 px-3.5 py-2 sm:py-1.5 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white text-[11.5px] font-bold rounded-xl transition-all"
+          >
+            <CalendarPlus className="w-3.5 h-3.5" />
+            <span>Schedule Extra Class</span>
           </button>
-          <button onClick={goAssign} className="flex items-center gap-1.5 px-3.5 py-1.5 border border-indigo-200 text-indigo-700 text-[11.5px] font-bold rounded-xl hover:bg-indigo-50 transition-colors">
-            <BookOpen className="w-3.5 h-3.5" /> Assign Practice Set
+          <button
+            onClick={goAssign}
+            className="w-full inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 border border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-50 active:scale-[0.98] text-[11.5px] font-bold rounded-xl transition-all"
+          >
+            <BookOpen className="w-3.5 h-3.5" />
+            <span>Assign Practice Set</span>
           </button>
         </div>
 

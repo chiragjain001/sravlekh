@@ -1,4 +1,5 @@
 import { NestFactory } from '@nestjs/core';
+// AIOS main entrypoint
 import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';

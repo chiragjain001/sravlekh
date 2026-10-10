@@ -24,6 +24,17 @@ import {
 // 09-CACHING-STRATEGY.md §1.1 / §3
 const ACADEMICS_TREE_TTL_SECONDS = 30 * 60;
 const academicsTreeKey = (instituteId: string) => `academics-tree:${instituteId}`;
+const BATCHES_CACHE_TTL_SECONDS = 60;
+const batchesListKey = (instituteId: string, scope: string) => `batches:${instituteId}:${scope}`;
+const batchesStatsKey = (instituteId: string, scope: string) => `batches-stats:${instituteId}:${scope}`;
+
+export interface BatchStats {
+  total: number;
+  active: number;
+  inactive: number;
+  byClassYear: { classYear: string; count: number }[];
+  byEnrollment: { batchId: string; batchName: string; studentCount: number }[];
+}
 
 @Injectable()
 export class BatchesService {
@@ -50,6 +61,8 @@ export class BatchesService {
       },
     });
 
+    await this.cache.delByPrefix(`batches:${instituteId}:`);
+    await this.cache.delByPrefix(`batches-stats:${instituteId}:`);
     await this.writeAudit(instituteId, actor.id, AuditAction.CREATE, 'batches', batch.id, null, dto);
     return batch;
   }
@@ -59,9 +72,14 @@ export class BatchesService {
 
     // A teacher only sees batches they're assigned to — everyone else (ADMIN/
     // FOUNDER) keeps institute-wide visibility, unaffected by this branch.
-    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor);
+    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor, this.cache);
+    const scope = teacherBatchIds !== null ? `teacher:${actor.id}` : 'all';
+    const cacheKey = batchesListKey(instituteId, scope);
 
-    return this.prisma.batch.findMany({
+    const cached = await this.cache.get(cacheKey);
+    if (cached) return cached;
+
+    const batches = await this.prisma.batch.findMany({
       where: {
         instituteId,
         ...(teacherBatchIds !== null && { id: { in: teacherBatchIds } }),
@@ -76,6 +94,9 @@ export class BatchesService {
       },
       orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
     });
+
+    await this.cache.set(cacheKey, batches, BATCHES_CACHE_TTL_SECONDS);
+    return batches;
   }
 
   async findBatchById(instituteId: string, batchId: string, actor: AuthenticatedUser) {
@@ -132,6 +153,8 @@ export class BatchesService {
       },
     });
 
+    await this.cache.delByPrefix(`batches:${instituteId}:`);
+    await this.cache.delByPrefix(`batches-stats:${instituteId}:`);
     await this.writeAudit(instituteId, actor.id, AuditAction.UPDATE, 'batches', batchId, batch, dto);
     return updated;
   }
@@ -146,6 +169,8 @@ export class BatchesService {
     if (!batch.isActive) throw new ConflictException('Batch is already archived.');
 
     await this.prisma.batch.update({ where: { id: batchId }, data: { isActive: false } });
+    await this.cache.delByPrefix(`batches:${instituteId}:`);
+    await this.cache.delByPrefix(`batches-stats:${instituteId}:`);
     await this.writeAudit(instituteId, actor.id, AuditAction.UPDATE, 'batches', batchId, { isActive: true }, { isActive: false });
 
     return { message: 'Batch archived successfully.' };
@@ -153,10 +178,16 @@ export class BatchesService {
 
   // ── Roster stats — real aggregates for the Admin overview/analytics screens ─
 
-  async getStats(instituteId: string, actor: AuthenticatedUser) {
+  async getStats(instituteId: string, actor: AuthenticatedUser): Promise<BatchStats> {
     this.assertInstituteAccess(actor, instituteId);
 
-    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor);
+    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor, this.cache);
+    const scope = teacherBatchIds !== null ? `teacher:${actor.id}` : 'all';
+    const cacheKey = batchesStatsKey(instituteId, scope);
+
+    const cached = await this.cache.get<BatchStats>(cacheKey);
+    if (cached) return cached;
+
     const where: Record<string, unknown> = {
       instituteId,
       ...(teacherBatchIds !== null && { id: { in: teacherBatchIds } }),
@@ -177,7 +208,7 @@ export class BatchesService {
       byClassYear.set(key, (byClassYear.get(key) ?? 0) + 1);
     }
 
-    return {
+    const stats = {
       total,
       active,
       inactive: total - active,
@@ -187,6 +218,9 @@ export class BatchesService {
         .sort((a, b) => b.studentCount - a.studentCount)
         .slice(0, 10),
     };
+
+    await this.cache.set(cacheKey, stats, BATCHES_CACHE_TTL_SECONDS);
+    return stats;
   }
 
   // ── Batch performance: per-student aggregation for the Teacher UI ─────────
@@ -290,7 +324,12 @@ export class BatchesService {
   async getBatchPerformanceSummaries(instituteId: string, actor: AuthenticatedUser) {
     this.assertInstituteAccess(actor, instituteId);
 
-    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor);
+    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor, this.cache);
+    const scope = teacherBatchIds !== null ? `teacher:${actor.id}` : 'all';
+    const cacheKey = `batch-perf-summary:${instituteId}:${scope}`;
+
+    const cached = await this.cache.get<any[]>(cacheKey);
+    if (cached) return cached;
     const batches = await this.prisma.batch.findMany({
       where: {
         instituteId,
@@ -343,7 +382,7 @@ export class BatchesService {
     const studentCounts = new Map<string, number>();
     for (const s of students) studentCounts.set(s.batchId!, (studentCounts.get(s.batchId!) ?? 0) + 1);
 
-    return batches.map((batch) => {
+    const result = batches.map((batch) => {
       const bucket = perBatch.get(batch.id)!;
 
       // Same shape as getBatchPerformance: average the per-student averages,
@@ -373,6 +412,9 @@ export class BatchesService {
         trend,
       };
     });
+
+    await this.cache.set(cacheKey, result, BATCHES_CACHE_TTL_SECONDS);
+    return result;
   }
 
   // Same "weak" cutoff BatchesService.getBatchPerformance and the frontend's
@@ -615,7 +657,7 @@ export class BatchesService {
 
   private async assertTeacherOwnsBatchIfTeacher(actor: AuthenticatedUser, batchId: string) {
     if (actor.role !== UserRole.TEACHER) return;
-    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor);
+    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor, this.cache);
     if (!teacherBatchIds?.includes(batchId)) {
       throw new ForbiddenException('You can only view batches you are assigned to.');
     }

@@ -111,37 +111,36 @@ export function Step4Planning({ state, onChange, onNext, onPrev, chapters }: Ste
               key={chapterId}
               className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4"
             >
-              {/* Chapter Header */}
-              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center font-extrabold text-[13px]">
+              <div className="flex items-start justify-between border-b border-slate-100 pb-3 gap-2 flex-wrap">
+                <div className="flex items-center gap-2 sm:gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center font-extrabold text-[13px] shrink-0">
                     {chapterTotal}
                   </div>
                   <div>
-                    <h3 className="text-[15px] font-bold text-slate-800">
+                    <h3 className="text-[14px] sm:text-[15px] font-bold text-slate-800 leading-snug">
                       {chapterNamesMap[chapterId] || chapterId}
                     </h3>
                     <p className="text-[11.5px] text-slate-500 font-medium">
-                      Target Chapter Weightage: {chapterTotal > 0 ? `${Math.round((chapterTotal / (totalQuestions || 1)) * 100)}%` : '0%'}
+                      {chapterTotal > 0 ? `${Math.round((chapterTotal / (totalQuestions || 1)) * 100)}% weightage` : '0% weightage'}
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] font-extrabold px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700">
-                    Easy: {plan.easy}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[10.5px] font-extrabold px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700">
+                    E: {plan.easy}
                   </span>
-                  <span className="text-[11px] font-extrabold px-2.5 py-1 rounded-lg bg-amber-50 text-amber-700">
-                    Medium: {plan.medium}
+                  <span className="text-[10.5px] font-extrabold px-2 py-1 rounded-lg bg-amber-50 text-amber-700">
+                    M: {plan.medium}
                   </span>
-                  <span className="text-[11px] font-extrabold px-2.5 py-1 rounded-lg bg-rose-50 text-rose-700">
-                    Hard: {plan.hard}
+                  <span className="text-[10.5px] font-extrabold px-2 py-1 rounded-lg bg-rose-50 text-rose-700">
+                    H: {plan.hard}
                   </span>
                 </div>
               </div>
 
               {/* Sliders Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-1">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-6 pt-1">
                 {/* Easy Slider */}
                 <div className="space-y-2 bg-emerald-50/40 p-3.5 rounded-xl border border-emerald-100">
                   <div className="flex justify-between items-center text-[12px]">
@@ -211,52 +210,25 @@ export function Step4Planning({ state, onChange, onNext, onPrev, chapters }: Ste
       </div>
 
       {/* Running Total Summary Bar */}
-      <div className="p-4 bg-slate-900 text-white rounded-2xl flex flex-wrap items-center justify-between gap-4 shadow-lg">
-        <div className="flex items-center gap-6">
+      <div className="p-4 bg-slate-900 text-white rounded-2xl shadow-lg">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
           <div>
-            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Running Total</span>
-            <span className="text-[18px] font-extrabold text-white">{totalQuestions} Questions</span>
+            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Total Qs</span>
+            <span className="text-[18px] font-extrabold text-white">{totalQuestions}</span>
           </div>
-
-          <div className="h-8 w-px bg-slate-800" />
-
           <div>
             <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Total Marks</span>
-            <span className="text-[16px] font-bold text-amber-400">{totalMarks} Marks</span>
+            <span className="text-[16px] font-bold text-amber-400">{totalMarks}</span>
           </div>
-
-          <div className="h-8 w-px bg-slate-800" />
-
           <div>
             <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Est. Time</span>
-            <span className="text-[16px] font-bold text-emerald-400">{estimatedTime} Mins</span>
+            <span className="text-[16px] font-bold text-emerald-400">{estimatedTime} min</span>
           </div>
-
-          <div className="h-8 w-px bg-slate-800" />
-
           <div>
-            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Syllabus Coverage</span>
+            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Coverage</span>
             <span className="text-[16px] font-bold text-indigo-300">{coveragePct}%</span>
           </div>
         </div>
-
-        <button
-          onClick={onNext}
-          disabled={totalQuestions === 0}
-          className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[13px] rounded-xl transition-all shadow-md"
-        >
-          Next: Question Rules →
-        </button>
-      </div>
-
-      {/* Footer Navigation */}
-      <div className="flex items-center justify-between border-t border-slate-200 pt-3">
-        <button
-          onClick={onPrev}
-          className="px-6 py-2.5 border border-slate-300 text-slate-700 hover:bg-slate-50 font-bold text-[13px] rounded-xl transition-colors"
-        >
-          ← Back to Syllabus
-        </button>
       </div>
     </div>
   );

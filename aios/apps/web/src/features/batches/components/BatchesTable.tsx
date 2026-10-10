@@ -1,7 +1,8 @@
 'use client';
 
 import React from 'react';
-import { ArrowUp, ArrowDown, ArrowUpDown, MoreHorizontal, Eye, Edit2, Trash2, CheckSquare, Square, Minus, Users, GraduationCap } from 'lucide-react';
+import { ArrowUp, ArrowDown, ArrowUpDown, MoreHorizontal, Eye, Edit2, Trash2, CheckSquare, Users, GraduationCap } from 'lucide-react';
+import { TableCheckbox } from '@/components/ui/TableCheckbox';
 import type { BatchListItem, SortDirection, BatchSortField } from '../types/batch.types';
 
 function StatusBadge({ isActive }: { isActive: boolean }) {
@@ -118,53 +119,62 @@ export function BatchesTable({
   const someSelected = batches.some((b) => selectedIds.has(b.id)) && !allSelected;
 
   return (
-    <div className="w-full overflow-x-auto">
-      <table className="w-full text-xs whitespace-nowrap">
-        <thead className="bg-slate-50 border-y border-slate-100 sticky top-0 z-10">
-          <tr>
-            <th className="px-4 py-3 w-10">
-              <button onClick={onSelectAll} className="flex items-center justify-center text-slate-500 hover:text-indigo-600">
-                {allSelected ? <CheckSquare className="w-4 h-4 text-indigo-600" /> : someSelected ? <Minus className="w-4 h-4 text-slate-400" /> : <Square className="w-4 h-4" />}
-              </button>
-            </th>
-            <SortHeader label="Batch" col="name" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-            <SortHeader label="Class / Section" col="classYear" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-            <SortHeader label="Academic Year" col="academicYear" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-            <th className="px-4 py-3 font-semibold text-slate-600">Students</th>
-            <th className="px-4 py-3 font-semibold text-slate-600">Teachers</th>
-            <th className="px-4 py-3 font-semibold text-slate-600">Status</th>
-            <th className="px-4 py-3 w-10" />
-          </tr>
-        </thead>
+    <div className="relative w-full">
+      <div className="w-full max-h-[520px] md:max-h-none overflow-y-auto overflow-x-auto custom-scrollbar touch-pan-x overscroll-x-contain pb-1">
+        <table className="w-full text-xs whitespace-nowrap min-w-[760px]">
+          <thead className="bg-slate-50 border-y border-slate-100 sticky top-0 z-20 shadow-2xs">
+            <tr>
+              <th className="px-4 py-3 w-10 text-center">
+                <TableCheckbox
+                  checked={allSelected}
+                  indeterminate={someSelected}
+                  onChange={onSelectAll}
+                  ariaLabel="Select all batches"
+                  color="indigo"
+                />
+              </th>
+              <SortHeader label="Batch" col="name" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+              <SortHeader label="Class / Section" col="classYear" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+              <SortHeader label="Academic Year" col="academicYear" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+              <th className="px-4 py-3 font-semibold text-slate-600">Students</th>
+              <th className="px-4 py-3 font-semibold text-slate-600">Teachers</th>
+              <th className="px-4 py-3 font-semibold text-slate-600">Status</th>
+              <th className="px-4 py-3 w-10" />
+            </tr>
+          </thead>
 
-        {loading ? <TableSkeleton /> :
-         batches.length === 0 ? <EmptyState /> : (
-          <tbody className="divide-y divide-slate-50 bg-white">
-            {batches.map((b) => {
-              const isSelected = selectedIds.has(b.id);
-              return (
-                <tr key={b.id} className={`hover:bg-indigo-50/30 transition-colors ${isSelected ? 'bg-indigo-50/50' : ''}`}>
-                  <td className="px-4 py-3">
-                    <button onClick={() => onSelectOne(b.id)} className="flex items-center justify-center text-slate-400 hover:text-indigo-600">
-                      {isSelected ? <CheckSquare className="w-4 h-4 text-indigo-600" /> : <Square className="w-4 h-4" />}
-                    </button>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="font-bold text-slate-900 hover:text-indigo-600 transition-colors cursor-pointer" onClick={() => onView(b)}>{b.name}</span>
-                    {b.branchName && <p className="text-[10px] text-slate-400">{b.branchName}</p>}
-                  </td>
-                  <td className="px-4 py-3 text-slate-600">{[b.classYear, b.section].filter(Boolean).join(' · ') || '—'}</td>
-                  <td className="px-4 py-3 text-slate-500">{b.academicYear ?? '—'}</td>
-                  <td className="px-4 py-3"><span className="inline-flex items-center gap-1 text-slate-700 font-semibold"><Users className="w-3 h-3 text-blue-500" /> {b.studentCount}</span></td>
-                  <td className="px-4 py-3"><span className="inline-flex items-center gap-1 text-slate-700 font-semibold"><GraduationCap className="w-3 h-3 text-emerald-500" /> {b.teacherCount}</span></td>
-                  <td className="px-4 py-3"><StatusBadge isActive={b.isActive} /></td>
-                  <td className="px-4 py-3"><RowActions batch={b} onView={onView} onEdit={onEdit} onDelete={onDelete} /></td>
-                </tr>
-              );
-            })}
-          </tbody>
-        )}
-      </table>
+          {loading ? <TableSkeleton /> :
+           batches.length === 0 ? <EmptyState /> : (
+            <tbody className="divide-y divide-slate-50 bg-white">
+              {batches.map((b) => {
+                const isSelected = selectedIds.has(b.id);
+                return (
+                  <tr key={b.id} className={`hover:bg-indigo-50/30 transition-colors ${isSelected ? 'bg-indigo-50/50' : ''}`}>
+                    <td className="px-4 py-3 text-center">
+                      <TableCheckbox
+                        checked={isSelected}
+                        onChange={() => onSelectOne(b.id)}
+                        ariaLabel={`Select batch ${b.name}`}
+                        color="indigo"
+                      />
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="font-bold text-slate-900 hover:text-indigo-600 transition-colors cursor-pointer" onClick={() => onView(b)}>{b.name}</span>
+                      {b.branchName && <p className="text-[10px] text-slate-400">{b.branchName}</p>}
+                    </td>
+                    <td className="px-4 py-3 text-slate-600">{[b.classYear, b.section].filter(Boolean).join(' · ') || '—'}</td>
+                    <td className="px-4 py-3 text-slate-500">{b.academicYear ?? '—'}</td>
+                    <td className="px-4 py-3"><span className="inline-flex items-center gap-1 text-slate-700 font-semibold"><Users className="w-3 h-3 text-blue-500" /> {b.studentCount}</span></td>
+                    <td className="px-4 py-3"><span className="inline-flex items-center gap-1 text-slate-700 font-semibold"><GraduationCap className="w-3 h-3 text-emerald-500" /> {b.teacherCount}</span></td>
+                    <td className="px-4 py-3"><StatusBadge isActive={b.isActive} /></td>
+                    <td className="px-4 py-3"><RowActions batch={b} onView={onView} onEdit={onEdit} onDelete={onDelete} /></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          )}
+        </table>
+      </div>
     </div>
   );
 }

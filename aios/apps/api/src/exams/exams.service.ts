@@ -8,7 +8,8 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AnalyticsService } from '../analytics/analytics.service';
-import { AuditAction, UserRole, ExamStatus, PaperStatus, Prisma } from '@prisma/client';
+import { CacheService } from '../infrastructure/cache/cache.service';
+import { AuditAction, UserRole, ExamStatus, PaperStatus, Prisma, DeliveryStatus, NoticeChannel } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { EXAM_STATUS_TRANSITIONS as NEXT_STATUS } from '../shared/exam-status-transitions';
 import { withVersionGuard } from '../shared/version-guard';
@@ -17,8 +18,12 @@ import { assertAllAnswerSheetsVerified } from '../shared/evaluation-lock-gate';
 import {
   CreateExamDto,
   GradeAnswerSheetDto,
+  ListExamsDto,
   UpdateExamStatusDto,
   UnlockExamDto,
+  SelectOfficialPaperDto,
+  RejectCandidatePaperDto,
+  RequestChangesDto,
 } from './dto/exam.dto';
 
 @Injectable()
@@ -28,6 +33,7 @@ export class ExamsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly analyticsService: AnalyticsService,
+    private readonly cache: CacheService,
   ) {}
 
   // ── D-01: Create Exam ────────────────────────────────────────────────────
@@ -35,22 +41,57 @@ export class ExamsService {
   async createExam(instituteId: string, dto: CreateExamDto, actor: AuthenticatedUser) {
     this.assertInstituteAccess(actor, instituteId);
 
-    const blueprint = await this.prisma.blueprint.findUnique({ where: { id: dto.blueprintId } });
-    if (!blueprint || blueprint.instituteId !== instituteId) {
-      throw new NotFoundException('Blueprint not found');
-    }
-
     const batch = await this.prisma.batch.findUnique({ where: { id: dto.batchId } });
     if (!batch || batch.instituteId !== instituteId) {
       throw new NotFoundException('Batch not found');
     }
 
-    // Scheduling an exam in the past was previously accepted outright — the
-    // frontend wizard even shipped with a stale hardcoded default date, which
-    // meant a teacher could publish and never notice the test was scheduled
-    // for a day that had already passed. Same-day is allowed (a teacher
-    // running "Publish Immediately" for right now is still "today"); only a
-    // date strictly before today is rejected.
+    let blueprintId = dto.blueprintId;
+    let format = 'OMR';
+    let duration = dto.durationMinutes ?? 120;
+
+    if (blueprintId) {
+      const blueprint = await this.prisma.blueprint.findUnique({ where: { id: blueprintId } });
+      if (!blueprint || blueprint.instituteId !== instituteId) {
+        throw new NotFoundException('Blueprint not found');
+      }
+      format = (blueprint.format as string) || 'OMR';
+      duration = dto.durationMinutes ?? blueprint.duration;
+    } else {
+      let blueprint = await this.prisma.blueprint.findFirst({
+        where: { instituteId, ...(dto.subjectId ? { subjectId: dto.subjectId } : {}) },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (!blueprint) {
+        let subject = dto.subjectId
+          ? await this.prisma.subject.findUnique({ where: { id: dto.subjectId } })
+          : await this.prisma.subject.findFirst({ where: { instituteId } });
+        if (!subject) {
+          subject = await this.prisma.subject.create({
+            data: {
+              instituteId,
+              name: 'General',
+              code: 'GEN-01',
+            },
+          });
+        }
+        blueprint = await this.prisma.blueprint.create({
+          data: {
+            instituteId,
+            subjectId: subject.id,
+            name: `${dto.title} Pattern`,
+            totalMarks: dto.totalMarks ?? 100,
+            duration: dto.durationMinutes ?? 120,
+            instructions: dto.instructions ?? 'General Examination Guidelines',
+            distribution: [],
+            createdByUserId: actor.id,
+          },
+        });
+      }
+      blueprintId = blueprint.id;
+      format = (blueprint.format as string) || 'OMR';
+    }
+
     if (dto.scheduledDate) {
       const scheduled = new Date(dto.scheduledDate);
       const startOfToday = new Date();
@@ -64,12 +105,14 @@ export class ExamsService {
       data: {
         instituteId,
         batchId: dto.batchId,
-        blueprintId: dto.blueprintId,
+        blueprintId,
         title: dto.title,
         type: dto.type,
+        format: format as any,
+        status: dto.status || ExamStatus.DRAFT,
         captureMode: dto.captureMode,
         scheduledDate: dto.scheduledDate ? new Date(dto.scheduledDate) : null,
-        durationMinutes: dto.durationMinutes ?? blueprint.duration,
+        durationMinutes: duration,
         venue: dto.venue,
         createdByUserId: actor.id,
       },
@@ -82,12 +125,18 @@ export class ExamsService {
 
   // ── D-01: List / Get Exams ───────────────────────────────────────────────
 
-  async findAll(instituteId: string, actor: AuthenticatedUser) {
+  async findAll(instituteId: string, actor: AuthenticatedUser, query: ListExamsDto = {}) {
     this.assertInstituteAccess(actor, instituteId);
 
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 25;
+    const skip = (page - 1) * limit;
+
     // Teachers only see exams for their own batches — ADMIN/FOUNDER keep
-    // institute-wide visibility, unaffected by this branch.
-    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor);
+    // institute-wide visibility, unaffected by this branch. Cache is passed so
+    // repeated requests within 60s re-use the teacher's batch ID list from Redis
+    // instead of issuing 2 extra DB queries on every call.
+    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor, this.cache);
 
     // Students only ever see exams for their own batch, and only once they're
     // actually scheduled — DRAFT/REVIEW/APPROVED are pre-publication working
@@ -102,18 +151,73 @@ export class ExamsService {
       };
     }
 
-    return this.prisma.exam.findMany({
-      where: {
-        instituteId,
-        ...(teacherBatchIds !== null && { batchId: { in: teacherBatchIds } }),
-        ...studentWhere,
-      },
-      include: {
-        batch: { select: { id: true, name: true } },
-        blueprint: { select: { id: true, name: true, totalMarks: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    const where = {
+      instituteId,
+      ...(teacherBatchIds !== null && { batchId: { in: teacherBatchIds } }),
+      ...(query.status && { status: query.status }),
+      ...(query.batchId && !teacherBatchIds && { batchId: query.batchId }),
+      ...(query.batchId && teacherBatchIds && {
+        batchId: teacherBatchIds.includes(query.batchId) ? query.batchId : '__none__',
+      }),
+      ...studentWhere,
+    };
+
+    const [rawExams, total] = await Promise.all([
+      this.prisma.exam.findMany({
+        where,
+        include: {
+          batch: { select: { id: true, name: true, classYear: true, section: true } },
+          blueprint: { select: { id: true, name: true, totalMarks: true, subject: { select: { id: true, name: true } } } },
+          // Students must NEVER receive candidate papers or internal reviews
+          ...(actor.role !== UserRole.STUDENT && {
+            papers: {
+              select: {
+                id: true,
+                title: true,
+                status: true,
+                submittedAt: true,
+                approvedAt: true,
+                approvedByUserId: true,
+                createdByUserId: true,
+                createdAt: true,
+                format: true,
+              },
+              orderBy: { createdAt: 'desc' },
+            },
+          }),
+        },
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+        skip,
+      }),
+      this.prisma.exam.count({ where }),
+    ]);
+
+    let data: any[] = rawExams;
+    if (actor.role !== UserRole.STUDENT) {
+      const allCreatorIds = Array.from(
+        new Set(rawExams.flatMap((e: any) => (e.papers || []).map((p: any) => p.createdByUserId)).filter(Boolean)),
+      );
+      if (allCreatorIds.length > 0) {
+        const users = await this.prisma.user.findMany({
+          where: { id: { in: allCreatorIds } },
+          select: { id: true, name: true, email: true },
+        });
+        const userMap = new Map(users.map((u) => [u.id, u]));
+        data = rawExams.map((e: any) => ({
+          ...e,
+          papers: (e.papers || []).map((p: any) => ({
+            ...p,
+            creator: userMap.get(p.createdByUserId) ?? { id: p.createdByUserId, name: 'Teacher', email: '' },
+          })),
+        }));
+      }
+    }
+
+    return {
+      data,
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
   }
 
   async findById(instituteId: string, examId: string, actor: AuthenticatedUser) {
@@ -132,7 +236,7 @@ export class ExamsService {
     });
     if (!exam || exam.instituteId !== instituteId) throw new NotFoundException('Exam not found.');
 
-    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor);
+    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor, this.cache);
     if (teacherBatchIds !== null && !teacherBatchIds.includes(exam.batchId)) {
       throw new ForbiddenException('You can only view exams for batches you are assigned to.');
     }
@@ -338,16 +442,254 @@ export class ExamsService {
     const paper = await this.prisma.paper.findUnique({ where: { id: paperId } });
     if (!paper || paper.instituteId !== instituteId) throw new NotFoundException('Paper not found');
 
-    if (paper.blueprintId !== exam.blueprintId) {
-      throw new BadRequestException('Paper blueprint does not match Exam blueprint.');
-    }
-
     await this.prisma.paper.update({
       where: { id: paperId },
       data: { examId, status: PaperStatus.APPROVED },
     });
 
     return { message: 'Paper linked to Exam successfully.' };
+  }
+
+  // ── D-01: Candidate Papers Workflow ───────────────────────────────────────
+
+  async getCandidatePapers(instituteId: string, examId: string, actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
+    if (actor.role === UserRole.STUDENT) {
+      throw new ForbiddenException('Students cannot access candidate papers.');
+    }
+
+    const exam = await this.prisma.exam.findUnique({
+      where: { id: examId },
+      include: {
+        batch: { select: { id: true, name: true } },
+        blueprint: { select: { id: true, name: true, subject: { select: { id: true, name: true } } } },
+      },
+    });
+    if (!exam || exam.instituteId !== instituteId) throw new NotFoundException('Exam not found');
+
+    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor, this.cache);
+    if (teacherBatchIds !== null && !teacherBatchIds.includes(exam.batchId)) {
+      throw new ForbiddenException('You can only view exams for your assigned batches.');
+    }
+
+    const papers = await this.prisma.paper.findMany({
+      where: {
+        instituteId,
+        examId,
+        ...(actor.role === UserRole.TEACHER && { createdByUserId: actor.id }),
+      },
+      include: {
+        items: {
+          select: { id: true, marks: true, order: true },
+        },
+        blueprint: {
+          select: { totalMarks: true, duration: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const userIds = Array.from(new Set(papers.map((p) => p.createdByUserId).filter(Boolean)));
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: userIds } },
+      select: { id: true, name: true, email: true },
+    });
+    const userMap = new Map(users.map((u) => [u.id, u]));
+
+    return papers.map((p) => ({
+      ...p,
+      creator: userMap.get(p.createdByUserId) ?? { id: p.createdByUserId, name: 'Teacher', email: '' },
+      totalQuestions: p.items.length,
+      totalMarks: p.items.reduce((s, i) => s + (i.marks || 0), 0) || p.blueprint?.totalMarks || 0,
+    }));
+  }
+
+  async submitCandidatePaper(instituteId: string, examId: string, paperId: string, actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
+    if (actor.role === UserRole.STUDENT) throw new ForbiddenException('Students cannot submit papers.');
+
+    const exam = await this.prisma.exam.findUnique({ where: { id: examId } });
+    if (!exam || exam.instituteId !== instituteId) throw new NotFoundException('Exam not found');
+
+    const paper = await this.prisma.paper.findUnique({ where: { id: paperId } });
+    if (!paper || paper.instituteId !== instituteId) throw new NotFoundException('Paper not found');
+
+    if (actor.role === UserRole.TEACHER && paper.createdByUserId !== actor.id) {
+      throw new ForbiddenException('You can only submit your own papers.');
+    }
+
+    await this.prisma.paper.update({
+      where: { id: paperId },
+      data: {
+        examId,
+        status: PaperStatus.SUBMITTED,
+        submittedAt: new Date(),
+      },
+    });
+
+    if (exam.status === ExamStatus.DRAFT) {
+      await this.prisma.exam.update({
+        where: { id: examId },
+        data: { status: ExamStatus.REVIEW, version: { increment: 1 } },
+      });
+    }
+
+    await this.writeAudit(instituteId, actor.id, AuditAction.UPDATE, 'papers', paperId, { status: paper.status }, { status: 'SUBMITTED', examId });
+
+    return { message: 'Candidate paper submitted successfully.' };
+  }
+
+  async selectOfficialPaper(instituteId: string, examId: string, dto: SelectOfficialPaperDto, actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
+    if (actor.role !== UserRole.ADMIN && actor.role !== UserRole.FOUNDER) {
+      throw new ForbiddenException('Only admins can select and approve an official exam paper.');
+    }
+
+    const exam = await this.prisma.exam.findUnique({ where: { id: examId } });
+    if (!exam || exam.instituteId !== instituteId) throw new NotFoundException('Exam not found');
+
+    const selectedPaper = await this.prisma.paper.findUnique({ where: { id: dto.paperId } });
+    if (!selectedPaper || selectedPaper.instituteId !== instituteId) throw new NotFoundException('Paper not found');
+
+    if (selectedPaper.examId !== examId) {
+      throw new BadRequestException('Selected paper does not belong to this exam.');
+    }
+
+    const otherCandidatePapers = await this.prisma.paper.findMany({
+      where: {
+        examId,
+        id: { not: dto.paperId },
+        status: { in: [PaperStatus.SUBMITTED, PaperStatus.APPROVED] },
+      },
+    });
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.paper.update({
+        where: { id: dto.paperId },
+        data: {
+          status: PaperStatus.APPROVED,
+          approvedAt: new Date(),
+          approvedByUserId: actor.id,
+        },
+      });
+
+      if (otherCandidatePapers.length > 0) {
+        await tx.paper.updateMany({
+          where: { id: { in: otherCandidatePapers.map((p) => p.id) } },
+          data: { status: PaperStatus.ARCHIVED },
+        });
+      }
+
+      const nextStatus = (exam.status === ExamStatus.DRAFT || exam.status === ExamStatus.REVIEW)
+        ? ExamStatus.APPROVED
+        : exam.status;
+
+      await tx.exam.update({
+        where: { id: examId },
+        data: {
+          status: nextStatus,
+          approvedAt: new Date(),
+          approvedByUserId: actor.id,
+          version: { increment: 1 },
+        },
+      });
+    });
+
+    await this.writeAudit(
+      instituteId,
+      actor.id,
+      AuditAction.APPROVE,
+      'exams',
+      examId,
+      { previousStatus: exam.status },
+      { officialPaperId: dto.paperId, comment: dto.comment },
+    );
+
+    // Send notifications to teachers
+    await this.sendInAppNotification(
+      instituteId,
+      selectedPaper.createdByUserId,
+      'Paper Approved as Official Paper',
+      `Your "${exam.title}" paper has been approved and selected as the official examination paper.${dto.comment ? ` Note: ${dto.comment}` : ''}`,
+      actor.id,
+    );
+
+    for (const other of otherCandidatePapers) {
+      if (other.createdByUserId !== selectedPaper.createdByUserId) {
+        await this.sendInAppNotification(
+          instituteId,
+          other.createdByUserId,
+          'Candidate Paper Status Update',
+          `Your "${exam.title}" candidate paper was not selected for the official examination.${dto.comment ? ` Feedback: ${dto.comment}` : ''}`,
+          actor.id,
+        );
+      }
+    }
+
+    return {
+      message: 'Official paper selected and exam approved successfully.',
+      officialPaperId: dto.paperId,
+    };
+  }
+
+  async rejectCandidatePaper(instituteId: string, examId: string, paperId: string, dto: RejectCandidatePaperDto, actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
+    if (actor.role !== UserRole.ADMIN && actor.role !== UserRole.FOUNDER) {
+      throw new ForbiddenException('Only admins can reject candidate papers.');
+    }
+
+    const exam = await this.prisma.exam.findUnique({ where: { id: examId } });
+    if (!exam || exam.instituteId !== instituteId) throw new NotFoundException('Exam not found');
+
+    const paper = await this.prisma.paper.findUnique({ where: { id: paperId } });
+    if (!paper || paper.instituteId !== instituteId || paper.examId !== examId) throw new NotFoundException('Paper not found for this exam');
+
+    await this.prisma.paper.update({
+      where: { id: paperId },
+      data: { status: PaperStatus.ARCHIVED },
+    });
+
+    await this.writeAudit(instituteId, actor.id, AuditAction.UPDATE, 'papers', paperId, { status: paper.status }, { status: 'ARCHIVED', action: 'REJECT', reason: dto.reason });
+
+    await this.sendInAppNotification(
+      instituteId,
+      paper.createdByUserId,
+      'Candidate Paper Rejected',
+      `Your candidate paper for "${exam.title}" was not accepted${dto.reason ? `: ${dto.reason}` : '.'}`,
+      actor.id,
+    );
+
+    return { message: 'Candidate paper rejected.' };
+  }
+
+  async requestPaperChanges(instituteId: string, examId: string, paperId: string, dto: RequestChangesDto, actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
+    if (actor.role !== UserRole.ADMIN && actor.role !== UserRole.FOUNDER) {
+      throw new ForbiddenException('Only admins can request changes on candidate papers.');
+    }
+
+    const exam = await this.prisma.exam.findUnique({ where: { id: examId } });
+    if (!exam || exam.instituteId !== instituteId) throw new NotFoundException('Exam not found');
+
+    const paper = await this.prisma.paper.findUnique({ where: { id: paperId } });
+    if (!paper || paper.instituteId !== instituteId || paper.examId !== examId) throw new NotFoundException('Paper not found for this exam');
+
+    await this.prisma.paper.update({
+      where: { id: paperId },
+      data: { status: PaperStatus.DRAFT },
+    });
+
+    await this.writeAudit(instituteId, actor.id, AuditAction.UPDATE, 'papers', paperId, null, { status: 'DRAFT', feedback: dto.feedback });
+
+    await this.sendInAppNotification(
+      instituteId,
+      paper.createdByUserId,
+      'Changes Requested on Candidate Paper',
+      `Changes requested on your "${exam.title}" paper: ${dto.feedback}`,
+      actor.id,
+    );
+
+    return { message: 'Changes requested successfully.' };
   }
 
   // ── D-01: Submit Answer Sheet (Manual/OMR) ───────────────────────────────
@@ -497,6 +839,12 @@ export class ExamsService {
   }
 
   // ── Results: per-student scores + per-question stats for the Teacher UI ──
+  //
+  // Performance rewrite (P0.4 from audit): the previous implementation fetched
+  // ALL response rows for ALL students (200 students × 40 questions = 8,000+
+  // rows) into Node.js memory and did the per-question aggregation there. This
+  // version pushes the GROUP BY to PostgreSQL so only the aggregate result set
+  // (one row per question) is transferred, regardless of student count.
 
   async getResults(instituteId: string, examId: string, actor: AuthenticatedUser) {
     this.assertInstituteAccess(actor, instituteId);
@@ -504,75 +852,155 @@ export class ExamsService {
     const exam = await this.prisma.exam.findUnique({ where: { id: examId } });
     if (!exam || exam.instituteId !== instituteId) throw new NotFoundException('Exam not found.');
 
-    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor);
+    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor, this.cache);
     if (teacherBatchIds !== null && !teacherBatchIds.includes(exam.batchId)) {
       throw new ForbiddenException('You can only view results for batches you are assigned to.');
     }
 
-    const [scoreRecords, answerSheets] = await Promise.all([
-      this.prisma.scoreRecord.findMany({
-        where: { examId },
-        include: { studentProfile: { include: { user: { select: { name: true } } } } },
-        orderBy: { obtainedMarks: 'desc' },
-      }),
-      this.prisma.answerSheet.findMany({
-        where: { examId },
-        include: {
-          responses: {
-            include: {
-              question: { select: { id: true, difficulty: true, content: true, topic: { select: { name: true } } } },
-            },
-          },
-        },
-      }),
-    ]);
+    // Per-student leaderboard — score records only, no response rows needed.
+    const scoreRecords = await this.prisma.scoreRecord.findMany({
+      where: { examId },
+      include: { studentProfile: { include: { user: { select: { name: true } } } } },
+      orderBy: { obtainedMarks: 'desc' },
+    });
 
     const students = scoreRecords.map((s) => ({
       studentProfileId: s.studentProfileId,
       name: s.studentProfile.user.name,
+      rollNumber: s.studentProfile.rollNumber ?? null,
+      participationStatus: 'PARTICIPATED' as const,
       obtainedMarks: s.obtainedMarks,
       totalMarks: s.totalMarks,
       percentage: s.percentage,
       isFinalized: s.isFinalized,
     }));
 
-    const byQuestion = new Map<string, { questionId: string; topic: string; difficulty: string; content: string; correct: number; total: number }>();
-    for (const sheet of answerSheets) {
-      for (const r of sheet.responses) {
-        if (!r.question) continue;
-        const key = r.questionId;
-        const entry = byQuestion.get(key) ?? {
-          questionId: key,
-          topic: r.question.topic.name,
-          difficulty: r.question.difficulty,
-          content: r.question.content,
-          correct: 0,
-          total: 0,
-        };
-        entry.total += 1;
-        if (r.isCorrect) entry.correct += 1;
-        byQuestion.set(key, entry);
-      }
+    // Enrolled students in the batch — tracks participation, absence vs non-conduct
+    const enrolledStudents = this.prisma.studentProfile
+      ? await this.prisma.studentProfile.findMany({
+          where: { batchId: exam.batchId },
+          include: { user: { select: { name: true } } },
+          orderBy: { rollNumber: 'asc' },
+        })
+      : [];
+
+    const scoreMap = new Map(scoreRecords.map((s) => [s.studentProfileId, s]));
+
+    let attendanceMap = new Map<string, string>();
+    if (this.prisma.attendanceRecord && exam.scheduledDate) {
+      const examDate = new Date(exam.scheduledDate);
+      examDate.setUTCHours(0, 0, 0, 0);
+      const records = await this.prisma.attendanceRecord.findMany({
+        where: {
+          batchId: exam.batchId,
+          date: examDate,
+        },
+        select: { studentProfileId: true, status: true },
+      });
+      attendanceMap = new Map(records.map((r) => [r.studentProfileId, r.status]));
     }
-    const questionAnalysis = Array.from(byQuestion.values()).map((q) => ({
-      ...q,
-      correctPct: q.total > 0 ? Math.round((q.correct / q.total) * 100) : 0,
-    }));
+
+    let absentCount = 0;
+    let notAttemptedCount = 0;
+
+    const studentParticipationList = enrolledStudents.map((st) => {
+      const score = scoreMap.get(st.id);
+      if (score) {
+        return {
+          studentProfileId: st.id,
+          name: st.user.name,
+          rollNumber: st.rollNumber,
+          participationStatus: 'PARTICIPATED' as const,
+          obtainedMarks: score.obtainedMarks,
+          totalMarks: score.totalMarks,
+          percentage: score.percentage,
+          isFinalized: score.isFinalized,
+        };
+      }
+
+      const attStatus = attendanceMap.get(st.id);
+      let pStatus: 'ABSENT' | 'EXCUSED' | 'NOT_ATTEMPTED' = 'NOT_ATTEMPTED';
+      if (attStatus === 'ABSENT' || attStatus === 'EXCUSED') {
+        pStatus = attStatus;
+        absentCount++;
+      } else {
+        notAttemptedCount++;
+      }
+
+      return {
+        studentProfileId: st.id,
+        name: st.user.name,
+        rollNumber: st.rollNumber,
+        participationStatus: pStatus,
+        obtainedMarks: null,
+        totalMarks: null,
+        percentage: null,
+        isFinalized: false,
+      };
+    });
+
+    // Per-question correctness stats — aggregated in the DB, not in Node.js.
+    // Returns one row per question: total attempts and correct count.
+    type QuestionAggRow = {
+      question_id: string;
+      topic_name: string;
+      difficulty: string;
+      content: string;
+      total: bigint;
+      correct: bigint;
+    };
+
+    const questionRows = await this.prisma.$queryRaw<QuestionAggRow[]>`
+      SELECT
+        r."questionId" AS question_id,
+        t.name AS topic_name,
+        q.difficulty,
+        q.content,
+        COUNT(*) AS total,
+        SUM(CASE WHEN r."isCorrect" THEN 1 ELSE 0 END) AS correct
+      FROM responses r
+      JOIN answer_sheets a ON a.id = r."answerSheetId"
+      JOIN questions q ON q.id = r."questionId"
+      JOIN topics t ON t.id = q."topicId"
+      WHERE a."examId" = ${examId}
+      GROUP BY r."questionId", t.name, q.difficulty, q.content
+      ORDER BY r."questionId"
+    `;
+
+    const questionAnalysis = questionRows.map((row) => {
+      const total = Number(row.total);
+      const correct = Number(row.correct);
+      return {
+        questionId: row.question_id,
+        topic: row.topic_name,
+        difficulty: row.difficulty,
+        content: row.content,
+        total,
+        correct,
+        correctPct: total > 0 ? Math.round((correct / total) * 100) : 0,
+      };
+    });
 
     const finalized = scoreRecords.filter((s) => s.isFinalized);
-    const avgScore = finalized.length > 0
-      ? Math.round(finalized.reduce((sum, s) => sum + s.percentage, 0) / finalized.length)
-      : 0;
-    const topScore = finalized.length > 0 ? Math.round(Math.max(...finalized.map((s) => s.percentage))) : 0;
+    const participatedCount = await this.prisma.answerSheet.count({ where: { examId } });
+    const avgScore =
+      finalized.length > 0
+        ? Math.round(finalized.reduce((sum, s) => sum + s.percentage, 0) / finalized.length)
+        : 0;
+    const topScore =
+      finalized.length > 0 ? Math.round(Math.max(...finalized.map((s) => s.percentage))) : 0;
 
     return {
       summary: {
-        participated: answerSheets.length,
+        totalEnrolled: enrolledStudents.length > 0 ? enrolledStudents.length : participatedCount,
+        participated: participatedCount,
+        absent: absentCount,
+        notAttempted: notAttemptedCount,
         graded: finalized.length,
         avgScore,
         topScore,
       },
-      students,
+      students: studentParticipationList.length > 0 ? studentParticipationList : students,
       questionAnalysis,
     };
   }
@@ -582,6 +1010,38 @@ export class ExamsService {
   private assertInstituteAccess(actor: AuthenticatedUser, instituteId: string) {
     if (actor.role === UserRole.FOUNDER) return;
     if (actor.instituteId !== instituteId) throw new ForbiddenException("You don't have access to this.");
+  }
+
+  private async sendInAppNotification(
+    instituteId: string,
+    recipientUserId: string,
+    title: string,
+    body: string,
+    actorId: string,
+  ) {
+    try {
+      const notice = await this.prisma.notice.create({
+        data: {
+          instituteId,
+          createdByUserId: actorId,
+          title,
+          body,
+          channels: [NoticeChannel.IN_APP],
+          targetAudience: { userIds: [recipientUserId] } as any,
+        },
+      });
+      await this.prisma.noticeDelivery.create({
+        data: {
+          noticeId: notice.id,
+          userId: recipientUserId,
+          channel: NoticeChannel.IN_APP,
+          status: DeliveryStatus.SENT,
+          sentAt: new Date(),
+        },
+      });
+    } catch (err) {
+      this.logger.warn(`Failed to send in-app notification to ${recipientUserId}`, err as Error);
+    }
   }
 
   private async writeAudit(instituteId: string, actorId: string, action: AuditAction, entity: string, entityId: string, oldValue: unknown, newValue: unknown) {

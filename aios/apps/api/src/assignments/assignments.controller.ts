@@ -99,6 +99,17 @@ export class AssignmentsController {
     return this.assignmentsService.getSubmissionDownloadUrl(instituteId, assignmentId, user);
   }
 
+  @Delete(':assignmentId/submission')
+  @Roles(UserRole.STUDENT)
+  @ApiOperation({ summary: 'Retract/delete an assignment submission (Students only, before grading)' })
+  deleteSubmission(
+    @Param('instituteId') instituteId: string,
+    @Param('assignmentId') assignmentId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.assignmentsService.deleteSubmission(instituteId, assignmentId, user);
+  }
+
   @Patch(':assignmentId/grade')
   @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
   @ApiOperation({ summary: 'Grade a submitted assignment' })

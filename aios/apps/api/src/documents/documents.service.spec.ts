@@ -43,7 +43,12 @@ describe('DocumentsService', () => {
     auditLog: { create: jest.Mock };
     $transaction: jest.Mock;
   };
-  let storage: { buildKey: jest.Mock; upload: jest.Mock; getSignedDownloadUrl: jest.Mock };
+  let storage: {
+    buildKey: jest.Mock;
+    upload: jest.Mock;
+    getSignedDownloadUrl: jest.Mock;
+    getSignedUploadUrl: jest.Mock;
+  };
   let cache: { get: jest.Mock; set: jest.Mock };
   let featureFlags: { isEnabled: jest.Mock };
   let pdfSplitQueue: { add: jest.Mock };
@@ -95,6 +100,7 @@ describe('DocumentsService', () => {
       buildKey: jest.fn((...segments: string[]) => segments.join('/')),
       upload: jest.fn().mockResolvedValue(undefined),
       getSignedDownloadUrl: jest.fn().mockResolvedValue('https://signed.example/file'),
+      getSignedUploadUrl: jest.fn().mockResolvedValue('https://s3.example.com/presigned-upload'),
     };
     cache = { get: jest.fn().mockResolvedValue(undefined), set: jest.fn().mockResolvedValue(undefined) };
     featureFlags = { isEnabled: jest.fn().mockResolvedValue(true) };
@@ -618,6 +624,85 @@ describe('DocumentsService', () => {
       await service.updateRegion('inst-1', 'region-1', { questionId: 'q-new' }, teacher);
 
       expect(prisma.response.deleteMany).toHaveBeenCalledWith({ where: { questionRegionId: 'region-1' } });
+    });
+  });
+
+  describe('DocumentsService — direct presigned upload (H-2 / Fix 3)', () => {
+    it('generates a presigned S3 upload URL for a valid bundle', async () => {
+      prisma.documentBundle.findUnique.mockResolvedValueOnce({
+        id: 'bundle-1',
+        assessmentDelivery: { assessment: { instituteId: 'inst-1' } },
+      });
+
+      const result = await service.getUploadUrl(
+        'inst-1',
+        'bundle-1',
+        { filename: 'scan.pdf', mimeType: 'application/pdf' },
+        teacher,
+      );
+
+      expect(result.uploadUrl).toBe('https://s3.example.com/presigned-upload');
+      expect(result.key).toContain('inst-1/documents/pending/bundle-1/');
+      expect(result.key.endsWith('.pdf')).toBe(true);
+      expect(result.expiresAt).toBeGreaterThan(Date.now());
+      expect(storage.getSignedUploadUrl).toHaveBeenCalledWith(
+        result.key,
+        'application/pdf',
+        900,
+      );
+    });
+
+    it('rejects presigned URL generation for cross-tenant bundles', async () => {
+      prisma.documentBundle.findUnique.mockResolvedValueOnce({
+        id: 'bundle-1',
+        assessmentDelivery: { assessment: { instituteId: 'inst-other' } },
+      });
+
+      await expect(
+        service.getUploadUrl(
+          'inst-1',
+          'bundle-1',
+          { filename: 'scan.pdf', mimeType: 'application/pdf' },
+          teacher,
+        ),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('confirms a direct upload, creates document record and enqueues pdf-split', async () => {
+      const pendingKey = 'inst-1/documents/pending/bundle-1/uuid.pdf';
+      prisma.documentBundle.findUnique.mockResolvedValueOnce({
+        id: 'bundle-1',
+        assessmentDelivery: {
+          assessment: { instituteId: 'inst-1' },
+          captureProvider: { type: CaptureProviderType.PHOTO_CAPTURE_SUBJECTIVE },
+        },
+      });
+
+      const result = await service.confirmUpload(
+        'inst-1',
+        'bundle-1',
+        { key: pendingKey, mimeType: 'application/pdf', filename: 'scan.pdf' },
+        teacher,
+      );
+
+      expect(result.documentId).toBe('doc-1');
+      expect(result.status).toBe('PAGE_PROCESSING');
+      expect(pdfSplitQueue.add).toHaveBeenCalledWith(
+        'split',
+        { instituteId: 'inst-1', documentId: 'doc-1' },
+        expect.anything(),
+      );
+    });
+
+    it('rejects confirmation when storage key does not match institute or bundle prefix', async () => {
+      await expect(
+        service.confirmUpload(
+          'inst-1',
+          'bundle-1',
+          { key: 'inst-other/documents/pending/bundle-other/uuid.pdf', mimeType: 'application/pdf' },
+          teacher,
+        ),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 });

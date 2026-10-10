@@ -6,6 +6,7 @@ import {
   IsNumber,
   IsDateString,
   IsArray,
+  IsInt,
   Min,
   Max,
   MinLength,
@@ -27,10 +28,21 @@ export class CreateExamDto {
   @IsNotEmpty()
   batchId!: string;
 
-  @ApiProperty()
+  @ApiPropertyOptional()
   @IsString()
-  @IsNotEmpty()
-  blueprintId!: string;
+  @IsOptional()
+  blueprintId?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  subjectId?: string;
+
+  @ApiPropertyOptional({ example: 100 })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  totalMarks?: number;
 
   @ApiProperty({ enum: ExamType })
   @IsEnum(ExamType)
@@ -56,6 +68,47 @@ export class CreateExamDto {
   @IsOptional()
   @IsString()
   venue?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  instructions?: string;
+
+  @ApiPropertyOptional({ example: 'OFFLINE_PRINT' })
+  @IsOptional()
+  @IsString()
+  deliveryMode?: string;
+
+  @ApiPropertyOptional({ enum: ExamStatus })
+  @IsOptional()
+  @IsEnum(ExamStatus)
+  status?: ExamStatus;
+}
+
+export class SelectOfficialPaperDto {
+  @ApiProperty({ description: 'ID of the Candidate Paper selected as the official paper' })
+  @IsString()
+  @IsNotEmpty()
+  paperId!: string;
+
+  @ApiPropertyOptional({ description: 'Optional feedback / review comment' })
+  @IsString()
+  @IsOptional()
+  comment?: string;
+}
+
+export class RejectCandidatePaperDto {
+  @ApiPropertyOptional({ description: 'Reason for rejecting this candidate paper' })
+  @IsString()
+  @IsOptional()
+  reason?: string;
+}
+
+export class RequestChangesDto {
+  @ApiProperty({ description: 'Feedback on what changes are needed before this paper can be approved' })
+  @IsString()
+  @IsNotEmpty()
+  feedback!: string;
 }
 
 export class UpdateExamStatusDto {
@@ -120,4 +173,31 @@ export class GradeAnswerSheetDto {
   @ValidateNested({ each: true })
   @Type(() => EvaluateResponseDto)
   responses!: EvaluateResponseDto[];
+}
+
+export class ListExamsDto {
+  @ApiPropertyOptional({ default: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @ApiPropertyOptional({ default: 25, maximum: 100 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number = 25;
+
+  @ApiPropertyOptional({ enum: ExamStatus, description: 'Filter by exam status' })
+  @IsOptional()
+  @IsEnum(ExamStatus)
+  status?: ExamStatus;
+
+  @ApiPropertyOptional({ description: 'Filter by batch ID' })
+  @IsOptional()
+  @IsString()
+  batchId?: string;
 }

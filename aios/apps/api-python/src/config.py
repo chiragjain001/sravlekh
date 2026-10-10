@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     # governed by the OpenAI-specific model registry.
     GEMINI_API_KEY: str = ""
 
+    # Phase 5: Configuration-driven AI routing
+    AI_PROVIDER: str = ""
+    AI_EVALUATION_MODEL: str = ""
+    AI_BLUEPRINT_MODEL: str = ""
+    AI_OCR_MODEL: str = ""
+
     # Internal NestJS -> FastAPI service contract (02-SYSTEM-ARCHITECTURE.md: never a
     # user JWT, never browser-exposed). Empty means UNENFORCED — a dev-only
     # fallback, and REFUSED in production by the validator below. This service is

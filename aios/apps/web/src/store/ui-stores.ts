@@ -6,6 +6,10 @@ interface UIStore {
   sidebarCollapsed: boolean;
   toggleSidebar:    () => void;
   setSidebarCollapsed: (v: boolean) => void;
+  mobileSidebarOpen: boolean;
+  setMobileSidebarOpen: (v: boolean) => void;
+  toggleMobileSidebar: () => void;
+  closeMobileSidebar: () => void;
   isOnline:         boolean;
   setIsOnline:      (v: boolean) => void;
   offlineQueueCount: number;
@@ -13,12 +17,16 @@ interface UIStore {
 }
 
 export const useUIStore = create<UIStore>((set) => ({
-  sidebarCollapsed:  false,
-  toggleSidebar:     () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
-  setSidebarCollapsed: (v) => set({ sidebarCollapsed: v }),
-  isOnline:          true,
-  setIsOnline:       (v) => set({ isOnline: v }),
-  offlineQueueCount: 0,
+  sidebarCollapsed:     false,
+  toggleSidebar:        () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+  setSidebarCollapsed:   (v) => set({ sidebarCollapsed: v }),
+  mobileSidebarOpen:    false,
+  setMobileSidebarOpen: (v) => set({ mobileSidebarOpen: v }),
+  toggleMobileSidebar:  () => set((s) => ({ mobileSidebarOpen: !s.mobileSidebarOpen })),
+  closeMobileSidebar:   () => set({ mobileSidebarOpen: false }),
+  isOnline:             true,
+  setIsOnline:          (v) => set({ isOnline: v }),
+  offlineQueueCount:    0,
   setOfflineQueueCount: (n) => set({ offlineQueueCount: n }),
 }));
 

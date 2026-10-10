@@ -21,4 +21,15 @@ export class AnalyticsController {
   ) {
     return this.analyticsService.getInstituteOverview(instituteId, user);
   }
+
+  @Get('batch/:batchId/mistake-summary')
+  @Roles(UserRole.ADMIN, UserRole.FOUNDER, UserRole.TEACHER)
+  @ApiOperation({ summary: 'Get mistake-tag aggregation per topic for a batch' })
+  getBatchMistakeSummary(
+    @Param('instituteId') instituteId: string,
+    @Param('batchId') batchId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.analyticsService.getBatchMistakeSummary(instituteId, batchId, user);
+  }
 }

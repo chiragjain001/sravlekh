@@ -5,9 +5,10 @@ import {
   BarChart2, Users, Target, ChevronRight, Filter, Award, ShieldAlert, BookOpen,
   CheckCircle2, Layers
 } from 'lucide-react';
-import { useMyTeacherProfile, useSubjects, useWeakStudentsForTopic, useBatchPerformanceSummaries, useBatchesHeatmap } from '@/hooks/useApi';
+import { useMyTeacherProfile, useSubjects, useWeakStudentsForTopic, useBatchPerformanceSummaries, useBatchesHeatmap, useBatchMistakeSummary } from '@/hooks/useApi';
 import { useDashboardStore } from '@/store/dashboard-store';
 import { StudentListModal } from '../shared/StudentListModal';
+import { ScreenLoadingState } from '@/components/ui/foundation';
 
 type AnalyticsView = 'overview' | 'compare';
 
@@ -122,7 +123,13 @@ export function TeacherAnalytics() {
   ];
 
   if (isLoading && batches.length === 0) {
-    return <div className="p-6 text-center text-slate-400 text-[13px] animate-fadein">Loading analytics…</div>;
+    return (
+      <ScreenLoadingState
+        title="Loading Academic Analytics..."
+        subtitle="Computing class mastery, score distributions, and performance trends..."
+        layout="overview"
+      />
+    );
   }
 
   return (
@@ -306,6 +313,13 @@ export function TeacherAnalytics() {
               </div>
             </div>
           </div>
+
+          {activeBatches.length > 0 && (
+            <BatchMistakeSummaryPanel
+              batchId={selectedBatch !== 'all' ? selectedBatch : (activeBatches[0]?.id ?? '')}
+              batchName={selectedBatch !== 'all' ? (activeBatches[0]?.name ?? 'Section') : `${activeBatches[0]?.name ?? ''} (Active Section)`}
+            />
+          )}
         </div>
       )}
 
@@ -413,5 +427,89 @@ function TopicWeakStudentsModal({
       onClose={onClose}
       onSelectStudent={onSelectStudent}
     />
+  );
+}
+
+function BatchMistakeSummaryPanel({ batchId, batchName }: { batchId: string; batchName: string }) {
+  const { data: summary, isLoading } = useBatchMistakeSummary(batchId);
+
+  if (isLoading) {
+    return (
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm text-center py-8 text-slate-400 text-[13px]">
+        Loading mistake pattern analysis…
+      </div>
+    );
+  }
+
+  if (!summary || summary.totalMistakes === 0) {
+    return (
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm text-center py-6 text-slate-400 text-[13px]">
+        No mistake patterns recorded yet for {batchName}. Mistake tags appear once answer sheets and exams are evaluated.
+      </div>
+    );
+  }
+
+  const tagLabels: Record<string, { label: string; color: string; bg: string }> = {
+    CONCEPT_ERROR: { label: 'Conceptual Gaps', color: 'text-rose-700', bg: 'bg-rose-50 border-rose-200' },
+    CALCULATION_ERROR: { label: 'Calculation Mistakes', color: 'text-amber-700', bg: 'bg-amber-50 border-amber-200' },
+    CARELESS: { label: 'Careless Errors', color: 'text-sky-700', bg: 'bg-sky-50 border-sky-200' },
+    FORMULA_ERROR: { label: 'Formula Errors', color: 'text-purple-700', bg: 'bg-purple-50 border-purple-200' },
+    NOT_ATTEMPTED: { label: 'Unattempted Questions', color: 'text-slate-700', bg: 'bg-slate-50 border-slate-200' },
+    PRESENTATION_ERROR: { label: 'Presentation & Steps', color: 'text-indigo-700', bg: 'bg-indigo-50 border-indigo-200' },
+  };
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+        <div>
+          <h3 className="text-[15px] font-bold text-slate-800 flex items-center gap-2">
+            <BarChart2 className="w-4 h-4 text-indigo-600" /> Mistake Pattern Diagnostics — {batchName}
+          </h3>
+          <p className="text-[12.5px] text-slate-500 mt-0.5">
+            Breakdown of root causes identified during answer sheet evaluations ({summary.totalMistakes} tagged mistakes across {summary.totalResponsesEvaluated} responses).
+          </p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-5">
+        {Object.entries(summary.byTag).map(([tag, count]) => {
+          const meta = tagLabels[tag] ?? { label: tag.replace(/_/g, ' '), color: 'text-slate-700', bg: 'bg-slate-50 border-slate-200' };
+          const pct = summary.totalMistakes > 0 ? Math.round(((count as number) / summary.totalMistakes) * 100) : 0;
+          return (
+            <div key={tag} className={`p-3 rounded-xl border ${meta.bg}`}>
+              <span className={`block text-[11px] font-bold ${meta.color}`}>{meta.label}</span>
+              <p className="text-[20px] font-black text-slate-800 mt-1">{count as number}</p>
+              <span className="text-[10.5px] text-slate-500 font-semibold">{pct}% of errors</span>
+            </div>
+          );
+        })}
+      </div>
+
+      {summary.byTopic?.length > 0 && (
+        <div>
+          <h4 className="text-[13px] font-bold text-slate-700 uppercase tracking-wider mb-2.5">Mistakes by Topic</h4>
+          <div className="space-y-2">
+            {summary.byTopic.slice(0, 5).map((t: any) => (
+              <div key={t.topicId} className="flex flex-wrap items-center justify-between p-3 border border-slate-100 rounded-xl bg-slate-50/60">
+                <div className="min-w-[180px]">
+                  <p className="text-[13.5px] font-bold text-slate-800">{t.topicName}</p>
+                  <p className="text-[11px] text-slate-400">{t.totalMistakes} mistakes recorded</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 mt-1 sm:mt-0">
+                  {Object.entries(t.byTag).map(([tag, cnt]) => {
+                    const meta = tagLabels[tag] ?? { label: tag.replace(/_/g, ' '), color: 'text-slate-700', bg: 'bg-slate-100' };
+                    return (
+                      <span key={tag} className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-white border border-slate-200 text-slate-700">
+                        {meta.label}: <strong className="text-slate-900">{cnt as number}</strong>
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

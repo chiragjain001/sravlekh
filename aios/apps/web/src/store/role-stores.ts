@@ -3,6 +3,7 @@ import { create } from 'zustand';
 
 export type StudentNav =
   | 'Overview'
+  | 'Attendance'
   | 'My Tests'
   | 'Assignments'
   | 'Study Plan'
@@ -40,15 +41,13 @@ export type AdminNav =
   | 'Fee Management'
   | 'Reports'
   | 'Settings'
-  | 'Academics'
-  | 'Question Bank'
-  | 'Papers'
   | 'Exams'
   | 'Attendance'
   | 'Communication'
   | 'System Settings'
   | 'Audit Logs'
-  | 'Evaluation Quality';
+  | 'Evaluation Quality'
+  | 'Analytics & Reports'; // merged hub for Analytics + Reports + Evaluation Quality
 
 interface AdminUIStore {
   adminNav: AdminNav;

@@ -70,9 +70,9 @@ export function CreateStructuredAssessmentModal({ onClose, onCreated }: CreateSt
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/65 backdrop-blur-md animate-fadein">
-      <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-lg p-6 space-y-5">
-        <div className="flex items-center justify-between">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/65 backdrop-blur-md animate-fadein">
+      <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-lg p-5 sm:p-6 flex flex-col max-h-[92vh] overflow-hidden">
+        <div className="flex items-center justify-between pb-3.5 border-b border-slate-100 flex-shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-600">
               <ListChecks className="w-5 h-5" />
@@ -88,17 +88,17 @@ export function CreateStructuredAssessmentModal({ onClose, onCreated }: CreateSt
         </div>
 
         {captureProviders.length === 0 && (
-          <p className="text-[12.5px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+          <p className="text-[12.5px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 my-2 flex-shrink-0">
             No OMR/manual-grid/CSV-import provider is configured for your institute yet — ask your admin to add one.
           </p>
         )}
         {generatedPapers.length === 0 && (
-          <p className="text-[12.5px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+          <p className="text-[12.5px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 my-2 flex-shrink-0">
             No generated paper exists yet — build one from Paper Builder first, then come back here.
           </p>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4 pt-3.5 overflow-y-auto custom-scrollbar flex-1 pr-1">
           <div>
             <label className="block text-[12px] font-bold text-slate-600 mb-1.5">Title *</label>
             <input required value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Weekly OMR Test — Kinematics"
@@ -170,7 +170,7 @@ export function CreateStructuredAssessmentModal({ onClose, onCreated }: CreateSt
 
           {error && <p className="text-[12.5px] font-semibold text-rose-600 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2">{error}</p>}
 
-          <div className="flex gap-3 pt-2">
+          <div className="flex gap-3 pt-2 flex-shrink-0">
             <button type="submit" disabled={!isValid || isSubmitting}
               className="flex-1 py-2.5 bg-emerald-600 text-white text-[13px] font-bold rounded-xl hover:bg-emerald-700 disabled:opacity-50">
               {isSubmitting ? 'Creating…' : 'Create & Continue'}

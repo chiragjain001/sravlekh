@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Login (Desktop)",
+    "preset": "desktop",
+    "performance": 42,
+    "accessibility": 96,
+    "bestPractices": 100,
+    "seo": 91
+  },
+  {
+    "name": "Login (Mobile)",
+    "preset": "mobile",
+    "performance": 45,
+    "accessibility": 96,
+    "bestPractices": 100,
+    "seo": 91
+  },
+  {
+    "name": "Teacher Dashboard (Desktop)",
+    "preset": "desktop",
+    "performance": 36,
+    "accessibility": 96,
+    "bestPractices": 100,
+    "seo": 66
+  }
+]

@@ -17,6 +17,7 @@
     "backup:test": "node --test infra/backup/retention.test.js"
   },
   "devDependencies": {
+    "puppeteer": "^25.12.0",
     "typescript": "^5.4.5"
   },
   "engines": {

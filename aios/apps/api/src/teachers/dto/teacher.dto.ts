@@ -36,6 +36,15 @@ export class CreateTeacherDto {
   @IsArray()
   @IsString({ each: true })
   subjectIds?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Batch IDs the teacher is initially assigned to teach',
+    isArray: true,
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  batchIds?: string[];
 }
 
 export class UpdateTeacherDto {
@@ -56,6 +65,12 @@ export class UpdateTeacherDto {
   @IsArray()
   @IsString({ each: true })
   subjectIds?: string[];
+
+  @ApiPropertyOptional({ isArray: true })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  batchIds?: string[];
 }
 
 export class UpdateMyProfileDto {

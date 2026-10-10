@@ -55,4 +55,19 @@ describe('DoubtsService.resolveDoubt', () => {
     ).rejects.toThrow(ForbiddenException);
     expect(prisma.doubtTicket.update).not.toHaveBeenCalled();
   });
+
+  it('rejects an actor from another institute trying to resolve a doubt (cross-tenant)', async () => {
+    const foreignTeacher = { ...teacher, instituteId: 'inst-OTHER' };
+    await expect(
+      service.resolveDoubt('inst-1', 'doubt-1', { resolutionText: 'help' }, foreignTeacher),
+    ).rejects.toThrow(ForbiddenException);
+    expect(prisma.doubtTicket.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects an actor from another institute trying to list doubts (cross-tenant)', async () => {
+    const foreignTeacher = { ...teacher, instituteId: 'inst-OTHER' };
+    await expect(
+      service.findAll('inst-1', {}, foreignTeacher),
+    ).rejects.toThrow(ForbiddenException);
+  });
 });

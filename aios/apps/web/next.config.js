@@ -22,6 +22,16 @@ const nextConfig = {
     // "Cannot find module".
     outputFileTracingRoot: path.join(__dirname, '../../'),
   }),
+  // Optimize tree-shaking for large barrel exports during dev & build
+  experimental: {
+    optimizePackageImports: [
+      'lucide-react',
+      'recharts',
+      '@tanstack/react-query',
+      'react-hook-form',
+      'zod',
+    ],
+  },
   // Allow cross-origin images from Google avatars and S3
   images: {
     remotePatterns: [

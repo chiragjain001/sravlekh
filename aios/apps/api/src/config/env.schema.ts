@@ -178,6 +178,23 @@ export const envSchema = z
             'production. Refusing to start.',
         });
       }
+
+      // Production target guard: refuse to boot if DATABASE_URL accidentally targets a dev or test database
+      try {
+        const u = new URL(env.DATABASE_URL);
+        const dbName = u.pathname.replace(/^\//, '').toLowerCase();
+        if (dbName === 'test' || dbName === 'dev' || dbName.endsWith('_test') || dbName.endsWith('_dev') || dbName.startsWith('test_') || dbName.startsWith('dev_')) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['DATABASE_URL'],
+            message:
+              `DATABASE_URL database name "${dbName}" indicates a test/dev database. ` +
+              'Production must point to a dedicated, isolated production database. Refusing to start.',
+          });
+        }
+      } catch {
+        // Ignored, handled by url schema
+      }
     }
 
     // ── Staging target guard: refuse to boot against an unnominated host ──

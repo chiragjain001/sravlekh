@@ -41,9 +41,14 @@ export function LoginPage() {
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Redirect if already logged in
+  const showDevLogin =
+    process.env.NODE_ENV !== 'production' ||
+    searchParams.get('dev') === 'true' ||
+    process.env['NEXT_PUBLIC_ENABLE_DEV_LOGIN'] === 'true';
+
+  // Redirect if already logged in (when navigating to /login with an active session)
   useEffect(() => {
-    if (!authLoading && user) {
+    if (!authLoading && user && !isSigningIn) {
       const dashboardRoutes: Record<string, string> = {
         STUDENT: '/dashboard/student',
         TEACHER: '/dashboard/teacher',
@@ -52,7 +57,7 @@ export function LoginPage() {
       };
       router.replace(dashboardRoutes[user.role] ?? '/dashboard');
     }
-  }, [user, authLoading, router]);
+  }, [user, authLoading, router, isSigningIn]);
 
   // Show session-expired notice
   useEffect(() => {
@@ -75,13 +80,22 @@ export function LoginPage() {
       return;
     }
 
-    const script = document.createElement('script');
-    script.id = scriptId;
-    script.src = 'https://accounts.google.com/gsi/client';
-    script.async = true;
-    script.defer = true;
-    script.onload = () => initializeGoogleButton(clientId);
-    document.head.appendChild(script);
+    const loadGsi = () => {
+      if (document.getElementById(scriptId)) return;
+      const script = document.createElement('script');
+      script.id = scriptId;
+      script.src = 'https://accounts.google.com/gsi/client';
+      script.async = true;
+      script.defer = true;
+      script.onload = () => initializeGoogleButton(clientId);
+      document.head.appendChild(script);
+    };
+
+    if ('requestIdleCallback' in window) {
+      window.requestIdleCallback(loadGsi, { timeout: 1500 });
+    } else {
+      setTimeout(loadGsi, 200);
+    }
   }, []);
 
   function initializeGoogleButton(clientId: string) {
@@ -233,7 +247,7 @@ export function LoginPage() {
           <h2 className="text-2xl font-bold text-navy-900 mb-2">
             Welcome back
           </h2>
-          <p className="text-navy-500 text-sm mb-8">
+          <p className="text-slate-700 text-sm mb-8">
             Sign in with your institute Google account to continue.
           </p>
 
@@ -249,7 +263,7 @@ export function LoginPage() {
 
           {/* Loading state during API call */}
           {isSigningIn && (
-            <div className="flex items-center justify-center gap-2 text-navy-500 text-sm mt-2">
+            <div className="flex items-center justify-center gap-2 text-slate-700 text-sm mt-2">
               <div
                 className="w-4 h-4 border-2 border-teal-600 border-t-transparent rounded-full animate-spin"
                 aria-hidden="true"
@@ -269,39 +283,43 @@ export function LoginPage() {
             </div>
           )}
 
-          <p className="mt-6 text-xs text-navy-400 text-center">
+          <p className="mt-6 text-xs text-slate-600 text-center">
             Access is restricted to pre-approved institute accounts.
             <br />
             If you need access, contact your institute admin.
           </p>
 
           {/* Dev/test-only mock login — see 06-AUTH-AUTHORIZATION.md ("a mock role-token
-              login exists only in non-prod"). Excluded from production bundles. */}
-          {process.env.NODE_ENV !== 'production' && (
+              login exists only in non-prod"). */}
+          {showDevLogin && (
             <div className="mt-8 border-t border-border pt-6 text-center">
-              <p className="text-xs text-navy-500 mb-3">Testing Mode — mock login</p>
+              <p className="text-xs text-navy-700 font-medium mb-3">Testing Mode — mock login</p>
               <div className="grid grid-cols-2 gap-2">
                 <button
                   onClick={() => handleDemoLogin('STUDENT')}
-                  className="btn-secondary text-xs text-indigo-600 border-indigo-200 hover:bg-indigo-50"
+                  disabled={isSigningIn}
+                  className="btn-secondary text-xs text-indigo-700 border-indigo-300 hover:bg-indigo-50 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Demo as Student
                 </button>
                 <button
                   onClick={() => handleDemoLogin('TEACHER')}
-                  className="btn-secondary text-xs text-teal-600 border-teal-200 hover:bg-teal-50"
+                  disabled={isSigningIn}
+                  className="btn-secondary text-xs text-teal-700 border-teal-300 hover:bg-teal-50 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Demo as Teacher
                 </button>
                 <button
                   onClick={() => handleDemoLogin('ADMIN')}
-                  className="btn-secondary text-xs text-purple-600 border-purple-200 hover:bg-purple-50"
+                  disabled={isSigningIn}
+                  className="btn-secondary text-xs text-purple-700 border-purple-300 hover:bg-purple-50 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Demo as Admin
                 </button>
                 <button
                   onClick={() => handleDemoLogin('FOUNDER')}
-                  className="btn-secondary text-xs text-warning border-warning hover:bg-yellow-50"
+                  disabled={isSigningIn}
+                  className="btn-secondary text-xs text-amber-800 border-amber-300 hover:bg-amber-50 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Demo as Founder
                 </button>

@@ -22,9 +22,17 @@ import {
   QuestionType,
   Prisma,
 } from '@prisma/client';
+import { randomUUID } from 'crypto';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { syncPageRegionResponses } from '../shared/sync-page-region-responses';
-import { CreateDocumentBundleDto, ReprocessDocumentDto, CreatePageRegionDto, UpdatePageRegionDto } from './dto/document.dto';
+import {
+  CreateDocumentBundleDto,
+  ReprocessDocumentDto,
+  CreatePageRegionDto,
+  UpdatePageRegionDto,
+  GetUploadUrlDto,
+  ConfirmDocumentUploadDto,
+} from './dto/document.dto';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -314,6 +322,127 @@ export class DocumentsService {
     const result = { documentId: document.id, status: 'PAGE_PROCESSING', pageCount: null };
     await this.cache.set(idempotencyCacheKey, result, IDEMPOTENCY_TTL_SECONDS);
     return result;
+  }
+
+  /**
+   * Generates a presigned PUT URL for direct browser-to-S3 booklet upload (H-2 / Fix 3).
+   * Large document files bypass Node.js memory entirely.
+   */
+  async getUploadUrl(
+    instituteId: string,
+    bundleId: string,
+    dto: GetUploadUrlDto,
+    actor: AuthenticatedUser,
+  ) {
+    this.assertInstituteAccess(actor, instituteId);
+
+    const bundle = await this.prisma.documentBundle.findUnique({
+      where: { id: bundleId },
+      include: {
+        assessmentDelivery: {
+          include: { assessment: { select: { instituteId: true } } },
+        },
+      },
+    });
+    if (!bundle || bundle.assessmentDelivery.assessment.instituteId !== instituteId) {
+      throw new NotFoundException('Document bundle not found');
+    }
+
+    const ext = dto.filename.split('.').pop() ?? 'pdf';
+    const cleanExt = ext.replace(/[^a-zA-Z0-9]/g, '');
+    const uploadId = randomUUID();
+    const key = this.storage.buildKey(
+      instituteId,
+      'documents',
+      'pending',
+      bundleId,
+      `${uploadId}.${cleanExt}`,
+    );
+
+    const expiresInSeconds = 900; // 15 minutes for browser direct upload
+    const uploadUrl = await this.storage.getSignedUploadUrl(
+      key,
+      dto.mimeType || 'application/pdf',
+      expiresInSeconds,
+    );
+
+    return {
+      uploadUrl,
+      key,
+      expiresAt: Date.now() + expiresInSeconds * 1000,
+    };
+  }
+
+  /**
+   * Confirms a direct S3 booklet upload after browser finishes uploading to the presigned URL.
+   * Creates the Document row and enqueues the pdf-split job without file bytes passing through Node.
+   */
+  async confirmUpload(
+    instituteId: string,
+    bundleId: string,
+    dto: ConfirmDocumentUploadDto,
+    actor: AuthenticatedUser,
+  ) {
+    this.assertInstituteAccess(actor, instituteId);
+
+    // Verify key belongs to this institute and bundle
+    const expectedPrefix = this.storage.buildKey(instituteId, 'documents', 'pending', bundleId);
+    if (!dto.key.startsWith(expectedPrefix)) {
+      throw new BadRequestException('Invalid storage key for this bundle and institute.');
+    }
+
+    const bundle = await this.prisma.documentBundle.findUnique({
+      where: { id: bundleId },
+      include: {
+        assessmentDelivery: {
+          include: {
+            assessment: { select: { instituteId: true } },
+            captureProvider: true,
+          },
+        },
+      },
+    });
+    if (!bundle || bundle.assessmentDelivery.assessment.instituteId !== instituteId) {
+      throw new NotFoundException('Document bundle not found');
+    }
+
+    const document = await this.prisma.$transaction(async (tx) => {
+      const doc = await tx.document.create({
+        data: {
+          documentBundleId: bundleId,
+          layoutType: DocumentLayoutType.FREE_FORM,
+          status: 'PAGE_PROCESSING',
+          sourceFileKey: dto.key,
+        },
+      });
+
+      for (const stage of PATH_B_STAGES) {
+        await tx.processingJob.create({
+          data: { documentId: doc.id, stage, status: ProcessingJobStatus.QUEUED },
+        });
+      }
+      await tx.identityResolution.create({
+        data: { documentId: doc.id, method: 'MANUAL_ADMIN_MATCH', confidence: 0 },
+      });
+      return doc;
+    });
+
+    await this.enqueuePdfSplit(instituteId, document.id);
+    await this.writeAudit(
+      instituteId,
+      actor.id,
+      AuditAction.CREATE,
+      'documents',
+      document.id,
+      null,
+      { documentBundleId: bundleId, source: 'presigned_upload', key: dto.key },
+    );
+
+    return {
+      documentId: document.id,
+      status: 'PAGE_PROCESSING',
+      pageCount: null,
+    };
   }
 
   private async enqueuePdfSplit(instituteId: string, documentId: string) {

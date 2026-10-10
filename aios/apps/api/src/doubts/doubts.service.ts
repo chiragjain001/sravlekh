@@ -24,6 +24,7 @@ export class DoubtsService {
   // ── E-01: Create Doubt Ticket (Student) ──────────────────────────────────
 
   async createDoubt(instituteId: string, studentProfileId: string, dto: CreateDoubtDto, actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
     // Only the student themselves or an admin can create a doubt for this profile
     const student = await this.prisma.studentProfile.findUnique({
       where: { id: studentProfileId },
@@ -58,6 +59,7 @@ export class DoubtsService {
   // ── E-02: Query Doubts (Admin/Teacher/Student) ───────────────────────────
 
   async findAll(instituteId: string, query: QueryDoubtsDto, actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const skip = (page - 1) * limit;
@@ -103,6 +105,7 @@ export class DoubtsService {
   }
 
   async findById(instituteId: string, doubtId: string, actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
     const doubt = await this.prisma.doubtTicket.findUnique({
       where: { id: doubtId },
       include: {
@@ -127,6 +130,7 @@ export class DoubtsService {
   // ── E-02: Assign Doubt (Admin/Teacher) ───────────────────────────────────
 
   async assignTeacher(instituteId: string, doubtId: string, dto: AssignDoubtDto, actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
     if (actor.role === UserRole.STUDENT) throw new ForbiddenException('Students cannot assign doubts.');
 
     const doubt = await this.findById(instituteId, doubtId, actor);
@@ -156,6 +160,7 @@ export class DoubtsService {
   // ── E-02: Resolve Doubt (Teacher/Admin) ──────────────────────────────────
 
   async resolveDoubt(instituteId: string, doubtId: string, dto: ResolveDoubtDto, actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
     if (actor.role === UserRole.STUDENT) throw new ForbiddenException('Students cannot resolve doubts.');
 
     const doubt = await this.findById(instituteId, doubtId, actor);
@@ -175,6 +180,13 @@ export class DoubtsService {
   }
 
   // ── Private helpers ───────────────────────────────────────────────────────
+
+  private assertInstituteAccess(actor: AuthenticatedUser, instituteId: string) {
+    if (actor.role === UserRole.FOUNDER) return;
+    if (actor.instituteId !== instituteId) {
+      throw new ForbiddenException("You don't have access to this.");
+    }
+  }
 
   private async writeAudit(instituteId: string, actorId: string, action: AuditAction, entity: string, entityId: string, oldValue: unknown, newValue: unknown) {
     try {

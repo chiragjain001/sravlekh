@@ -135,6 +135,46 @@ export class StorageService {
     return getSignedUrl(this.client, command, { expiresIn: expiresInSeconds });
   }
 
+  /**
+   * Time-limited signed URL for direct browser-to-S3 uploads (07-SECURITY-SPECIFICATION.md / Fix 3).
+   * Large document and PDF uploads bypass Node memory entirely.
+   */
+  async getSignedUploadUrl(key: string, contentType: string, expiresInSeconds = 300): Promise<string> {
+    if (this.localRoot) {
+      const expiresAt = Date.now() + expiresInSeconds * 1000;
+      const q = new URLSearchParams({
+        key,
+        exp: String(expiresAt),
+        sig: this.sign(key, expiresAt),
+        type: contentType,
+      });
+      return `${this.publicApiUrl}/api/v1/files/local-upload?${q.toString()}`;
+    }
+    this.assertConfigured();
+    const command = new PutObjectCommand({ Bucket: this.bucket, Key: key, ContentType: contentType });
+    return getSignedUrl(this.client, command, { expiresIn: expiresInSeconds });
+  }
+
+  /** Verifies a local signed upload URL and stores the uploaded payload. */
+  async writeLocalSigned(
+    key: string,
+    expiresAt: number,
+    signature: string,
+    body: Buffer,
+    contentType: string,
+  ): Promise<void> {
+    if (!this.localRoot) throw new ServiceUnavailableException('Local storage is not active.');
+    if (!Number.isFinite(expiresAt) || Date.now() > expiresAt) {
+      throw new ServiceUnavailableException('This upload link has expired.');
+    }
+    const expected = Buffer.from(this.sign(key, expiresAt));
+    const given = Buffer.from(signature ?? '');
+    if (expected.length !== given.length || !timingSafeEqual(expected, given)) {
+      throw new ServiceUnavailableException('Invalid upload link.');
+    }
+    await this.upload(key, body, contentType);
+  }
+
   async delete(key: string): Promise<void> {
     if (this.localRoot) {
       const path = this.localPathFor(key);

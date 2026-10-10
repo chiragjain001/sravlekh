@@ -5,7 +5,7 @@ import { User, Bell, Shield, Mail, BookOpen, CheckCircle2, LogOut, Save } from '
 import toast from 'react-hot-toast';
 import { useAuth } from '@/contexts/auth.context';
 import { useMyTeacherProfile, useUpdateMyTeacherProfile, useSubjects } from '@/hooks/useApi';
-import { ConfirmDialog } from '@/components/ui/foundation';
+import { ConfirmDialog, ScreenLoadingState } from '@/components/ui/foundation';
 
 const TABS = ['Profile', 'Preferences', 'Security'] as const;
 type Tab = typeof TABS[number];
@@ -102,7 +102,12 @@ export function TeacherSettings() {
         <div className="flex-1 max-w-2xl">
           {tab === 'Profile' && (
             profileLoading ? (
-              <div className="py-16 text-center text-slate-400 text-[13px] animate-fadein">Loading profile…</div>
+              <ScreenLoadingState
+                title="Loading Teacher Profile..."
+                subtitle="Fetching your teacher profile and credentials..."
+                layout="details"
+                className="p-0 max-w-none"
+              />
             ) : (
             <div className="space-y-6 animate-fadein">
               <div>

@@ -151,7 +151,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    */
   const loginAsMock = useCallback(
     async (role: 'STUDENT' | 'TEACHER' | 'ADMIN' | 'FOUNDER') => {
-      if (process.env.NODE_ENV === 'production') {
+      if (
+        process.env.NODE_ENV === 'production' &&
+        process.env['NEXT_PUBLIC_ENABLE_DEV_LOGIN'] !== 'true'
+      ) {
         console.error('loginAsMock is disabled in production.');
         return;
       }

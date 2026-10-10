@@ -5,6 +5,7 @@ import { BookOpen, Plus, Search, Calendar, ChevronRight, Sparkles, Trash2 } from
 import { useAssignments, useDeleteAssignment } from '@/hooks/useApi';
 import { AssignmentDetailModal, GradeRow } from '../shared/AssignmentDetailModal';
 import { CreateAssignmentModal } from '../shared/CreateAssignmentModal';
+import { InlineLoadingSpinner } from '@/components/ui/foundation';
 
 interface AssignmentGroup {
   key: string;
@@ -72,7 +73,7 @@ export function TeacherAssignments() {
   );
 
   return (
-    <div className="p-6 animate-fadein space-y-6 max-w-6xl mx-auto">
+    <div className="p-4 sm:p-6 animate-fadein space-y-4 sm:space-y-6 max-w-6xl mx-auto min-w-0">
       {showCreateModal && (
         <CreateAssignmentModal
           onClose={() => setShowCreateModal(false)}
@@ -133,107 +134,186 @@ export function TeacherAssignments() {
         </div>
       )}
 
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
         <div>
-          <h1 className="text-[22px] font-bold text-slate-800">Global Assignments</h1>
-          <p className="text-[13px] text-slate-500 mt-0.5">Manage assignments and track submissions across all your batches.</p>
+          <h1 className="text-[20px] sm:text-[22px] font-bold text-slate-800 tracking-tight">Global Assignments</h1>
+          <p className="text-[12.5px] sm:text-[13px] text-slate-500 mt-0.5">Manage assignments and track submissions across all your batches.</p>
         </div>
         <button
           onClick={() => setShowCreateModal(true)}
-          className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white text-[13px] font-bold rounded-xl hover:bg-indigo-700 transition-colors shadow-sm cursor-pointer"
+          className="flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 text-white text-[13px] font-bold rounded-xl hover:bg-indigo-700 active:scale-[0.99] transition-all shadow-sm w-full sm:w-auto cursor-pointer"
         >
           <Plus className="w-4 h-4" /> Create Assignment
         </button>
       </div>
 
-      <div className="flex items-center gap-3 p-2 bg-white border border-slate-200 rounded-xl max-w-md">
-        <Search className="w-4 h-4 text-slate-400 ml-2" />
+      <div className="flex items-center gap-3 p-2.5 bg-white border border-slate-200 rounded-xl max-w-md shadow-xs">
+        <Search className="w-4 h-4 text-slate-400 ml-1.5 shrink-0" />
         <input
           type="text"
           placeholder="Search assignments..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
-          className="flex-1 text-[13px] outline-none placeholder:text-slate-400 bg-transparent"
+          className="flex-1 text-[13px] outline-none placeholder:text-slate-400 bg-transparent min-w-0"
         />
       </div>
 
-      <div className="bg-white border border-slate-100 rounded-2xl overflow-hidden shadow-sm">
-        <table className="w-full text-left text-[13px]">
-          <thead className="bg-slate-50 border-b border-slate-100">
-            <tr>
-              <th className="py-3 px-5 font-bold text-[11px] text-slate-500 uppercase tracking-wider">Assignment Title</th>
-              <th className="py-3 px-4 font-bold text-[11px] text-slate-500 uppercase tracking-wider">Batch</th>
-              <th className="py-3 px-4 font-bold text-[11px] text-slate-500 uppercase tracking-wider hidden sm:table-cell">Due Date</th>
-              <th className="py-3 px-4 font-bold text-[11px] text-slate-500 uppercase tracking-wider text-center">Status</th>
-              <th className="py-3 px-4 font-bold text-[11px] text-slate-500 uppercase tracking-wider text-center hidden md:table-cell">Submissions</th>
-              <th className="py-3 px-4 text-right"></th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-50">
-            {isLoading ? (
-              <tr><td colSpan={6} className="py-12 text-center text-slate-400 text-[13px]">Loading assignments…</td></tr>
-            ) : (
-              <>
-                {groups.map(g => (
-                  <tr
-                    key={g.key}
-                    onClick={() => setSelectedGroup(g)}
-                    className="hover:bg-slate-50/50 transition-colors group cursor-pointer"
+      <div className="bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-xs">
+        {/* Mobile Native Cards (block sm:hidden) */}
+        <div className="block sm:hidden divide-y divide-slate-100">
+          {isLoading ? (
+            <InlineLoadingSpinner label="Loading assignments from server..." />
+          ) : groups.length === 0 ? (
+            <div className="py-12 text-center text-slate-500 text-[13px] px-4">
+              No assignments found.
+            </div>
+          ) : (
+            groups.map((g) => (
+              <div
+                key={g.key}
+                onClick={() => setSelectedGroup(g)}
+                className="p-4 active:bg-slate-50/80 transition-colors cursor-pointer space-y-3 select-none"
+              >
+                <div className="flex items-start justify-between gap-2.5">
+                  <div className="flex items-start gap-3 min-w-0 flex-1">
+                    <div className="w-9 h-9 rounded-xl bg-indigo-50 border border-indigo-100/80 flex items-center justify-center text-indigo-600 shrink-0 mt-0.5">
+                      <BookOpen className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-[14px] font-bold text-slate-800 leading-snug break-words">
+                        {g.title}
+                      </h3>
+                      <p className="text-[12px] font-medium text-slate-500 mt-0.5 truncate">
+                        {g.batchLabel}
+                      </p>
+                    </div>
+                  </div>
+                  <span
+                    className={`inline-flex px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider shrink-0 ${
+                      g.isFullyGraded ? 'bg-emerald-100 text-emerald-700' :
+                      g.submitted > 0 ? 'bg-amber-100 text-amber-700' :
+                                        'bg-slate-100 text-slate-600'
+                    }`}
                   >
-                    <td className="py-4 px-5">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-500 flex-shrink-0">
-                          <BookOpen className="w-4 h-4" />
+                    {g.isFullyGraded ? 'completed' : g.submitted > 0 ? 'active' : 'pending'}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between gap-2 pt-0.5">
+                  <div className="flex items-center gap-3 text-slate-500 text-[11.5px] font-medium">
+                    <span className="flex items-center gap-1.5">
+                      <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      {new Date(g.dueDate).toLocaleDateString()}
+                    </span>
+                    <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-bold text-[10.5px]">
+                      {g.submitted}/{g.totalStudents} subs
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setCancelTarget(g);
+                      }}
+                      title="Cancel this assignment"
+                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                    <span className="inline-flex items-center gap-1 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-[11.5px] font-bold rounded-lg transition-colors">
+                      View <ChevronRight className="w-3 h-3" />
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Desktop / Tablet Table (hidden sm:block) */}
+        <div className="hidden sm:block overflow-x-auto custom-scrollbar">
+          <table className="w-full text-left text-[13px] min-w-[640px]">
+            <thead className="bg-slate-50 border-b border-slate-100">
+              <tr>
+                <th className="py-3 px-5 font-bold text-[11px] text-slate-500 uppercase tracking-wider">Assignment Title</th>
+                <th className="py-3 px-4 font-bold text-[11px] text-slate-500 uppercase tracking-wider">Batch</th>
+                <th className="py-3 px-4 font-bold text-[11px] text-slate-500 uppercase tracking-wider hidden sm:table-cell">Due Date</th>
+                <th className="py-3 px-4 font-bold text-[11px] text-slate-500 uppercase tracking-wider text-center">Status</th>
+                <th className="py-3 px-4 font-bold text-[11px] text-slate-500 uppercase tracking-wider text-center hidden md:table-cell">Submissions</th>
+                <th className="py-3 px-4 text-right"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {isLoading ? (
+                <tr>
+                  <td colSpan={6} className="py-8">
+                    <InlineLoadingSpinner label="Loading assignments from server..." />
+                  </td>
+                </tr>
+              ) : (
+                <>
+                  {groups.map(g => (
+                    <tr
+                      key={g.key}
+                      onClick={() => setSelectedGroup(g)}
+                      className="hover:bg-slate-50/70 transition-colors group cursor-pointer"
+                    >
+                      <td className="py-4 px-5">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-500 flex-shrink-0">
+                            <BookOpen className="w-4 h-4" />
+                          </div>
+                          <span className="font-semibold text-slate-800 group-hover:text-indigo-600 transition-colors">{g.title}</span>
                         </div>
-                        <span className="font-semibold text-slate-800 group-hover:text-indigo-600 transition-colors">{g.title}</span>
-                      </div>
-                    </td>
-                    <td className="py-4 px-4 font-medium text-slate-600">{g.batchLabel}</td>
-                    <td className="py-4 px-4 text-slate-500 hidden sm:table-cell">
-                      <span className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5 text-slate-400" /> {new Date(g.dueDate).toLocaleDateString()}</span>
-                    </td>
-                    <td className="py-4 px-4 text-center">
-                      <span className={`inline-flex px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${
-                        g.isFullyGraded ? 'bg-emerald-100 text-emerald-700' :
-                        g.submitted > 0 ? 'bg-amber-100 text-amber-700' :
-                                          'bg-slate-100 text-slate-600'
-                      }`}>
-                        {g.isFullyGraded ? 'completed' : g.submitted > 0 ? 'active' : 'pending'}
-                      </span>
-                    </td>
-                    <td className="py-4 px-4 text-center hidden md:table-cell">
-                      <span className="font-bold text-slate-700">{g.submitted}/{g.totalStudents}</span>
-                    </td>
-                    <td className="py-4 px-4 text-right">
-                      <div className="inline-flex items-center gap-3">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setSelectedGroup(g); }}
-                          className="inline-flex items-center gap-1 text-[12px] font-bold text-indigo-600 hover:text-indigo-800 transition-colors"
-                        >
-                          View Submissions <ChevronRight className="w-3 h-3" />
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setCancelTarget(g); }}
-                          title="Cancel this assignment"
-                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {groups.length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="py-12 text-center text-slate-500 text-[13px]">
-                      No assignments found.
-                    </td>
-                  </tr>
-                )}
-              </>
-            )}
-          </tbody>
-        </table>
+                      </td>
+                      <td className="py-4 px-4 font-medium text-slate-600">{g.batchLabel}</td>
+                      <td className="py-4 px-4 text-slate-500 hidden sm:table-cell">
+                        <span className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5 text-slate-400" /> {new Date(g.dueDate).toLocaleDateString()}</span>
+                      </td>
+                      <td className="py-4 px-4 text-center">
+                        <span className={`inline-flex px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${
+                          g.isFullyGraded ? 'bg-emerald-100 text-emerald-700' :
+                          g.submitted > 0 ? 'bg-amber-100 text-amber-700' :
+                                            'bg-slate-100 text-slate-600'
+                        }`}>
+                          {g.isFullyGraded ? 'completed' : g.submitted > 0 ? 'active' : 'pending'}
+                        </span>
+                      </td>
+                      <td className="py-4 px-4 text-center hidden md:table-cell">
+                        <span className="font-bold text-slate-700">{g.submitted}/{g.totalStudents}</span>
+                      </td>
+                      <td className="py-4 px-4 text-right">
+                        <div className="inline-flex items-center gap-3">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setSelectedGroup(g); }}
+                            className="inline-flex items-center gap-1 text-[12px] font-bold text-indigo-600 hover:text-indigo-800 transition-colors"
+                          >
+                            View Submissions <ChevronRight className="w-3 h-3" />
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setCancelTarget(g); }}
+                            title="Cancel this assignment"
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {groups.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="py-12 text-center text-slate-500 text-[13px]">
+                        No assignments found.
+                      </td>
+                    </tr>
+                  )}
+                </>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {individualAssignments.length > 0 && (

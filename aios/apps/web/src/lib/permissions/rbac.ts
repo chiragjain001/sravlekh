@@ -9,7 +9,24 @@ import type { Permission } from '@/types/permissions.types';
 // ── Permission → Allowed Roles map ───────────────────────────────────────────
 export const PERMISSIONS: Record<Permission, readonly UserRole[]> = {
 
+  // ── Evaluations & Moderation
+  'REVIEW_EVALUATION':           ['TEACHER', 'ADMIN', 'FOUNDER'],
+  'evaluation:grade':            ['TEACHER', 'ADMIN'],
+  'evaluation:analytics':        ['ADMIN', 'FOUNDER'],
+
+  // ── Attendance Capabilities
+  'ATTENDANCE_TAKE':             ['TEACHER', 'ADMIN'],
+  'ATTENDANCE_CORRECT':          ['TEACHER', 'ADMIN'],
+  'ATTENDANCE_CORRECT_HISTORICAL': ['ADMIN', 'FOUNDER'],
+  'ATTENDANCE_OVERRIDE':         ['ADMIN', 'FOUNDER'],
+  'ATTENDANCE_ADMIN':            ['ADMIN', 'FOUNDER'],
+  'attendance:mark':             ['TEACHER', 'ADMIN'],
+  'attendance:view-batch':       ['TEACHER', 'ADMIN'],
+  'attendance:view-own':         ['STUDENT'],
+  'attendance:edit':             ['ADMIN'],
+
   // ── Assignments
+  'assignment:manage':           ['TEACHER', 'ADMIN'],
   'assignment:create':           ['TEACHER', 'ADMIN', 'FOUNDER'],
   'assignment:read':             ['TEACHER', 'STUDENT', 'ADMIN', 'FOUNDER'],
   'assignment:update':           ['TEACHER', 'ADMIN'],
@@ -22,6 +39,9 @@ export const PERMISSIONS: Record<Permission, readonly UserRole[]> = {
   'assignment:view-submissions': ['TEACHER', 'ADMIN'],
 
   // ── Tests & Exams
+  'exam:schedule':               ['TEACHER', 'ADMIN'],
+  'exam:publish':                ['ADMIN', 'FOUNDER'],
+  'exam:unlock':                 ['ADMIN', 'FOUNDER'],
   'test:create':                 ['TEACHER', 'ADMIN'],
   'test:read':                   ['TEACHER', 'STUDENT', 'ADMIN'],
   'test:update':                 ['TEACHER', 'ADMIN'],
@@ -39,6 +59,8 @@ export const PERMISSIONS: Record<Permission, readonly UserRole[]> = {
   'paper:update':                ['TEACHER', 'ADMIN'],
   'paper:delete':                ['TEACHER', 'ADMIN'],
   'paper:publish':               ['TEACHER', 'ADMIN'],
+  'question:author':             ['TEACHER', 'ADMIN'],
+  'question:approve':            ['ADMIN', 'FOUNDER'],
   'question:create':             ['TEACHER', 'ADMIN'],
   'question:read':               ['TEACHER', 'STUDENT', 'ADMIN'],
   'question:update':             ['TEACHER', 'ADMIN'],
@@ -48,24 +70,32 @@ export const PERMISSIONS: Record<Permission, readonly UserRole[]> = {
   'student:view-all':            ['ADMIN', 'FOUNDER'],
   'student:view-batch':          ['TEACHER'],
   'student:view-own':            ['STUDENT'],
-  'student:view-personal':       ['TEACHER', 'ADMIN'],  // personalized data
+  'student:view-personal':       ['TEACHER', 'ADMIN'],
+  'student:view_pii':            ['ADMIN', 'FOUNDER'],
   'student:enroll':              ['ADMIN', 'FOUNDER'],
+  'student:transfer':            ['ADMIN', 'FOUNDER'],
   'student:transfer-batch':      ['ADMIN', 'FOUNDER'],
   'student:archive':             ['ADMIN', 'FOUNDER'],
 
-  // ── Teachers
+  // ── Teachers & Staff
   'teacher:view-all':            ['ADMIN', 'FOUNDER'],
   'teacher:create':              ['ADMIN', 'FOUNDER'],
   'teacher:update':              ['ADMIN', 'FOUNDER'],
   'teacher:archive':             ['ADMIN', 'FOUNDER'],
+  'teacher:manage':              ['ADMIN', 'FOUNDER'],
   'teacher:assign-batch':        ['ADMIN'],
+  'teacher:assign_batches':      ['ADMIN', 'FOUNDER'],
+  'staff:view_all':              ['ADMIN', 'FOUNDER'],
 
-  // ── Batches
+  // ── Batches & Curriculum
+  'batch:manage':                ['ADMIN', 'FOUNDER'],
+  'batch:assign':                ['ADMIN', 'FOUNDER'],
   'batch:create':                ['ADMIN', 'FOUNDER'],
   'batch:update':                ['ADMIN'],
   'batch:archive':               ['ADMIN', 'FOUNDER'],
   'batch:view-all':              ['ADMIN', 'FOUNDER'],
   'batch:view-own':              ['TEACHER', 'STUDENT'],
+  'curriculum:manage':           ['TEACHER', 'ADMIN'],
 
   // ── Doubts
   'doubt:submit':                ['STUDENT'],
@@ -76,17 +106,12 @@ export const PERMISSIONS: Record<Permission, readonly UserRole[]> = {
   'doubt:view-all':              ['ADMIN', 'FOUNDER'],
 
   // ── Analytics
+  'analytics:view_institute':    ['ADMIN', 'FOUNDER'],
   'analytics:institute':         ['ADMIN', 'FOUNDER'],
   'analytics:branch':            ['ADMIN', 'FOUNDER'],
   'analytics:batch':             ['TEACHER', 'ADMIN'],
   'analytics:own':               ['STUDENT'],
   'analytics:personalized':      ['TEACHER', 'ADMIN'],
-
-  // ── Attendance
-  'attendance:mark':             ['TEACHER', 'ADMIN'],
-  'attendance:view-batch':       ['TEACHER', 'ADMIN'],
-  'attendance:view-own':         ['STUDENT'],
-  'attendance:edit':             ['ADMIN'],
 
   // ── Timetable
   'timetable:view':              ['TEACHER', 'STUDENT', 'ADMIN'],
@@ -94,12 +119,16 @@ export const PERMISSIONS: Record<Permission, readonly UserRole[]> = {
 
   // ── Reports
   'report:generate':             ['TEACHER', 'ADMIN'],
+  'report:export':               ['ADMIN', 'FOUNDER'],
   'report:view-batch':           ['TEACHER', 'ADMIN'],
   'report:view-own':             ['STUDENT'],
   'report:view-all':             ['ADMIN', 'FOUNDER'],
   'report:download':             ['TEACHER', 'ADMIN', 'STUDENT'],
 
-  // ── Admin Operations
+  // ── Admin & Governance Operations
+  'access:manage_roles':         ['ADMIN', 'FOUNDER'],
+  'access:allowlist':            ['ADMIN', 'FOUNDER'],
+  'settings:institute':          ['ADMIN', 'FOUNDER'],
   'institute:manage':            ['FOUNDER'],
   'branch:manage':               ['ADMIN', 'FOUNDER'],
   'session:manage':              ['ADMIN', 'FOUNDER'],
@@ -148,10 +177,13 @@ export function hasAnyPermission(role: UserRole, permissions: Permission[]): boo
   return permissions.some(p => hasPermission(role, p));
 }
 
-// ── Default permissions per role (used to populate AuthenticatedUser.permissions)
+/**
+ * Pre-computed default permission list by role.
+ */
 export const DEFAULT_PERMISSIONS_BY_ROLE: Record<UserRole, Permission[]> = {
-  STUDENT: getPermissionsForRole('STUDENT'),
-  TEACHER: getPermissionsForRole('TEACHER'),
-  ADMIN:   getPermissionsForRole('ADMIN'),
   FOUNDER: getPermissionsForRole('FOUNDER'),
+  ADMIN:   getPermissionsForRole('ADMIN'),
+  TEACHER: getPermissionsForRole('TEACHER'),
+  STUDENT: getPermissionsForRole('STUDENT'),
 };
+

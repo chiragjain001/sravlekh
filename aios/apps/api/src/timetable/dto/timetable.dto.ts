@@ -5,6 +5,7 @@ import {
   IsEnum,
   IsDateString,
   IsBoolean,
+  IsArray,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { TimetableSlotType } from '@prisma/client';
@@ -14,6 +15,12 @@ export class CreateTimetableSlotDto {
   @IsOptional()
   @IsString()
   batchId?: string;
+
+  @ApiPropertyOptional({ description: 'Batch IDs if this is for multiple batches/sections' })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  batchIds?: string[];
 
   @ApiProperty({ enum: TimetableSlotType })
   @IsEnum(TimetableSlotType)

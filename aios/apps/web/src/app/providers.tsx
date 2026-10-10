@@ -1,11 +1,12 @@
 'use client';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider } from '@/contexts/auth.context';
 import { AcademicContextProvider } from '@/contexts/academic-context';
 import { LiveSync } from '@/components/LiveSync';
+import { MobileKeyboardViewportHandler } from '@/components/shared/MobileKeyboardViewportHandler';
 
 /**
  * Providers wraps the app in all necessary context providers.
@@ -43,11 +44,25 @@ export function Providers({ children }: { children: React.ReactNode }) {
       }),
   );
 
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+      if (process.env.NODE_ENV === 'production') {
+        navigator.serviceWorker.register('/sw.js').catch(() => {});
+      } else {
+        // In development, unregister any active service worker to prevent HMR and proxy caching collisions
+        navigator.serviceWorker.getRegistrations().then((registrations) => {
+          registrations.forEach((reg) => reg.unregister());
+        });
+      }
+    }
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <AcademicContextProvider>
           <LiveSync />
+          <MobileKeyboardViewportHandler />
           {children}
           {/* Global toast notifications — positioned top-right */}
           <Toaster

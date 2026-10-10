@@ -75,8 +75,8 @@ export function AssignmentDetailModal({ title, batchId, dueDate, onClose }: Assi
     .filter((a: any) => (a.studentProfile?.user?.name ?? '').toLowerCase().includes(searchTerm.toLowerCase()));
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md animate-fadein">
-      <div className="bg-white rounded-3xl shadow-2xl border border-slate-100 w-[70vw] h-[70vh] flex flex-col overflow-hidden relative">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md animate-fadein">
+      <div className="bg-white rounded-3xl shadow-2xl border border-slate-100 w-full max-w-4xl h-[92vh] sm:h-[80vh] flex flex-col overflow-hidden relative">
         <div className="px-6 py-5 border-b border-slate-100 flex items-start justify-between bg-slate-50/80 flex-shrink-0">
           <div>
             <span className="text-[12px] font-medium text-slate-400">Due: {new Date(dueDate).toLocaleDateString()}</span>

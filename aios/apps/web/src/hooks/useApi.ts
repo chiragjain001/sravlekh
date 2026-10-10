@@ -1,5 +1,5 @@
-import { useEffect, useRef } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useRef, useState } from 'react';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { apiClient, aiClient } from '../lib/api-client';
 import { useAuth } from '../contexts/auth.context';
 import toast from 'react-hot-toast';
@@ -69,8 +69,10 @@ export const REFRESH_ASYNC_JOB = {
 // so a change by another user lands in seconds without every screen polling
 // its own heavy list endpoint on a short timer.
 
-/** How often to ask the server what changed. */
-const CHANGE_FEED_INTERVAL_MS = 5_000;
+/** Phase 5: Adaptive polling intervals (15s active, 30s idle, paused in background) */
+const ACTIVE_POLL_INTERVAL_MS = 15_000;
+const IDLE_POLL_INTERVAL_MS = 30_000;
+const IDLE_TIMEOUT_MS = 45_000;
 
 /**
  * Audit-log `entity` names → the React Query key prefixes they invalidate.
@@ -87,8 +89,10 @@ const ENTITY_QUERY_KEYS: Record<string, string[]> = {
   students:           ['students', 'student-stats', 'batches'],
   teachers:           ['teachers', 'teacher-stats'],
   users:              ['students', 'teachers'],
-  timetableSlots:     ['timetable'],
-  attendance_records: ['attendance', 'attendance-summary'],
+  timetableSlots:     ['timetable', 'today-sessions'],
+  attendance_records: ['attendance', 'attendance-summary', 'attendance-session', 'student-attendance'],
+  attendance_sessions:['today-sessions', 'attendance-session', 'attendance', 'attendance-summary', 'attendance-missing', 'attendance-awaiting-finalization', 'student-attendance'],
+  timetable_exceptions:['timetable', 'today-sessions', 'attendance-session'],
   doubtTickets:       ['doubts'],
   notices:            ['notices', 'notifications'],
   evaluations:        ['evaluation-work-items', 'evaluations', 'analytics'],
@@ -101,13 +105,64 @@ const ENTITY_QUERY_KEYS: Record<string, string[]> = {
 };
 
 /**
- * Subscribes the whole app to institute-wide changes. Mount once, high in the
- * tree — see components/LiveSync.tsx.
+ * Subscribes the whole app to institute-wide changes with adaptive polling:
+ * - 15s when user is active in foreground
+ * - 30s when user is idle
+ * - Paused when tab is blurred or hidden in background
+ * Mount once, high in the tree — see components/LiveSync.tsx.
  */
 export function useLiveSync() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const since = useRef<string | null>(null);
+  const [pollInterval, setPollInterval] = useState<number | false>(ACTIVE_POLL_INTERVAL_MS);
+
+  useEffect(() => {
+    let idleTimer: NodeJS.Timeout;
+
+    const resetActivity = () => {
+      if (typeof document !== 'undefined' && document.hidden) {
+        setPollInterval(false);
+        return;
+      }
+      setPollInterval(ACTIVE_POLL_INTERVAL_MS);
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        setPollInterval(IDLE_POLL_INTERVAL_MS);
+      }, IDLE_TIMEOUT_MS);
+    };
+
+    const handleVisibility = () => {
+      if (typeof document !== 'undefined' && document.hidden) {
+        setPollInterval(false);
+      } else {
+        resetActivity();
+      }
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('mousemove', resetActivity, { passive: true });
+      window.addEventListener('keydown', resetActivity, { passive: true });
+      window.addEventListener('touchstart', resetActivity, { passive: true });
+      document.addEventListener('visibilitychange', handleVisibility);
+      resetActivity();
+    }
+
+    return () => {
+      clearTimeout(idleTimer);
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('mousemove', resetActivity);
+        window.removeEventListener('keydown', resetActivity);
+        window.removeEventListener('touchstart', resetActivity);
+        document.removeEventListener('visibilitychange', handleVisibility);
+      }
+    };
+  }, []);
+
+  // Reset cursor on user/institute change so new session doesn't carry old timestamps
+  useEffect(() => {
+    since.current = null;
+  }, [user?.id, user?.instituteId]);
 
   const { data } = useQuery({
     queryKey: ['changes', user?.instituteId],
@@ -118,7 +173,7 @@ export function useLiveSync() {
       return res.data as { now: string; entities: string[] };
     },
     enabled: !!user?.instituteId,
-    refetchInterval: CHANGE_FEED_INTERVAL_MS,
+    refetchInterval: pollInterval,
     refetchIntervalInBackground: false,
     staleTime: 0,
     gcTime: 0,
@@ -160,6 +215,8 @@ export function useStudents(params?: Record<string, unknown>) {
       return res.data;
     },
     ...REFRESH_STEADY,
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
     enabled: !!user?.instituteId,
   });
 }
@@ -351,6 +408,8 @@ export function useTeachers(params?: Record<string, unknown>) {
       return res.data;
     },
     ...REFRESH_STEADY,
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
     enabled: !!user?.instituteId,
   });
 }
@@ -495,6 +554,8 @@ export function useBatches() {
       return res.data;
     },
     ...REFRESH_STEADY,
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
     enabled: !!user?.instituteId,
   });
 }
@@ -863,7 +924,9 @@ export function useBlueprints() {
     queryKey: ['blueprints', user?.instituteId],
     queryFn: async () => {
       const res = await apiClient.get(`/institutes/${user?.instituteId}/blueprints`);
-      return res.data;
+      if (Array.isArray(res.data)) return res.data;
+      if (Array.isArray(res.data?.data)) return res.data.data;
+      return [];
     },
     enabled: !!user?.instituteId,
   });
@@ -883,7 +946,8 @@ export function useCreateBlueprint() {
       queryClient.invalidateQueries({ queryKey: ['blueprints', user?.instituteId] });
     },
     onError: (error) => {
-      const msg = axios.isAxiosError(error) ? error.response?.data?.message : 'Failed to create blueprint';
+      const data = axios.isAxiosError(error) ? error.response?.data : null;
+      const msg = data?.error?.message ?? data?.message ?? 'Failed to create blueprint';
       toast.error(msg);
     },
   });
@@ -1023,13 +1087,107 @@ export function useUnlockExam() {
   });
 }
 
+export function useCandidatePapers(examId: string | null) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['exams', user?.instituteId, examId, 'candidate-papers'],
+    queryFn: async () => {
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/exams/${examId}/candidate-papers`);
+      return res.data;
+    },
+    enabled: !!user?.instituteId && !!examId,
+  });
+}
+
+export function useSubmitCandidatePaper() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ examId, paperId }: { examId: string; paperId: string }) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/exams/${examId}/candidate-papers/${paperId}/submit`);
+      return res.data;
+    },
+    onSuccess: (_data, vars) => {
+      toast.success('Paper submitted for review');
+      queryClient.invalidateQueries({ queryKey: ['exams', user?.instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['exams', user?.instituteId, vars.examId, 'candidate-papers'] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.message : 'Failed to submit candidate paper';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useSelectOfficialPaper() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ examId, paperId, comment }: { examId: string; paperId: string; comment?: string }) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/exams/${examId}/select-paper`, { paperId, comment });
+      return res.data;
+    },
+    onSuccess: (_data, vars) => {
+      toast.success('Official paper selected & approved!');
+      queryClient.invalidateQueries({ queryKey: ['exams', user?.instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['exams', user?.instituteId, vars.examId, 'candidate-papers'] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.message : 'Failed to select official paper';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useRejectCandidatePaper() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ examId, paperId, reason }: { examId: string; paperId: string; reason?: string }) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/exams/${examId}/candidate-papers/${paperId}/reject`, { reason });
+      return res.data;
+    },
+    onSuccess: (_data, vars) => {
+      toast.success('Candidate paper rejected');
+      queryClient.invalidateQueries({ queryKey: ['exams', user?.instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['exams', user?.instituteId, vars.examId, 'candidate-papers'] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.message : 'Failed to reject candidate paper';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useRequestPaperChanges() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ examId, paperId, feedback }: { examId: string; paperId: string; feedback: string }) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/exams/${examId}/candidate-papers/${paperId}/request-changes`, { feedback });
+      return res.data;
+    },
+    onSuccess: (_data, vars) => {
+      toast.success('Changes requested from teacher');
+      queryClient.invalidateQueries({ queryKey: ['exams', user?.instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['exams', user?.instituteId, vars.examId, 'candidate-papers'] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.message : 'Failed to request changes';
+      toast.error(msg);
+    },
+  });
+}
+
 export function usePapers() {
   const { user } = useAuth();
   return useQuery({
     queryKey: ['papers', user?.instituteId, 'list'],
     queryFn: async () => {
       const res = await apiClient.get(`/institutes/${user?.instituteId}/papers`);
-      return res.data as { id: string; title: string; status: string; isPersonalized: boolean; createdAt: string }[];
+      const rawData = res.data;
+      const arr = Array.isArray(rawData) ? rawData : rawData.data;
+      return arr as { id: string; title: string; status: string; isPersonalized: boolean; createdAt: string }[];
     },
     enabled: !!user?.instituteId,
   });
@@ -1170,6 +1328,19 @@ export function useBatchHeatmap(batchId: string | undefined) {
   });
 }
 
+export function useBatchMistakeSummary(batchId: string | undefined) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['analytics', 'mistake-summary', user?.instituteId, batchId],
+    queryFn: async () => {
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/analytics/batch/${batchId}/mistake-summary`);
+      return res.data;
+    },
+    ...REFRESH_SLOW,
+    enabled: !!user?.instituteId && !!batchId,
+  });
+}
+
 /** Heatmaps for several batches in one request, keyed by batch id. */
 export function useBatchesHeatmap(batchIds: string[]) {
   const key = [...batchIds].sort().join(',');
@@ -1261,6 +1432,304 @@ export function useCorrectAttendance() {
     },
     onError: (error) => {
       const msg = axios.isAxiosError(error) ? error.response?.data?.message : 'Failed to correct attendance record';
+      toast.error(msg);
+    },
+  });
+}
+
+// ── V4 Production Attendance Hooks ─────────────────────────────────────────
+
+export function useTodayAttendanceSessions(params?: { date?: string; batchId?: string; teacherUserId?: string }) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['today-sessions', user?.instituteId, params],
+    queryFn: async () => {
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/attendance/today-sessions`, { params });
+      return res.data;
+    },
+    ...REFRESH_STEADY,
+    enabled: !!user?.instituteId,
+  });
+}
+
+export function useAttendanceSessionDetails(sessionId: string | null) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['attendance-session', user?.instituteId, sessionId],
+    queryFn: async (): Promise<any> => {
+      if (!sessionId) return null;
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/attendance/sessions/${sessionId}`);
+      return res.data;
+    },
+    ...REFRESH_LIVE,
+    enabled: !!user?.instituteId && !!sessionId,
+  });
+}
+
+export function useSaveAttendanceDraft() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      sessionId,
+      expectedVersion,
+      entries,
+    }: {
+      sessionId: string;
+      expectedVersion: number;
+      entries: { studentProfileId: string; status: string }[];
+    }) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/attendance/sessions/${sessionId}/draft`, {
+        expectedVersion,
+        entries,
+      });
+      return res.data;
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['attendance-session', user?.instituteId, variables.sessionId] });
+      queryClient.invalidateQueries({ queryKey: ['today-sessions', user?.instituteId] });
+    },
+    onError: (error) => {
+      if (axios.isAxiosError(error) && error.response?.status === 409) {
+        // Concurrency conflict handled specifically in UI
+        return;
+      }
+      const msg = axios.isAxiosError(error) ? error.response?.data?.message : 'Failed to save attendance draft';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useFinalizeAttendance() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      sessionId,
+      expectedVersion,
+    }: {
+      sessionId: string;
+      expectedVersion: number;
+    }) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/attendance/sessions/${sessionId}/finalize`, {
+        expectedVersion,
+      });
+      return res.data;
+    },
+    onSuccess: (_, variables) => {
+      toast.success('Attendance finalized & published to students');
+      queryClient.invalidateQueries({ queryKey: ['attendance-session', user?.instituteId, variables.sessionId] });
+      queryClient.invalidateQueries({ queryKey: ['today-sessions', user?.instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['attendance-summary', user?.instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['student-attendance'] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.message : 'Failed to finalize attendance';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useCorrectAttendanceRecord() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      sessionId,
+      recordId,
+      expectedVersion,
+      status,
+      reason,
+    }: {
+      sessionId: string;
+      recordId: string;
+      expectedVersion: number;
+      status: string;
+      reason: string;
+    }) => {
+      const res = await apiClient.patch(
+        `/institutes/${user?.instituteId}/attendance/sessions/${sessionId}/records/${recordId}`,
+        { expectedVersion, status, reason },
+      );
+      return res.data;
+    },
+    onSuccess: (_, variables) => {
+      toast.success('Attendance record corrected and audited');
+      queryClient.invalidateQueries({ queryKey: ['attendance-session', user?.instituteId, variables.sessionId] });
+      queryClient.invalidateQueries({ queryKey: ['today-sessions', user?.instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['attendance-summary', user?.instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['student-attendance'] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.message : 'Failed to correct record';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useCreateTimetableException() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (data: {
+      timetableSlotId: string;
+      date: string;
+      type: 'CANCELLED' | 'SUBSTITUTE' | 'RESCHEDULED';
+      substituteUserId?: string;
+      targetDate?: string;
+      overrideStart?: string;
+      overrideEnd?: string;
+      reason: string;
+    }) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/attendance/exceptions`, data);
+      return res.data;
+    },
+    onSuccess: () => {
+      toast.success('Timetable exception applied');
+      queryClient.invalidateQueries({ queryKey: ['today-sessions', user?.instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['timetable', user?.instituteId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.message : 'Failed to create timetable exception';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useAdminOverrideAttendanceSession() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      sessionId,
+      action,
+      reason,
+    }: {
+      sessionId: string;
+      action: 'CANCEL' | 'UNCANCEL' | 'FORCE_UNLOCK';
+      reason: string;
+    }) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/attendance/sessions/${sessionId}/override`, {
+        action,
+        reason,
+      });
+      return res.data;
+    },
+    onSuccess: (_, variables) => {
+      toast.success(`Session override [${variables.action}] applied`);
+      queryClient.invalidateQueries({ queryKey: ['today-sessions', user?.instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['attendance-session', user?.instituteId, variables.sessionId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.message : 'Failed to override session';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useStudentAttendance(params?: {
+  subjectId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  page?: number;
+  limit?: number;
+}) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['student-attendance', user?.instituteId, params],
+    queryFn: async () => {
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/attendance/student`, { params });
+      return res.data;
+    },
+    ...REFRESH_STEADY,
+    enabled: !!user?.instituteId,
+  });
+}
+
+export function useMissingAttendanceSessions() {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['attendance-missing', user?.instituteId],
+    queryFn: async (): Promise<any[]> => {
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/attendance/missing`);
+      return res.data;
+    },
+    ...REFRESH_LIVE,
+    enabled: !!user?.instituteId,
+  });
+}
+
+export function useAwaitingFinalizationSessions() {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['attendance-awaiting-finalization', user?.instituteId],
+    queryFn: async (): Promise<any[]> => {
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/attendance/awaiting-finalization`);
+      return res.data;
+    },
+    ...REFRESH_LIVE,
+    enabled: !!user?.instituteId,
+  });
+}
+
+export function useDetectMissingAttendance() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async () => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/attendance/detect-missing`);
+      return res.data;
+    },
+    onSuccess: (data) => {
+      toast.success(`Missing attendance scanned: ${data.detectedCount} detected, ${data.newlyNotifiedCount} notified.`);
+      queryClient.invalidateQueries({ queryKey: ['attendance-missing', user?.instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['today-sessions', user?.instituteId] });
+    },
+  });
+}
+
+export function useAttendancePolicy() {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['attendance-policy', user?.instituteId],
+    queryFn: async () => {
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/attendance/policy`);
+      return res.data;
+    },
+    ...REFRESH_LIVE,
+    enabled: !!user?.instituteId,
+  });
+}
+
+export function useUpdateAttendancePolicy() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (data: {
+      cutoffHour?: number;
+      openBeforeMinutes?: number;
+      gracePeriodMinutes?: number;
+      timezone?: string;
+      allowTeacherHistoricalEdit?: boolean;
+      allowFinalizedCorrection?: boolean;
+    }) => {
+      const res = await apiClient.patch(`/institutes/${user?.instituteId}/attendance/policy`, data);
+      return res.data;
+    },
+    onSuccess: () => {
+      toast.success('Attendance policy updated successfully');
+      queryClient.invalidateQueries({ queryKey: ['attendance-policy', user?.instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['today-sessions', user?.instituteId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.message : 'Failed to update attendance policy';
       toast.error(msg);
     },
   });
@@ -1382,7 +1851,16 @@ export function useCreateAssignmentsForBatch() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (data: { batchId: string; topicId: string; title: string; description?: string; dueDate: string }) => {
+    mutationFn: async (data: {
+      batchId?: string;
+      batchIds?: string[];
+      topicId?: string;
+      chapterId?: string;
+      chapterIds?: string[];
+      title: string;
+      description?: string;
+      dueDate: string;
+    }) => {
       const res = await apiClient.post(`/institutes/${user?.instituteId}/assignments/batch`, data);
       return res.data as { created: number };
     },
@@ -1482,6 +1960,26 @@ export function useSubmitAssignment() {
     },
     onError: (error) => {
       const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to submit assignment';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useDeleteAssignmentSubmission() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (assignmentId: string) => {
+      const res = await apiClient.delete(`/institutes/${user?.instituteId}/assignments/${assignmentId}/submission`);
+      return res.data;
+    },
+    onSuccess: () => {
+      toast.success('Submission retracted successfully');
+      queryClient.invalidateQueries({ queryKey: ['assignments', user?.instituteId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to retract submission';
       toast.error(msg);
     },
   });
@@ -1806,6 +2304,26 @@ export function useRequestReport() {
     },
     onError: (error) => {
       const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to request report';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useRetryReport() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (reportId: string) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/reports/${reportId}/retry`);
+      return res.data;
+    },
+    onSuccess: () => {
+      toast.success('Report generation re-queued');
+      queryClient.invalidateQueries({ queryKey: ['reports', user?.instituteId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to retry report';
       toast.error(msg);
     },
   });
@@ -2394,7 +2912,57 @@ export function usePermissionGrants() {
     queryKey: ['permission-grants', user?.instituteId],
     queryFn: async () => {
       const res = await apiClient.get(`/institutes/${user?.instituteId}/permission-grants`);
-      return res.data as { id: string; userId: string; permission: string; batchId: string | null; subjectId: string | null; createdAt: string; user: { name: string; email: string } }[];
+      return res.data as {
+        id: string;
+        userId: string;
+        permission: string;
+        batchId: string | null;
+        subjectId: string | null;
+        batchName?: string | null;
+        subjectName?: string | null;
+        createdAt: string;
+        user: { id: string; name: string; email: string; role: string; avatarUrl?: string | null };
+        grantedBy?: { id: string; name: string; email: string };
+      }[];
+    },
+    enabled: !!user?.instituteId,
+  });
+}
+
+export function useRolesAndPermissions() {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['roles-and-permissions', user?.instituteId],
+    queryFn: async () => {
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/permission-grants/roles`);
+      return res.data as {
+        templates: {
+          id: string;
+          name: string;
+          slug: string;
+          description: string;
+          baseRole: string;
+          isSystem: boolean;
+          permissions: string[];
+          defaultScope: 'INSTITUTE' | 'BATCH' | 'SUBJECT';
+          userCount?: number;
+        }[];
+        canonicalPermissions: {
+          key: string;
+          label: string;
+          description: string;
+          category: string;
+          risk: 'standard' | 'sensitive' | 'critical';
+          supportedScopes: ('INSTITUTE' | 'BATCH' | 'SUBJECT')[];
+          dependencies?: string[];
+        }[];
+        categories: {
+          id: string;
+          label: string;
+          description: string;
+          icon: string;
+        }[];
+      };
     },
     enabled: !!user?.instituteId,
   });
@@ -2411,11 +2979,226 @@ export function useCreatePermissionGrant() {
     onSuccess: () => {
       toast.success('Permission granted');
       queryClient.invalidateQueries({ queryKey: ['permission-grants', user?.instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['roles-and-permissions', user?.instituteId] });
     },
     onError: (error) => {
       const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to grant permission';
       toast.error(msg);
     },
+  });
+}
+
+export function useCreateBulkPermissionGrants() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: { userId: string; permissions: string[]; batchId?: string; subjectId?: string }) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/permission-grants/bulk`, data);
+      return res.data;
+    },
+    onSuccess: (data: any) => {
+      toast.success(`Successfully granted ${data.grantedCount ?? ''} permissions`);
+      queryClient.invalidateQueries({ queryKey: ['permission-grants', user?.instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['roles-and-permissions', user?.instituteId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to grant permissions';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useSyncUserPermissions() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: { userId: string; grants: { permission: string; batchId?: string; subjectId?: string }[] }) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/permission-grants/sync`, data);
+      return res.data;
+    },
+    onSuccess: () => {
+      toast.success('User permissions synchronized');
+      queryClient.invalidateQueries({ queryKey: ['permission-grants', user?.instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['roles-and-permissions', user?.instituteId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to sync permissions';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useRevokePermissionGrant() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (grantId: string) => {
+      const res = await apiClient.delete(`/institutes/${user?.instituteId}/permission-grants/${grantId}`);
+      return res.data;
+    },
+    onSuccess: () => {
+      toast.success('Permission revoked');
+      queryClient.invalidateQueries({ queryKey: ['permission-grants', user?.instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['roles-and-permissions', user?.instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['today-attendance-sessions'] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to revoke permission';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useRevokeBulkGrants() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (grantIds: string[]) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/permission-grants/revoke-bulk`, { grantIds });
+      return res.data;
+    },
+    onSuccess: (data: any) => {
+      toast.success(`Revoked ${data.revokedCount ?? ''} permissions`);
+      queryClient.invalidateQueries({ queryKey: ['permission-grants', user?.instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['roles-and-permissions', user?.instituteId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to revoke permissions';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useCreateCustomRole() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: { name: string; description?: string; baseRole: string; permissions: string[]; defaultScope?: string }) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/permission-grants/roles`, data);
+      return res.data;
+    },
+    onSuccess: () => {
+      toast.success('Custom role created');
+      queryClient.invalidateQueries({ queryKey: ['roles-and-permissions', user?.instituteId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to create role';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useUpdateCustomRole() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (params: { roleId: string; data: { name?: string; description?: string; permissions?: string[]; defaultScope?: string } }) => {
+      const res = await apiClient.put(`/institutes/${user?.instituteId}/permission-grants/roles/${params.roleId}`, params.data);
+      return res.data;
+    },
+    onSuccess: () => {
+      toast.success('Custom role updated');
+      queryClient.invalidateQueries({ queryKey: ['roles-and-permissions', user?.instituteId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to update role';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useDeleteCustomRole() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (roleId: string) => {
+      const res = await apiClient.delete(`/institutes/${user?.instituteId}/permission-grants/roles/${roleId}`);
+      return res.data;
+    },
+    onSuccess: () => {
+      toast.success('Custom role deleted');
+      queryClient.invalidateQueries({ queryKey: ['roles-and-permissions', user?.instituteId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to delete role';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useDuplicateRole() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (roleId: string) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/permission-grants/roles/${roleId}/duplicate`, {});
+      return res.data;
+    },
+    onSuccess: () => {
+      toast.success('Role duplicated successfully');
+      queryClient.invalidateQueries({ queryKey: ['roles-and-permissions', user?.instituteId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to duplicate role';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useAssignRoleToUser() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: { roleId: string; userId: string; batchId?: string; subjectId?: string }) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/permission-grants/roles/${data.roleId}/assign`, {
+        userId: data.userId,
+        roleId: data.roleId,
+        batchId: data.batchId,
+        subjectId: data.subjectId,
+      });
+      return res.data;
+    },
+    onSuccess: () => {
+      toast.success('Role assigned to user');
+      queryClient.invalidateQueries({ queryKey: ['permission-grants', user?.instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['roles-and-permissions', user?.instituteId] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to assign role';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useSimulateAccess() {
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async (data: { userId?: string; roleId?: string; permissions?: string[]; batchId?: string; subjectId?: string }) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/permission-grants/simulate`, data);
+      return res.data;
+    },
+  });
+}
+
+export function usePermissionAuditTrail() {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['permission-audit-trail', user?.instituteId],
+    queryFn: async () => {
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/permission-grants/audit-trail`);
+      return res.data as {
+        id: string;
+        action: string;
+        entity: string;
+        entityId: string;
+        actorName: string;
+        actorEmail: string;
+        oldValue: any;
+        newValue: any;
+        createdAt: string;
+      }[];
+    },
+    enabled: !!user?.instituteId,
   });
 }
 
@@ -2895,5 +3678,49 @@ export function useFounderInstituteDetail(instituteId: string | null) {
     throwOnError: false,
   });
 }
+
+// ── Leaderboards (Rank Board & Growth Board) ─────────────────────────────
+
+export function useLeaderboard(params?: {
+  scope?: 'class' | 'batch';
+  batchId?: string;
+  examId?: string;
+  subjectId?: string;
+}) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['leaderboard', user?.instituteId, params],
+    queryFn: async () => {
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/leaderboard`, {
+        params,
+      });
+      return res.data;
+    },
+    ...REFRESH_STEADY,
+    enabled: !!user?.instituteId,
+  });
+}
+
+export function useLeaderboardGrowth(params?: {
+  scope?: 'class' | 'batch';
+  batchId?: string;
+  subjectId?: string;
+  examFamily?: 'ALL' | 'SPOT' | 'PERIODIC' | 'MAJOR';
+  periodWeeks?: number;
+}) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['leaderboard-growth', user?.instituteId, params],
+    queryFn: async () => {
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/leaderboard/growth`, {
+        params,
+      });
+      return res.data;
+    },
+    ...REFRESH_STEADY,
+    enabled: !!user?.instituteId,
+  });
+}
+
 
 

@@ -292,7 +292,7 @@ async function main() {
       });
       const existingProfile = await prisma.studentProfile.findUnique({ where: { userId: user.id } });
       if (!existingProfile) {
-        await prisma.studentProfile.create({ data: { userId: user.id, rollNumber, batchId: batch.id, tags: [] } });
+        await prisma.studentProfile.create({ data: { userId: user.id, instituteId: INSTITUTE_ID, rollNumber, batchId: batch.id, tags: [] } });
         studentsCreated += 1;
       } else {
         await prisma.studentProfile.update({ where: { userId: user.id }, data: { batchId: batch.id, rollNumber } });

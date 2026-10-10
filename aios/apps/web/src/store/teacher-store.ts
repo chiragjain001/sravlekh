@@ -6,18 +6,17 @@ import { create } from 'zustand';
 
 export type TeacherTopNav =
   | 'today'
+  | 'attendance'
   | 'classes'
   | 'question-bank'
   | 'paper-builder'
-  | 'tests-exams'
+  | 'assessments'
   | 'digital-copy'
   | 'evaluation-queue'
-  | 'analytics'
-  | 'assignments'
-  | 'remedial-extra'
+  | 'leaderboard'
+  | 'remedial-extra'   // kept as valid route key; integrated into Timetable UI
   | 'doubt-center'
   | 'timetable'
-  | 'reports'
   | 'settings';
 
 interface TeacherOpenModals {

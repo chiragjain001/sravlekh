@@ -93,6 +93,57 @@ enum QuestionType {
   NUMERICAL
   MATCH_THE_FOLLOWING
   PASSAGE_BASED
+
+  // Objective extensions
+  TRUE_FALSE
+  MULTIPLE_SELECT
+  FILL_IN_THE_BLANK
+  ASSERTION_REASON
+  STATEMENT_BASED
+  SEQUENCE_ORDERING
+  ONE_WORD
+
+  // Numerical & Mathematical extensions
+  EQUATION_BASED
+  CALCULATION_BASED
+  DERIVATION
+  PROOF
+  GRAPH_INTERPRETATION
+  DATA_INTERPRETATION
+
+  // Descriptive extensions
+  VERY_SHORT_ANSWER
+  ESSAY
+  EXPLAIN_DESCRIBE
+  COMPARE_DIFFERENTIATE
+  JUSTIFY_GIVE_REASON
+
+  // Visual extensions
+  DIAGRAM_BASED
+  DIAGRAM_LABELING
+  IMAGE_BASED
+  FIGURE_INTERPRETATION
+  MAP_BASED
+
+  // Competency & Advanced extensions
+  CASE_STUDY
+  CASE_BASED
+  SOURCE_BASED
+  APPLICATION_BASED
+  COMPETENCY_BASED
+  HOTS
+  REAL_WORLD_SCENARIO
+  PROBLEM_SOLVING
+
+  // Technical & Computer Science
+  CODE_OUTPUT
+  DEBUGGING
+  CODE_COMPLETION
+  PROGRAMMING_PROBLEM
+  ALGORITHMIC_PROBLEM
+  SQL_QUERY
+  DATABASE_QUERY
+  TECHNICAL_CONCEPTUAL
 }
 
 enum DifficultyLevel {
@@ -107,6 +158,12 @@ enum PaperStatus {
   APPROVED
   PUBLISHED
   ARCHIVED
+}
+
+enum PaperFormat {
+  OMR
+  THEORY
+  HYBRID
 }
 
 enum TimetableSlotType {
@@ -222,6 +279,7 @@ model Institute {
   auditLogs       AuditLog[]
   interventions   Intervention[]
   allowListEntries AllowListEntry[]
+  questionFamilies QuestionFamily[]
 
   // 21-DOMAIN-MODEL-V2.md / 04-DATABASE-SCHEMA.md (V2 section) — additive only,
   // Phase 7 (docs/33-GAP-ANALYSIS-AND-BUILD-PLAN.md): net-new tables, no v1
@@ -235,6 +293,11 @@ model Institute {
   // "Founder Console — remaining screens") — additive only, no v1 table touched.
   planHistory      InstitutePlanHistory[]
   supportTickets   SupportTicket[]
+
+  // Attendance V4
+  attendanceSessions       AttendanceSession[]
+  attendanceCorrectionLogs AttendanceCorrectionLog[]
+  timetableExceptions      TimetableException[]
 
   @@map("institutes")
 }
@@ -487,6 +550,10 @@ model UserPermissionGrant {
 model StudentProfile {
   id              String   @id @default(cuid())
   userId          String   @unique
+  /// Denormalized copy of User.instituteId for direct tenant filtering.
+  /// Eliminates the join-through-User footgun: any query that forgets the join
+  /// would otherwise return cross-tenant data. Backfilled on migration.
+  instituteId     String
   rollNumber      String?
   dateOfBirth     DateTime?
   guardianName    String?
@@ -512,8 +579,12 @@ model StudentProfile {
   profileHistory  StudentHistory[]
   attempts        Attempt[]
   attendanceRecords AttendanceRecord[]
+  attendanceRosters AttendanceSessionRoster[]
+  conceptMasteries  StudentConceptMastery[]
+  questionExposures StudentQuestionExposure[]
 
   @@index([batchId])
+  @@index([instituteId])
   @@map("student_profiles")
 }
 
@@ -577,6 +648,7 @@ model Batch {
   assignments Assignment[]
   assessmentDeliveries AssessmentDelivery[]
   attendanceRecords AttendanceRecord[]
+  attendanceSessions AttendanceSession[]
 
   @@index([instituteId])
   @@map("batches")
@@ -595,6 +667,7 @@ model BatchTeacher {
   teacherProfile TeacherProfile @relation(fields: [teacherProfileId], references: [id], onDelete: Cascade)
 
   @@unique([batchId, teacherProfileId, subjectId])
+  @@index([teacherProfileId, removedAt])
   @@map("batch_teachers")
 }
 
@@ -609,6 +682,17 @@ model Subject {
   code        String?
   createdAt   DateTime @default(now())
   deletedAt   DateTime?
+
+  // Universal Curriculum extensions
+  boardId             String?
+  gradeLevelId        String?
+  curriculumVersionId String?
+  isGlobal            Boolean             @default(false)
+  category            String              @default("STEM") // STEM, HUMANITIES, LANGUAGES, COMMERCE
+
+  board               AcademicBoard?      @relation(fields: [boardId], references: [id])
+  gradeLevel          GradeLevel?         @relation(fields: [gradeLevelId], references: [id])
+  curriculumVersion   CurriculumVersion?  @relation(fields: [curriculumVersionId], references: [id])
 
   institute   Institute   @relation(fields: [instituteId], references: [id], onDelete: Cascade)
   chapters    Chapter[]
@@ -644,12 +728,13 @@ model Topic {
   createdAt DateTime @default(now())
   deletedAt DateTime?
 
-  chapter      Chapter        @relation(fields: [chapterId], references: [id], onDelete: Cascade)
-  questions    Question[]
+  chapter       Chapter        @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  concepts      Concept[]
+  questions     Question[]
   masteryScores MasteryScore[]
-  assignments  Assignment[]
+  assignments   Assignment[]
   interventions Intervention[]
-  doubtTickets DoubtTicket[]
+  doubtTickets  DoubtTicket[]
 
   @@map("topics")
 }
@@ -685,17 +770,60 @@ model Question {
   // (below) is the enforced ownership FK.
   rubricId        String?
 
-  institute    Institute         @relation(fields: [instituteId], references: [id], onDelete: Cascade)
-  subject      Subject           @relation(fields: [subjectId], references: [id])
-  chapter      Chapter           @relation(fields: [chapterId], references: [id])
-  topic        Topic             @relation(fields: [topicId], references: [id])
-  versions     QuestionVersion[]
-  paperItems   PaperItem[]
-  responses    Response[]
-  rubric       Rubric?
+  // ── Universal Curriculum, Cognitive & Taxonomy Extensions ──
+  bloomsLevel           BloomsTaxonomyLevel @default(UNDERSTAND)
+  status                QuestionStatus      @default(APPROVED)
+  sourceType            QuestionSourceType  @default(INSTITUTE_CURATED)
+  sourceDetails         Json?               // { textbookName, editionYear, chapterNo, exerciseNo, pageNo, examYear, pyqBoard }
+  contentHash           String?             // SHA-256 hash for exact deduplication
+  fingerprint           String?             // Normalized token stem fingerprint for near-duplicate similarity
+  expectedTimeSec       Int?                @default(120)
+  language              String              @default("en")
+  canonicalQuestionId   String?
+  typePayload           Json?               // Extensible structured metadata for Visual, CS/Code, Case Study sub-items
+  empiricalDifficulty   Float?              // IRT p-value: fraction of correct attempts (0.0 to 1.0)
+  discriminationIndex   Float?              // Item discrimination (point biserial correlation)
+  attemptCount          Int                 @default(0)
+  correctCount          Int                 @default(0)
+  avgTimeSpentSec       Float?
+  isGlobal              Boolean             @default(false) // Standardized central bank / NCERT content
+  gradeLevelId          String?
+  curriculumVersionId   String?
+
+  // ── Question Family & Variant Tree ──
+  familyId              String?
+  parentQuestionId      String?
+  variantType           QuestionVariantType @default(ORIGINAL)
+
+  institute             Institute           @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  subject               Subject             @relation(fields: [subjectId], references: [id])
+  chapter               Chapter             @relation(fields: [chapterId], references: [id])
+  topic                 Topic               @relation(fields: [topicId], references: [id])
+  family                QuestionFamily?     @relation(fields: [familyId], references: [id])
+  parentQuestion        Question?           @relation("QuestionVariants", fields: [parentQuestionId], references: [id])
+  variants              Question[]          @relation("QuestionVariants")
+  canonicalQuestion     Question?           @relation("QuestionTranslations", fields: [canonicalQuestionId], references: [id])
+  translations          Question[]          @relation("QuestionTranslations")
+  gradeLevel            GradeLevel?         @relation(fields: [gradeLevelId], references: [id])
+  curriculumVersion     CurriculumVersion?  @relation(fields: [curriculumVersionId], references: [id])
+
+  versions              QuestionVersion[]
+  paperItems            PaperItem[]
+  responses             Response[]
+  rubric                Rubric?
+  concepts              QuestionConcept[]
+  learningObjectives    QuestionLearningObjective[]
+  studentExposures      StudentQuestionExposure[]
 
   @@index([instituteId, subjectId, topicId, difficulty])
+  @@index([instituteId, createdAt(sort: Desc)])
   @@index([isApproved])
+  @@index([familyId])
+  @@index([contentHash])
+  @@index([fingerprint])
+  @@index([bloomsLevel])
+  @@index([status])
+  @@index([isGlobal, subjectId, difficulty])
   @@map("questions")
 }
 
@@ -710,11 +838,251 @@ model QuestionVersion {
   createdBy  String
   createdAt  DateTime @default(now())
 
-  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  question   Question   @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  paperItems PaperItem[]
   aiRecommendations AIRecommendation[]
 
   @@unique([questionId, versionNo])
   @@map("question_versions")
+}
+
+// ---------------------------------------------------------------------------
+// UNIVERSAL CURRICULUM ARCHITECTURE (Class 1-12, NCERT, Boards)
+// ---------------------------------------------------------------------------
+
+enum BloomsTaxonomyLevel {
+  REMEMBER
+  UNDERSTAND
+  APPLY
+  ANALYZE
+  EVALUATE
+  CREATE
+}
+
+enum QuestionVariantType {
+  ORIGINAL
+  REPHRASED
+  PARAMETERIZED
+  CONCEPT_VARIANT
+  DIFFICULTY_VARIANT
+  CONTEXT_VARIANT
+  LANGUAGE_TRANSLATION
+}
+
+enum QuestionStatus {
+  DRAFT
+  AI_GENERATED
+  VALIDATION_PENDING
+  TEACHER_REVIEW
+  APPROVED
+  PUBLISHED
+  ARCHIVED
+  REJECTED
+}
+
+enum QuestionSourceType {
+  NCERT_TEXTBOOK
+  NCERT_EXEMPLAR
+  PREVIOUS_YEAR_EXAM
+  TEACHER_ORIGINAL
+  AI_GENERATED
+  THIRD_PARTY_IMPORT
+  INSTITUTE_CURATED
+}
+
+enum PrerequisiteRelationType {
+  STRICT_PREREQUISITE
+  RECOMMENDED_PREPARATION
+  CO_REQUISITE
+}
+
+enum PaperAssessmentCategory {
+  MAJOR_EXAM
+  REGULAR_TEST
+  LEARNING_HOMEWORK
+  INTELLIGENT_PERSONALIZED
+}
+
+model AcademicBoard {
+  id          String   @id @default(cuid())
+  code        String   @unique // e.g. "NCERT", "CBSE", "ICSE", "STATE_MAHARASHTRA"
+  name        String
+  country     String   @default("India")
+  state       String?
+  description String?
+  isGlobal    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  curriculumVersions CurriculumVersion[]
+  subjects           Subject[]
+
+  @@map("academic_boards")
+}
+
+model CurriculumVersion {
+  id            String   @id @default(cuid())
+  boardId       String
+  academicYear  String   // e.g. "2024-2025", "2026-2027"
+  versionLabel  String   // e.g. "NCERT-Rationalised-2024"
+  status        String   @default("ACTIVE") // ACTIVE, DEPRECATED, DRAFT
+  effectiveFrom DateTime @default(now())
+  effectiveTo   DateTime?
+  createdAt     DateTime @default(now())
+
+  board         AcademicBoard @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  subjects      Subject[]
+  questions     Question[]
+
+  @@unique([boardId, academicYear, versionLabel])
+  @@map("curriculum_versions")
+}
+
+model GradeLevel {
+  id            String   @id @default(cuid())
+  code          String   @unique // e.g. "CLASS_1", "CLASS_10", "CLASS_12"
+  name          String   // e.g. "Class 10"
+  sequenceOrder Int      @unique // 1 to 12
+  stage         String   @default("SECONDARY") // FOUNDATIONAL, PREPARATORY, MIDDLE, SECONDARY, SENIOR_SECONDARY
+  createdAt     DateTime @default(now())
+
+  subjects      Subject[]
+  questions     Question[]
+
+  @@map("grade_levels")
+}
+
+model Concept {
+  id          String    @id @default(cuid())
+  topicId     String
+  code        String?
+  name        String
+  description String?
+  order       Int       @default(0)
+  createdAt   DateTime  @default(now())
+  deletedAt   DateTime?
+
+  topic               Topic                 @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  learningObjectives  LearningObjective[]
+  questions           QuestionConcept[]
+  prerequisites       ConceptPrerequisite[] @relation("DependentConcept")
+  dependedOnBy        ConceptPrerequisite[] @relation("PrerequisiteConcept")
+  studentMasteries    StudentConceptMastery[]
+  questionFamilies    QuestionFamily[]
+
+  @@index([topicId, order])
+  @@map("concepts")
+}
+
+model ConceptPrerequisite {
+  id                    String                   @id @default(cuid())
+  conceptId             String
+  prerequisiteConceptId String
+  relationType          PrerequisiteRelationType @default(STRICT_PREREQUISITE)
+  createdAt             DateTime                 @default(now())
+
+  concept               Concept @relation("DependentConcept", fields: [conceptId], references: [id], onDelete: Cascade)
+  prerequisiteConcept   Concept @relation("PrerequisiteConcept", fields: [prerequisiteConceptId], references: [id], onDelete: Cascade)
+
+  @@unique([conceptId, prerequisiteConceptId])
+  @@map("concept_prerequisites")
+}
+
+model LearningObjective {
+  id          String              @id @default(cuid())
+  conceptId   String?
+  code        String              // e.g. "LO-MATH-10-QUAD-01"
+  description String              // "Determine nature of roots using discriminant"
+  bloomsLevel BloomsTaxonomyLevel @default(APPLY)
+  createdAt   DateTime            @default(now())
+
+  concept     Concept?            @relation(fields: [conceptId], references: [id], onDelete: Cascade)
+  questions   QuestionLearningObjective[]
+
+  @@unique([code])
+  @@map("learning_objectives")
+}
+
+model QuestionConcept {
+  id         String   @id @default(cuid())
+  questionId String
+  conceptId  String
+  isPrimary  Boolean  @default(false)
+  weight     Float    @default(1.0)
+  createdAt  DateTime @default(now())
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  concept  Concept  @relation(fields: [conceptId], references: [id], onDelete: Cascade)
+
+  @@unique([questionId, conceptId])
+  @@map("question_concepts")
+}
+
+model QuestionLearningObjective {
+  id                  String   @id @default(cuid())
+  questionId          String
+  learningObjectiveId String
+  createdAt           DateTime @default(now())
+
+  question          Question          @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  learningObjective LearningObjective @relation(fields: [learningObjectiveId], references: [id], onDelete: Cascade)
+
+  @@unique([questionId, learningObjectiveId])
+  @@map("question_learning_objectives")
+}
+
+model QuestionFamily {
+  id              String   @id @default(cuid())
+  instituteId     String?  // null = global/NCERT template; set = institute private template
+  code            String   @unique
+  name            String
+  baseConceptId   String?
+  templatePrompt  String?  // for AI generative variants
+  parameterSchema Json?    // variable definitions: { a: "range(1, 10)", b: "..." }
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  institute   Institute? @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  baseConcept Concept?   @relation(fields: [baseConceptId], references: [id])
+  questions   Question[]
+
+  @@index([instituteId])
+  @@map("question_families")
+}
+
+model StudentConceptMastery {
+  id               String   @id @default(cuid())
+  studentProfileId String
+  conceptId        String
+  masteryScore     Float    @default(0.5) // 0.0 to 1.0
+  confidence       Float    @default(0.0) // 0.0 to 1.0
+  attemptsCount    Int      @default(0)
+  lastAttemptAt    DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  studentProfile StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+  concept        Concept        @relation(fields: [conceptId], references: [id], onDelete: Cascade)
+
+  @@unique([studentProfileId, conceptId])
+  @@index([studentProfileId, masteryScore])
+  @@map("student_concept_masteries")
+}
+
+model StudentQuestionExposure {
+  id               String    @id @default(cuid())
+  studentProfileId String
+  questionId       String
+  paperId          String?
+  attemptedAt      DateTime  @default(now())
+  wasCorrect       Boolean?
+  timeSpentSec     Int?
+
+  studentProfile StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+  question       Question       @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  paper          Paper?         @relation(fields: [paperId], references: [id], onDelete: SetNull)
+
+  @@index([studentProfileId, questionId])
+  @@index([studentProfileId, attemptedAt])
+  @@map("student_question_exposures")
 }
 
 // ---------------------------------------------------------------------------
@@ -730,6 +1098,13 @@ model Blueprint {
   duration      Int      // minutes
   instructions  String?
   distribution  Json     // [{topicId, marks, difficulty, count}]
+  
+  // V2 fields
+  format                 PaperFormat @default(OMR)
+  sections               Json?       // Stores PaperSection[]
+  difficultyDistribution Json?       // Stores { easy, medium, hard }
+  bloomsDistribution     Json?       // Stores { remember, understand, apply, analyze, evaluate, create }
+
   createdByUserId String
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -749,6 +1124,8 @@ model Paper {
   examId          String?
   title           String
   status          PaperStatus @default(DRAFT)
+  format          PaperFormat @default(OMR)
+  category        PaperAssessmentCategory @default(REGULAR_TEST)
   isPersonalized  Boolean     @default(false)
   targetStudentId String?     // null = general; set = personalized for specific student
   targetBatchId   String?
@@ -759,12 +1136,13 @@ model Paper {
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
 
-  institute  Institute      @relation(fields: [instituteId], references: [id], onDelete: Cascade)
-  blueprint  Blueprint      @relation(fields: [blueprintId], references: [id])
-  exam       Exam?          @relation(fields: [examId], references: [id])
-  items      PaperItem[]
-  versions   PaperVersion[]
-  assessments Assessment[]
+  institute        Institute      @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  blueprint        Blueprint      @relation(fields: [blueprintId], references: [id])
+  exam             Exam?          @relation(fields: [examId], references: [id])
+  items            PaperItem[]
+  versions         PaperVersion[]
+  assessments      Assessment[]
+  studentExposures StudentQuestionExposure[]
 
   @@index([instituteId, status])
   @@map("papers")
@@ -784,14 +1162,17 @@ model PaperVersion {
 }
 
 model PaperItem {
-  id         String @id @default(cuid())
-  paperId    String
-  questionId String
-  order      Int
-  marks      Float  // override if different from question default
+  id                String @id @default(cuid())
+  paperId           String
+  questionId        String
+  questionVersionId String? // Pinned immutable snapshot of the question at publication time
+  order             Int
+  marks             Float  // override if different from question default
+  sectionId         String? // V2 - Which section this question belongs to in Theory/Hybrid papers
 
-  paper    Paper    @relation(fields: [paperId], references: [id], onDelete: Cascade)
-  question Question @relation(fields: [questionId], references: [id])
+  paper           Paper            @relation(fields: [paperId], references: [id], onDelete: Cascade)
+  question        Question         @relation(fields: [questionId], references: [id])
+  questionVersion QuestionVersion? @relation(fields: [questionVersionId], references: [id])
 
   @@unique([paperId, questionId])
   @@map("paper_items")
@@ -808,6 +1189,7 @@ model Exam {
   blueprintId     String
   title           String
   type            ExamType
+  format          PaperFormat @default(OMR)
   status          ExamStatus @default(DRAFT)
   version         Int        @default(0) // optimistic lock — 18-EDGE-CASES.md: concurrent transitions get 409, not a silent overwrite
   scheduledDate   DateTime?
@@ -833,6 +1215,7 @@ model Exam {
 
   @@index([instituteId, status])
   @@index([batchId])
+  @@index([instituteId, batchId, createdAt(sort: Desc)])
   @@map("exams")
 }
 
@@ -858,6 +1241,7 @@ model AnswerSheet {
   responses      Response[]
 
   @@unique([examId, studentProfileId])
+  @@index([studentProfileId])
   @@map("answer_sheets")
 }
 
@@ -934,6 +1318,8 @@ model Response {
 
   @@unique([answerSheetId, questionId])
   @@unique([attemptId, questionId])
+  @@index([questionId])
+  @@index([createdAt])
   @@map("responses")
 }
 
@@ -968,6 +1354,7 @@ model MasteryScore {
 
   @@unique([studentProfileId, topicId])
   @@index([studentProfileId, subjectId])
+  @@index([topicId, masteryValue])
   @@map("mastery_scores")
 }
 
@@ -989,6 +1376,8 @@ model Intervention {
   studentProfile StudentProfile @relation("StudentInterventions", fields: [studentProfileId], references: [id])
   topic          Topic          @relation(fields: [topicId], references: [id])
 
+  @@index([studentProfileId, topicId])
+  @@index([instituteId])
   @@map("interventions")
 }
 
@@ -1015,13 +1404,17 @@ model TimetableSlot {
   institute Institute @relation(fields: [instituteId], references: [id], onDelete: Cascade)
   batch     Batch?    @relation(fields: [batchId], references: [id])
 
+  attendanceSessions  AttendanceSession[]
+  timetableExceptions TimetableException[]
+
   @@index([instituteId, startTime])
   @@index([batchId, startTime])
+  @@index([instituteId, teacherUserId, startTime])
   @@map("timetable_slots")
 }
 
 // ---------------------------------------------------------------------------
-// ATTENDANCE
+// ATTENDANCE V4 PRODUCTION ENGINE
 // ---------------------------------------------------------------------------
 
 enum AttendanceStatus {
@@ -1031,24 +1424,162 @@ enum AttendanceStatus {
   EXCUSED
 }
 
-model AttendanceRecord {
-  id               String           @id @default(cuid())
-  studentProfileId String
-  batchId          String
-  date             DateTime         // date-only semantics — callers truncate to midnight UTC
-  status           AttendanceStatus
-  markedByUserId   String           // no relation declared — same pattern as StudentHistory.changedByUserId
-  correctedAt      DateTime?        // set only when this entry was corrected after initial marking
-  correctionReason String?          // required by the service whenever correctedAt is set
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
+enum TimetableExceptionType {
+  CANCELLED
+  SUBSTITUTE
+  RESCHEDULED
+}
 
-  studentProfile StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
-  batch          Batch          @relation(fields: [batchId], references: [id], onDelete: Cascade)
+model AttendanceSession {
+  id                    String      @id @default(cuid())
+  instituteId           String
+  timetableSlotId       String?     // Nullable: supports legacy migration & slot deletion preservation
+  date                  String      // "YYYY-MM-DD" authoritative institute-local calendar date
+  batchId               String      // Active batch at session time
+  subjectId             String?     // Subject taught during session
 
-  @@unique([studentProfileId, batchId, date])
+  // Immutability Snapshots (Preserved even if timetable/teachers change later)
+  snapshotTeacherUserId String      // User ID of scheduled teacher
+  snapshotTeacherName   String      // Display name captured at session creation
+  snapshotSubjectName   String?     // Subject name captured at session creation
+  snapshotBatchName     String      // Batch name captured at session creation
+  snapshotPeriodNumber  Int?        // Period index (e.g. 1, 2, 3)
+  snapshotStartTime     DateTime    // Scheduled slot start (UTC)
+  snapshotEndTime       DateTime    // Scheduled slot end (UTC)
+  snapshotRoom          String?     // Room or lecture hall reference
+
+  // Roster Snapshot Gate
+  rosterSnapshotAt      DateTime?   // Timestamp when roster was frozen; NULL = pre-open listing
+
+  // Operator Overrides & Substitutions
+  substituteUserId      String?     // Set if TimetableException(SUBSTITUTE) is active
+
+  // Official Exam Overlap Suppressor
+  examOverrideId        String?     // Set if suppressed by an official scheduled Exam
+
+  // Session Lifecycle State
+  finalizedAt           DateTime?   // NULL = Draft/In-Progress; Set = Locked & Published
+  finalizedByUserId     String?
+  cancelledAt           DateTime?   // Set if class was cancelled
+  cancelledReason       String?
+  cancelledByUserId     String?
+
+  // Concurrency Control
+  version               Int         @default(1) // Incremented on every mutation (OCC)
+
+  // Idempotent Alert Markers
+  missingAlertSentAt    DateTime?   // Timestamp when missing notification was dispatched
+  missingAlertJobId     String?     // BullMQ job deduplication identifier
+
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+
+  // Protected Relations (onDelete: Restrict prevents accidental data loss)
+  institute             Institute   @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  timetableSlot         TimetableSlot? @relation(fields: [timetableSlotId], references: [id], onDelete: SetNull)
+  batch                 Batch       @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  roster                AttendanceSessionRoster[]
+  records               AttendanceRecord[]
+  correctionLogs        AttendanceCorrectionLog[]
+
+  @@unique([timetableSlotId, date])
+  @@index([instituteId, date])
   @@index([batchId, date])
+  @@index([snapshotTeacherUserId, date])
+  @@index([substituteUserId, date])
+  @@index([instituteId, finalizedAt, cancelledAt])
+  @@map("attendance_sessions")
+}
+
+model AttendanceSessionRoster {
+  id               String            @id @default(cuid())
+  sessionId        String
+  studentProfileId String
+  snapshotRollNo   String?           // Roll number at time of session freeze
+  snapshotName     String            // Student name at time of session freeze
+  enrolledAtTime   DateTime          @default(now())
+
+  session          AttendanceSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  studentProfile   StudentProfile    @relation(fields: [studentProfileId], references: [id], onDelete: Restrict)
+
+  @@unique([sessionId, studentProfileId])
+  @@index([sessionId])
+  @@map("attendance_session_rosters")
+}
+
+model AttendanceRecord {
+  id                String            @id @default(cuid())
+  sessionId         String?           // Nullable for zero-downtime expand phase
+  studentProfileId  String
+  batchId           String
+  subjectId         String?
+  date              DateTime          // Preserved for legacy compatibility during expand/contract
+  status            AttendanceStatus  // PRESENT | ABSENT | LATE | EXCUSED
+  markedByUserId    String            // User who marked/autosaved this entry
+  version           Int               @default(1) // Record-level optimistic concurrency
+
+  // Audited Correction Tracking (Post-Finalization)
+  correctedAt       DateTime?
+  correctionReason  String?
+  correctedByUserId String?
+
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  session           AttendanceSession? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  studentProfile    StudentProfile     @relation(fields: [studentProfileId], references: [id], onDelete: Restrict)
+  batch             Batch              @relation(fields: [batchId], references: [id], onDelete: Restrict)
+
+  @@unique([sessionId, studentProfileId])
+  @@index([sessionId])
+  @@index([batchId, date])
+  @@index([studentProfileId, subjectId])
   @@map("attendance_records")
+}
+
+model AttendanceCorrectionLog {
+  id                String            @id @default(cuid())
+  instituteId       String
+  sessionId         String
+  recordId          String
+  studentProfileId  String
+  previousStatus    AttendanceStatus
+  newStatus         AttendanceStatus
+  reason            String            // Required (min length: 10 chars)
+  correctedByUserId String
+  createdAt         DateTime          @default(now())
+
+  institute         Institute         @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  session           AttendanceSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+
+  @@index([sessionId])
+  @@index([recordId])
+  @@index([instituteId, createdAt])
+  @@map("attendance_correction_logs")
+}
+
+model TimetableException {
+  id                String                 @id @default(cuid())
+  instituteId       String
+  timetableSlotId   String
+  date              String                 // "YYYY-MM-DD" source occurrence
+  type              TimetableExceptionType // CANCELLED | SUBSTITUTE | RESCHEDULED
+  substituteUserId  String?
+  targetDate        String?                // "YYYY-MM-DD" if cross-date rescheduled
+  overrideStart     DateTime?
+  overrideEnd       DateTime?
+  reason            String
+  createdByUserId   String
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+
+  institute         Institute              @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  timetableSlot     TimetableSlot          @relation(fields: [timetableSlotId], references: [id], onDelete: Restrict)
+
+  @@unique([timetableSlotId, date])
+  @@index([instituteId, date])
+  @@index([substituteUserId, date])
+  @@map("timetable_exceptions")
 }
 
 // ---------------------------------------------------------------------------
@@ -1107,6 +1638,7 @@ model Assignment {
   topic          Topic           @relation(fields: [topicId], references: [id])
 
   @@index([batchId, dueDate])
+  @@index([studentProfileId])
   @@map("assignments")
 }
 
@@ -1146,6 +1678,7 @@ model NoticeDelivery {
   notice Notice @relation(fields: [noticeId], references: [id], onDelete: Cascade)
 
   @@index([noticeId, status])
+  @@index([userId])
   @@map("notice_deliveries")
 }
 
@@ -1474,6 +2007,7 @@ model AssessmentDelivery {
   documentBundles  DocumentBundle[]
 
   @@index([status])
+  @@index([assessmentId])
   @@map("assessment_deliveries")
 }
 

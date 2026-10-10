@@ -4,35 +4,27 @@
 // no server-side pagination — institute batch counts are small) + archive +
 // CSV export. Every value flows through apps/api/src/batches.
 
-import React, { useState, useDeferredValue } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Plus, Search, Download, Trash2, RefreshCw,
-  Layers, BarChart2, List, Filter, X, ChevronLeft, ChevronRight,
+  Layers, BarChart2, List, Filter, X, SlidersHorizontal, BookOpen,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-import { useBatchesList, useCreateBatch, useUpdateBatch, useDeleteBatch, useBulkDeleteBatches, useBatchesStats } from '@/features/batches/hooks/useBatches';
+import { useBatchesList, useCreateBatch, useUpdateBatch, useDeleteBatch, useBulkDeleteBatches } from '@/features/batches/hooks/useBatches';
 import { useBatches as useAllBatchesRaw } from '@/hooks/useApi';
 import { BatchesTable } from '@/features/batches/components/BatchesTable';
 import { BatchProfileDrawer } from '@/features/batches/components/BatchProfileDrawer';
 import { CreateBatchDialog } from '@/features/batches/components/CreateBatchDialog';
 import { DeleteBatchDialog } from '@/features/batches/components/DeleteBatchDialog';
 import { BatchesAnalyticsPanel } from '@/features/batches/components/BatchesAnalyticsPanel';
+import { AdminSubjectsView } from '@/components/dashboard/admin/curriculum/AdminSubjectsView';
+import { AppleDropdown } from '@/components/ui/AppleDropdown';
+import { TablePagination } from '@/components/ui/TablePagination';
 
 import type { BatchListItem, GetBatchesParams, SortDirection, BatchSortField, CreateBatchInput, UpdateBatchInput } from '@/features/batches/types/batch.types';
 
-const PAGE_SIZES = [10, 20, 50] as const;
-
-type MainTab = 'list' | 'analytics';
-
-function StatCard({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="bg-white rounded-xl p-5 border border-slate-100 shadow-sm hover:shadow-md transition-shadow">
-      <p className="text-xs font-medium text-slate-500">{label}</p>
-      <div className="mt-1 flex items-baseline gap-2"><span className="text-2xl font-black text-slate-900">{value}</span></div>
-    </div>
-  );
-}
+type MainTab = 'list' | 'curriculum' | 'analytics';
 
 function toCsv(batches: BatchListItem[]): string {
   const header = ['Name', 'Class Year', 'Section', 'Academic Year', 'Students', 'Teachers', 'Status'];
@@ -43,7 +35,15 @@ function toCsv(batches: BatchListItem[]): string {
 export function AdminBatches() {
   const [tab, setTab] = useState<MainTab>('list');
   const [searchInput, setSearchInput] = useState('');
-  const deferredSearch = useDeferredValue(searchInput);
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+
+  // 280ms debounce so user typing is instant locally and avoids multi-request network lag
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchInput.trim());
+    }, 280);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
 
   const [classYearFilter, setClassYearFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -62,14 +62,13 @@ export function AdminBatches() {
 
   const params: GetBatchesParams = {
     page, pageSize,
-    search: deferredSearch || undefined,
+    search: debouncedSearch || undefined,
     classYear: classYearFilter || undefined,
     isActive: statusFilter ? statusFilter === 'active' : undefined,
     sortBy, sortDir,
   };
 
-  const { data, isPending, isFetching, refetch } = useBatchesList(params);
-  const { data: stats } = useBatchesStats();
+  const { data, isPending, isFetching } = useBatchesList(params);
   const createMutation = useCreateBatch();
   const updateMutation = useUpdateBatch();
   const deleteMutation = useDeleteBatch();
@@ -85,6 +84,17 @@ export function AdminBatches() {
   const { data: allBatchesResp } = useAllBatchesRaw();
   const allBatches: { classYear?: string }[] = allBatchesResp?.data ?? allBatchesResp ?? [];
   const classYears = Array.from(new Set(allBatches.map((b) => b.classYear).filter(Boolean))) as string[];
+
+  const classYearOptions = [
+    { value: '', label: 'All Class Years' },
+    ...classYears.map((c) => ({ value: c, label: `Class ${c}` })),
+  ];
+
+  const statusOptions = [
+    { value: '', label: 'All Statuses' },
+    { value: 'active', label: 'Active', badge: 'Active' },
+    { value: 'archived', label: 'Archived', badge: 'Archived' },
+  ];
 
   function handleSort(col: BatchSortField) {
     if (col === sortBy) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -127,114 +137,225 @@ export function AdminBatches() {
     toast.success(`Exported ${rows.length} batch(es) from the current page`);
   }
 
-  function handleClearFilters() { setClassYearFilter(''); setStatusFilter(''); setSearchInput(''); setPage(1); }
+  function handleClearFilters() {
+    setClassYearFilter('');
+    setStatusFilter('');
+    setSearchInput('');
+    setDebouncedSearch('');
+    setPage(1);
+  }
   const activeFilters = [classYearFilter, statusFilter].filter(Boolean).length;
 
   function openEdit(b: BatchListItem) { setEditTarget(b); setCreateOpen(true); }
   const deleteLoading = deleteMutation.isPending || bulkDeleteMutation.isPending;
 
   return (
-    <div className="flex flex-col min-h-full bg-[#f8fafc]">
-      <div className="px-6 pt-6 pb-4 bg-white border-b border-slate-100">
-        <div className="flex items-center justify-between flex-wrap gap-3 max-w-[1700px] mx-auto">
-          <div>
-            <h1 className="text-xl font-black text-slate-900 flex items-center gap-2"><Layers className="w-5 h-5 text-indigo-500" /> Batches & Cohorts</h1>
-            <p className="text-xs text-slate-500 mt-0.5">Manage cohorts, sections, and academic sessions</p>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <button onClick={() => refetch()} className="p-2 rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 transition-colors" title="Refresh">
-              <RefreshCw className={`w-4 h-4 ${isFetching ? 'animate-spin text-indigo-500' : ''}`} />
-            </button>
-            <button onClick={handleExport} className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">
-              <Download className="w-3.5 h-3.5" /> Export {selected.size > 0 ? `(${selected.size})` : ''}
-            </button>
-            <button onClick={() => { setEditTarget(null); setCreateOpen(true); }} className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 shadow-sm shadow-indigo-200 transition-colors">
-              <Plus className="w-4 h-4" /> Create Batch
-            </button>
-          </div>
-        </div>
+    <div className="flex flex-col min-h-full w-full bg-[#f8fafc]">
+      <div className="px-3 sm:px-4 lg:px-6 pt-3.5 sm:pt-5 pb-3 sm:pb-4 w-full bg-white border-b border-slate-100">
+        <div className="w-full max-w-[1700px] mx-auto space-y-3 sm:space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
+            <div className="min-w-0">
+              <h1 className="text-lg sm:text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2 sm:gap-2.5">
+                <div className="w-7 h-7 sm:w-9 sm:h-9 rounded-xl bg-indigo-50 border border-indigo-100/80 flex items-center justify-center text-indigo-600 shadow-2xs flex-shrink-0">
+                  <Layers className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
+                </div>
+                <span className="truncate">Batches &amp; Cohorts</span>
+              </h1>
+              <p className="text-[11px] sm:text-[13px] text-slate-500 mt-0.5 ml-9 sm:ml-11.5">Manage cohorts, sections, and academic sessions</p>
+            </div>
 
-        <div className="flex gap-1 mt-4 max-w-[1700px] mx-auto">
-          {(['list', 'analytics'] as MainTab[]).map((t) => (
-            <button key={t} onClick={() => setTab(t)} className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold transition-colors ${tab === t ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100'}`}>
-              {t === 'list' ? <List className="w-3.5 h-3.5" /> : <BarChart2 className="w-3.5 h-3.5" />}
-              {t === 'list' ? 'Batch List' : 'Analytics'}
-            </button>
-          ))}
+            {tab === 'list' && (
+              <div className="flex items-center gap-2 sm:gap-2.5 w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={handleExport}
+                  className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 h-9 sm:h-9.5 px-3 sm:px-4 text-xs sm:text-[13px] font-semibold text-slate-700 bg-white hover:bg-slate-50 active:bg-slate-100/80 border border-slate-200/90 rounded-xl shadow-2xs active:scale-[0.98] transition-all duration-150 cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-500" />
+                  <span>Export {selected.size > 0 ? `(${selected.size})` : ''}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => { setEditTarget(null); setCreateOpen(true); }}
+                  className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 sm:gap-2 h-9 sm:h-9.5 px-4 sm:px-5 text-xs sm:text-[13px] font-semibold text-white bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 rounded-xl shadow-xs shadow-indigo-500/20 active:scale-[0.98] transition-all duration-150 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Create Batch</span>
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* iOS-Style Segmented Navigation Tabs */}
+          <div className="w-full sm:w-auto inline-flex">
+            <div
+              role="tablist"
+              aria-label="Batch view selection"
+              className="w-full sm:w-auto grid grid-cols-3 sm:inline-flex p-1 bg-slate-100/90 rounded-xl border border-slate-200/60 shadow-2xs"
+            >
+              {(['list', 'curriculum', 'analytics'] as MainTab[]).map((t) => {
+                const isActive = tab === t;
+                const Icon = t === 'list' ? List : t === 'curriculum' ? BookOpen : BarChart2;
+                const label = t === 'list' ? 'Batch List' : t === 'curriculum' ? 'Subjects & Curriculum' : 'Analytics';
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    role="tab"
+                    aria-selected={isActive}
+                    onClick={() => setTab(t)}
+                    className={`flex items-center justify-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-[12.5px] font-semibold transition-all duration-200 cursor-pointer select-none active:scale-[0.98] ${
+                      isActive
+                        ? 'bg-white text-slate-900 shadow-xs ring-1 ring-black/[0.04]'
+                        : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
+                    }`}
+                  >
+                    <Icon className={`w-3.5 h-3.5 transition-colors ${isActive ? (t === 'curriculum' ? 'text-emerald-600' : 'text-indigo-600') : 'text-slate-400'}`} />
+                    <span>{label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
       </div>
 
-      <div className="flex-1 p-6 max-w-[1700px] mx-auto w-full space-y-5">
+      <div className="flex-1 px-2.5 sm:px-4 lg:px-6 py-3 sm:py-5 w-full max-w-[1700px] mx-auto space-y-3 sm:space-y-4">
         {tab === 'analytics' ? (
           <BatchesAnalyticsPanel />
+        ) : tab === 'curriculum' ? (
+          <AdminSubjectsView />
         ) : (
           <>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <StatCard label="Total Batches" value={stats?.total ?? '—'} />
-              <StatCard label="Active" value={stats?.active ?? '—'} />
-              <StatCard label="Archived" value={stats?.inactive ?? '—'} />
-              <StatCard label="Top Batch Size" value={stats?.byEnrollment?.[0]?.studentCount ?? '—'} />
-            </div>
-
-            <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-3">
-              <div className="flex items-center gap-2 flex-wrap">
-                <div className="relative flex-1 min-w-[200px] max-w-sm">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-                  <input type="text" placeholder="Search batch name, section…" className="w-full pl-8 pr-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white" value={searchInput} onChange={(e) => { setSearchInput(e.target.value); setPage(1); }} />
-                  {searchInput && <button onClick={() => setSearchInput('')} className="absolute right-2.5 top-1/2 -translate-y-1/2"><X className="w-3.5 h-3.5 text-slate-400 hover:text-slate-700" /></button>}
+            <div className="bg-white rounded-2xl border border-slate-100 shadow-xs p-3 md:p-3.5 space-y-3">
+              <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+                <div className="relative flex-1 min-w-[160px]">
+                  {isFetching ? (
+                    <RefreshCw className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-indigo-500 animate-spin pointer-events-none" />
+                  ) : (
+                    <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                  )}
+                  <input
+                    type="text"
+                    placeholder="Search batch name, section…"
+                    className="w-full pl-10 pr-8 h-9 text-xs md:text-sm bg-slate-50/80 hover:bg-slate-100/60 focus:bg-white border border-slate-200/80 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-slate-800 placeholder:text-slate-400"
+                    value={searchInput}
+                    onChange={(e) => { setSearchInput(e.target.value); setPage(1); }}
+                  />
+                  {searchInput && (
+                    <button
+                      type="button"
+                      onClick={() => { setSearchInput(''); setDebouncedSearch(''); setPage(1); }}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded-full text-slate-400 hover:text-slate-600 transition-colors"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
 
-                <button onClick={() => setShowFilter((v) => !v)} className={`flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg border transition-colors ${showFilter || activeFilters > 0 ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
-                  <Filter className="w-3.5 h-3.5" /> Filters {activeFilters > 0 && <span className="bg-indigo-600 text-white rounded-full w-4 h-4 text-[9px] flex items-center justify-center">{activeFilters}</span>}
+                <button
+                  type="button"
+                  onClick={() => setShowFilter((v) => !v)}
+                  className={`h-9 px-3.5 flex items-center justify-center gap-1.5 text-xs font-bold rounded-xl border transition-all flex-shrink-0 cursor-pointer ${
+                    showFilter || activeFilters > 0
+                      ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-xs'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300'
+                  }`}
+                >
+                  <Filter className="w-3.5 h-3.5" />
+                  <span>Filters</span>
+                  {activeFilters > 0 && (
+                    <span className="bg-indigo-600 text-white rounded-full w-4 h-4 text-[10px] flex items-center justify-center font-bold">
+                      {activeFilters}
+                    </span>
+                  )}
                 </button>
 
                 {selected.size > 0 && (
-                  <button onClick={() => setDeleteTarget(batches.filter((b) => selected.has(b.id)))} className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-rose-600 bg-rose-50 border border-rose-200 rounded-lg hover:bg-rose-100 transition-colors ml-auto">
+                  <button
+                    type="button"
+                    onClick={() => setDeleteTarget(batches.filter((b) => selected.has(b.id)))}
+                    className="h-9 flex items-center justify-center gap-1.5 px-3.5 text-xs font-bold text-rose-600 bg-rose-50 border border-rose-200 rounded-xl hover:bg-rose-100 transition-all cursor-pointer flex-shrink-0 ml-auto sm:ml-0"
+                  >
                     <Trash2 className="w-3.5 h-3.5" /> Archive ({selected.size})
                   </button>
                 )}
               </div>
 
               {showFilter && (
-                <div className="flex items-center gap-3 flex-wrap mt-3 pt-3 border-t border-slate-100">
-                  <select value={classYearFilter} onChange={(e) => { setClassYearFilter(e.target.value); setPage(1); }} className="appearance-none pl-3 pr-7 py-1.5 text-xs border border-slate-200 rounded-lg bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer">
-                    <option value="">Class Year: All</option>
-                    {classYears.map((c) => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                  <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }} className="appearance-none pl-3 pr-7 py-1.5 text-xs border border-slate-200 rounded-lg bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer">
-                    <option value="">Status: All</option>
-                    <option value="active">Active</option>
-                    <option value="archived">Archived</option>
-                  </select>
-                  {activeFilters > 0 && <button onClick={handleClearFilters} className="text-xs text-rose-500 font-bold hover:text-rose-700 flex items-center gap-1"><X className="w-3 h-3" /> Clear All</button>}
+                <div className="pt-3 border-t border-slate-100 space-y-2.5 animate-fadein">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700">
+                      <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-500" />
+                      <span>Filter Batches</span>
+                      {activeFilters > 0 && (
+                        <span className="text-[11px] font-medium text-slate-400">({activeFilters} active)</span>
+                      )}
+                    </div>
+                    {activeFilters > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleClearFilters}
+                        className="text-xs text-rose-600 font-bold hover:text-rose-700 flex items-center gap-1 transition-colors cursor-pointer"
+                      >
+                        <X className="w-3 h-3" /> Reset Filters
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 pt-1">
+                    <AppleDropdown
+                      label="Class Year"
+                      placeholder="All Class Years"
+                      size="sm"
+                      themeColor="indigo"
+                      value={classYearFilter}
+                      onChange={(val) => { setClassYearFilter(val); setPage(1); }}
+                      options={classYearOptions}
+                      searchable={classYears.length > 5}
+                    />
+
+                    <AppleDropdown
+                      label="Account Status"
+                      placeholder="All Statuses"
+                      size="sm"
+                      themeColor="indigo"
+                      value={statusFilter}
+                      onChange={(val) => { setStatusFilter(val); setPage(1); }}
+                      options={statusOptions}
+                    />
+                  </div>
                 </div>
               )}
             </div>
 
-            <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+            <div className={`bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden transition-opacity duration-200 ${isFetching ? 'opacity-85' : 'opacity-100'}`}>
               <BatchesTable
-                batches={batches} loading={isPending} selectedIds={selected} sortBy={sortBy} sortDir={sortDir}
-                onSort={handleSort} onSelectAll={handleSelectAll} onSelectOne={handleSelectOne}
-                onView={(b) => setViewId(b.id)} onEdit={openEdit} onDelete={(b) => setDeleteTarget([b])}
+                batches={batches}
+                loading={isPending}
+                selectedIds={selected}
+                sortBy={sortBy}
+                sortDir={sortDir}
+                onSort={handleSort}
+                onSelectAll={handleSelectAll}
+                onSelectOne={handleSelectOne}
+                onView={(b) => setViewId(b.id)}
+                onEdit={openEdit}
+                onDelete={(b) => setDeleteTarget([b])}
               />
 
-              {!isPending && totalItems > 0 && (
-                <div className="flex items-center justify-between px-5 py-3.5 border-t border-slate-100 bg-slate-50/60 text-xs text-slate-500">
-                  <div className="flex items-center gap-3">
-                    <span>{(page - 1) * pageSize + 1}–{Math.min(page * pageSize, totalItems)} of <span className="font-bold text-slate-700">{totalItems}</span> batches</span>
-                    <select value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value) as any); setPage(1); }} className="text-xs border border-slate-200 rounded-lg px-2 py-1 bg-white">
-                      {PAGE_SIZES.map((n) => <option key={n} value={n}>{n} / page</option>)}
-                    </select>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="p-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"><ChevronLeft className="w-3.5 h-3.5" /></button>
-                    {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
-                      const p = i + 1;
-                      return <button key={p} onClick={() => setPage(p)} className={`w-7 h-7 rounded-lg text-xs font-bold transition-colors ${page === p ? 'bg-indigo-600 text-white' : 'border border-slate-200 bg-white hover:bg-slate-50 text-slate-600'}`}>{p}</button>;
-                    })}
-                    <button disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} className="p-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"><ChevronRight className="w-3.5 h-3.5" /></button>
-                  </div>
-                </div>
+              {!isPending && (
+                <TablePagination
+                  page={page}
+                  pageSize={pageSize}
+                  totalItems={totalItems}
+                  totalPages={totalPages}
+                  onPageChange={setPage}
+                  onPageSizeChange={(sz) => { setPageSize(sz as any); setPage(1); }}
+                  itemLabel="batches"
+                  themeColor="indigo"
+                />
               )}
             </div>
           </>
@@ -242,13 +363,25 @@ export function AdminBatches() {
       </div>
 
       <BatchProfileDrawer
-        batchId={viewId} onClose={() => setViewId(null)}
+        batchId={viewId}
+        onClose={() => setViewId(null)}
         onEdit={(id) => { const b = batches.find((x) => x.id === id); if (b) { openEdit(b); setViewId(null); } }}
       />
 
-      <CreateBatchDialog isOpen={createOpen} onClose={() => { setCreateOpen(false); setEditTarget(null); }} editTarget={editTarget} onSubmit={editTarget ? handleEdit : handleCreate} />
+      <CreateBatchDialog
+        isOpen={createOpen}
+        onClose={() => { setCreateOpen(false); setEditTarget(null); }}
+        editTarget={editTarget}
+        onSubmit={editTarget ? handleEdit : handleCreate}
+      />
 
-      <DeleteBatchDialog isOpen={!!deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={handleDeleteConfirm} batchNames={deleteTarget?.map((b) => b.name) ?? []} loading={deleteLoading} />
+      <DeleteBatchDialog
+        isOpen={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={handleDeleteConfirm}
+        batchNames={deleteTarget?.map((b) => b.name) ?? []}
+        loading={deleteLoading}
+      />
     </div>
   );
 }

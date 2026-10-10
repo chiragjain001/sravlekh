@@ -7,20 +7,32 @@ import { TopHeader } from '@/components/shared/TopHeader';
 import { useDashboardStore } from '@/store/dashboard-store';
 import { studentData as d } from '@/lib/mock-data/student';
 import { RouteGuard, FullPageSkeleton } from '@/components/ui/RouteGuard';
+import { ScreenLoadingState } from '@/components/ui/foundation';
 
-// Sections
+import dynamic from 'next/dynamic';
+
 import { StudentOverview } from '@/components/dashboard/student/StudentOverview';
-import { StudentTests } from '@/components/dashboard/student/StudentTests';
-import { StudentAssignments } from '@/components/dashboard/student/StudentAssignments';
-import { StudentStudyPlan } from '@/components/dashboard/student/StudentStudyPlan';
-import { StudentWeakTopics } from '@/components/dashboard/student/StudentWeakTopics';
-import { StudentDoubtCenter } from '@/components/dashboard/student/StudentDoubtCenter';
-import { StudentTimeTable } from '@/components/dashboard/student/StudentTimetable';
-import { StudentExtraClasses } from '@/components/dashboard/student/StudentExtraClasses';
 import { StudentProgress } from '@/components/dashboard/student/StudentProgress';
 import { StudentLeaderboard } from '@/components/dashboard/student/StudentLeaderboard';
-import { StudentResources } from '@/components/dashboard/student/StudentResources';
-import { StudentSettings } from '@/components/dashboard/student/StudentSettings';
+
+const SectionLoader = () => (
+  <ScreenLoadingState
+    title="Loading Student Portal..."
+    subtitle="Fetching your academic schedule, tests, and learning resources..."
+    layout="cards"
+  />
+);
+
+const StudentAttendance = dynamic(() => import('@/components/dashboard/student/StudentAttendance').then((m) => m.StudentAttendance), { loading: SectionLoader });
+const StudentTests = dynamic(() => import('@/components/dashboard/student/StudentTests').then((m) => m.StudentTests), { loading: SectionLoader });
+const StudentAssignments = dynamic(() => import('@/components/dashboard/student/StudentAssignments').then((m) => m.StudentAssignments), { loading: SectionLoader });
+const StudentStudyPlan = dynamic(() => import('@/components/dashboard/student/StudentStudyPlan').then((m) => m.StudentStudyPlan), { loading: SectionLoader });
+const StudentWeakTopics = dynamic(() => import('@/components/dashboard/student/StudentWeakTopics').then((m) => m.StudentWeakTopics), { loading: SectionLoader });
+const StudentDoubtCenter = dynamic(() => import('@/components/dashboard/student/StudentDoubtCenter').then((m) => m.StudentDoubtCenter), { loading: SectionLoader });
+const StudentTimeTable = dynamic(() => import('@/components/dashboard/student/StudentTimetable').then((m) => m.StudentTimeTable), { loading: SectionLoader });
+const StudentExtraClasses = dynamic(() => import('@/components/dashboard/student/StudentExtraClasses').then((m) => m.StudentExtraClasses), { loading: SectionLoader });
+const StudentResources = dynamic(() => import('@/components/dashboard/student/StudentResources').then((m) => m.StudentResources), { loading: SectionLoader });
+const StudentSettings = dynamic(() => import('@/components/dashboard/student/StudentSettings').then((m) => m.StudentSettings), { loading: SectionLoader });
 
 import { useNavigationHistory } from '@/hooks/useNavigationHistory';
 
@@ -37,6 +49,7 @@ function StudentDashboardInner() {
   const renderContent = () => {
     switch (studentActiveNav) {
       case 'Overview':      return <StudentOverview />;
+      case 'Attendance':    return <StudentAttendance />;
       case 'My Tests':      return <StudentTests />;
       case 'Assignments':   return <StudentAssignments />;
       case 'Study Plan':    return <StudentStudyPlan />;
@@ -58,7 +71,7 @@ function StudentDashboardInner() {
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-bg">
+    <div className="flex h-screen w-full max-w-full overflow-hidden bg-bg">
       <Sidebar
         role="STUDENT"
         userName={studentName}
@@ -69,15 +82,21 @@ function StudentDashboardInner() {
         onNavChange={setStudentActiveNav}
         onLogout={logout}
       />
-      <div className="flex-1 overflow-y-auto min-w-0 flex flex-col">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden min-w-0 flex flex-col max-w-full">
         <TopHeader
           greeting={studentActiveNav === 'Overview' ? `Good Morning, ${firstName}! ☀️` : studentActiveNav}
-          subtitle={studentActiveNav === 'Overview' ? "Let's make today productive and impactful." : `View and manage your ${studentActiveNav.replace(/^My\s+/i, '').toLowerCase()}`}
+          subtitle={
+            studentActiveNav === 'Overview'
+              ? "Let's make today productive and impactful."
+              : studentActiveNav === 'Resources'
+              ? 'Interactive formula decks & active-recall revision flashcards.'
+              : `View and manage your ${studentActiveNav.replace(/^My\s+/i, '').toLowerCase()}`
+          }
           showBackButton={canGoBack}
           previousNavLabel={previousNav}
           onBack={goBack}
         />
-        <div className="flex-1">{renderContent()}</div>
+        <div className="flex-1 min-w-0 w-full max-w-full overflow-x-hidden">{renderContent()}</div>
       </div>
     </div>
   );

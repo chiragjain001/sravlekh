@@ -66,12 +66,12 @@ export function StudentSettings() {
                   <p className="text-[12.5px] text-slate-500">Your profile information is managed by the administration. Contact support if changes are needed.</p>
                 </div>
 
-                <div className="bg-slate-50 border border-slate-100 rounded-2xl p-6 mb-8 flex items-center gap-6">
-                  <div className="w-20 h-20 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center text-[24px] font-bold shadow-inner">
+                <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 sm:p-6 mb-8 flex flex-col sm:flex-row items-center sm:items-center text-center sm:text-left gap-4 sm:gap-6 min-w-0 max-w-full overflow-hidden">
+                  <div className="w-16 h-16 sm:w-20 sm:h-20 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center text-[22px] sm:text-[24px] font-bold shadow-inner flex-shrink-0">
                     {avatarInitial}
                   </div>
-                  <div>
-                    <h2 className="text-[20px] font-bold text-slate-800">{user?.name ?? 'Student'}</h2>
+                  <div className="min-w-0 flex-1">
+                    <h2 className="text-[18px] sm:text-[20px] font-bold text-slate-800 break-words">{user?.name ?? 'Student'}</h2>
                     <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-100 text-emerald-700 text-[11px] font-bold mt-2">
                       <CheckCircle2 className="w-3.5 h-3.5" /> Active Student
                     </span>

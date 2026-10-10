@@ -111,28 +111,30 @@ export function Step3Syllabus({ state, onChange, onNext, onPrev, chapters, isLoa
       </div>
 
       {/* Top Search & Action Bar */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs">
-        <div className="relative w-full sm:w-80">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 sm:gap-4 bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200 shadow-2xs">
+        <div className="relative flex-1 min-w-0">
+          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
             type="text"
             placeholder="Search chapters or topics..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[12.5px] focus:outline-none focus:border-indigo-500"
+            className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[13px] font-medium focus:outline-none focus:border-indigo-500 focus:bg-white transition-colors"
           />
         </div>
 
-        <div className="flex items-center gap-2 text-[12px]">
+        <div className="flex items-center gap-2.5 shrink-0 self-end sm:self-auto w-full sm:w-auto">
           <button
             onClick={() => setExpandedChapters(chapters.map((c) => c.id))}
-            className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-colors"
+            className="flex-1 sm:flex-none px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-colors min-h-[42px] text-[12px] flex items-center justify-center cursor-pointer active:scale-98"
+            title="Expand All"
           >
             Expand All
           </button>
           <button
             onClick={() => setExpandedChapters([])}
-            className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-colors"
+            className="flex-1 sm:flex-none px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-colors min-h-[42px] text-[12px] flex items-center justify-center cursor-pointer active:scale-98"
+            title="Collapse All"
           >
             Collapse All
           </button>
@@ -166,7 +168,12 @@ export function Step3Syllabus({ state, onChange, onNext, onPrev, chapters, isLoa
               {/* Chapter Accordion Header */}
               <div className="flex items-center justify-between p-4 bg-slate-50/70 hover:bg-slate-50 rounded-2xl transition-colors">
                 <div className="flex items-center gap-3">
-                  <button onClick={() => toggleChapterExpand(chapter.id)} className="text-slate-500 hover:text-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => toggleChapterExpand(chapter.id)}
+                    className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-slate-800 hover:bg-slate-200/60 active:scale-95 transition-all shrink-0 cursor-pointer"
+                    aria-label={isExpanded ? 'Collapse chapter' : 'Expand chapter'}
+                  >
                     {isExpanded ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
                   </button>
 
@@ -185,13 +192,13 @@ export function Step3Syllabus({ state, onChange, onNext, onPrev, chapters, isLoa
                   </span>
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 flex-wrap justify-end">
                   <span className="text-[11.5px] font-semibold text-slate-500">
                     {selectedTopicsCount}/{chapter.topics.length} Topics
                   </span>
                   {typeof chapter.totalQuestions === 'number' && (
-                    <span className="text-[11px] font-bold bg-indigo-50 text-indigo-700 px-2.5 py-0.5 rounded-full border border-indigo-100">
-                      {chapter.totalQuestions} Qs Available
+                    <span className="hidden sm:inline text-[11px] font-bold bg-indigo-50 text-indigo-700 px-2.5 py-0.5 rounded-full border border-indigo-100">
+                      {chapter.totalQuestions} Qs
                     </span>
                   )}
                 </div>
@@ -199,7 +206,7 @@ export function Step3Syllabus({ state, onChange, onNext, onPrev, chapters, isLoa
 
               {/* Topics Sub-Tree */}
               {isExpanded && (
-                <div className="p-4 pt-1 border-t border-slate-100 space-y-2.5 pl-11">
+                <div className="p-4 pt-1 border-t border-slate-100 space-y-2.5 pl-4 sm:pl-8">
                   {chapter.topics.map((topic) => {
                     const isTopicSelected = state.selectedTopics.includes(topic.id);
 
@@ -245,24 +252,6 @@ export function Step3Syllabus({ state, onChange, onNext, onPrev, chapters, isLoa
         })}
       </div>
       )}
-
-      {/* Footer Navigation */}
-      <div className="flex items-center justify-between border-t border-slate-200 pt-5">
-        <button
-          onClick={onPrev}
-          className="px-6 py-2.5 border border-slate-300 text-slate-700 hover:bg-slate-50 font-bold text-[13px] rounded-xl transition-colors"
-        >
-          ← Back to Sources
-        </button>
-
-        <button
-          onClick={onNext}
-          disabled={state.selectedTopics.length === 0}
-          className="px-8 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[13.5px] rounded-xl shadow-md transition-all disabled:opacity-50"
-        >
-          Next: Question Planning →
-        </button>
-      </div>
     </div>
   );
 }

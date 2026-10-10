@@ -92,9 +92,9 @@ export function CreateBatchDialog({ isOpen, onClose, editTarget, onSubmit }: Cre
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(15,23,42,0.55)', backdropFilter: 'blur(6px)' }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden border border-slate-100" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
-        <div className="flex items-center justify-between p-5 border-b border-slate-100 bg-gradient-to-r from-indigo-50 to-white">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4" style={{ background: 'rgba(15,23,42,0.55)', backdropFilter: 'blur(6px)' }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden border border-slate-100 max-h-[92vh]" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+        <div className="flex items-center justify-between p-5 border-b border-slate-100 bg-gradient-to-r from-indigo-50 to-white flex-shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center"><Layers className="w-5 h-5 text-white" /></div>
             <div>
@@ -105,20 +105,47 @@ export function CreateBatchDialog({ isOpen, onClose, editTarget, onSubmit }: Cre
           <button onClick={onClose} className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 transition-colors" aria-label="Close dialog"><X className="w-4 h-4" /></button>
         </div>
 
-        <form onSubmit={handleSubmit} noValidate>
-          <div className="p-5 space-y-4">
+        <form onSubmit={handleSubmit} noValidate className="flex flex-col flex-1 overflow-hidden">
+          <div className="p-5 space-y-4 overflow-y-auto custom-scrollbar flex-1">
             <div>
               <Field label="Batch Name" id="b-name" value={form.name} onChange={set('name')} placeholder="e.g. JEE Advanced 2026 — Batch A" required />
               {errors.name && <p className="text-[10px] text-rose-500 mt-0.5">{errors.name}</p>}
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Class / Year" id="b-classyear" value={form.classYear} onChange={set('classYear')} placeholder="e.g. Class 11" />
-              <Field label="Section" id="b-section" value={form.section} onChange={set('section')} placeholder="e.g. A" />
+              <Field
+                label="Class / Grade"
+                id="b-classyear"
+                value={form.classYear}
+                onChange={(val) => {
+                  set('classYear')(val);
+                  if (!isEditMode && !form.name.trim()) {
+                    set('name')([val, form.section].filter(Boolean).join(' - '));
+                  }
+                }}
+                placeholder="e.g. Class 10"
+              />
+              <div>
+                <Field
+                  label="Section (Optional)"
+                  id="b-section"
+                  value={form.section}
+                  onChange={(val) => {
+                    set('section')(val);
+                    if (!isEditMode && (!form.name.trim() || form.name === form.classYear)) {
+                      set('name')([form.classYear, val].filter(Boolean).join(' - '));
+                    }
+                  }}
+                  placeholder="e.g. A"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Leave blank if this is a single unified class (no sections).
+                </p>
+              </div>
             </div>
             <Field label="Academic Year" id="b-academicyear" value={form.academicYear} onChange={set('academicYear')} placeholder="e.g. 2025-2026" />
           </div>
 
-          <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-slate-100 bg-slate-50">
+          <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-slate-100 bg-slate-50 flex-shrink-0">
             <button type="button" onClick={onClose} className="px-4 py-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">Cancel</button>
             <button type="submit" disabled={loading} className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors shadow-sm shadow-indigo-200">
               {loading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}

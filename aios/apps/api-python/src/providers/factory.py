@@ -33,10 +33,20 @@ GEMINI = ProviderSpec("gemini", "Google", GEMINI_MODEL)
 
 
 def active_provider(settings) -> ProviderSpec:
+    forced = (getattr(settings, "AI_PROVIDER", "") or "").lower().strip()
+    if forced == "gemini" and settings.GEMINI_API_KEY:
+        model = getattr(settings, "AI_EVALUATION_MODEL", GEMINI_MODEL) or GEMINI_MODEL
+        return ProviderSpec("gemini", "Google", model) if model != GEMINI_MODEL else GEMINI
+    if forced == "openai" and settings.OPENAI_API_KEY:
+        model = getattr(settings, "AI_EVALUATION_MODEL", OPENAI_MODEL) or OPENAI_MODEL
+        return ProviderSpec("openai", "OpenAI", model) if model != OPENAI_MODEL else OPENAI
+
     if settings.OPENAI_API_KEY:
-        return OPENAI
+        model = getattr(settings, "AI_EVALUATION_MODEL", OPENAI_MODEL) or OPENAI_MODEL
+        return ProviderSpec("openai", "OpenAI", model) if model != OPENAI_MODEL else OPENAI
     if settings.GEMINI_API_KEY:
-        return GEMINI
+        model = getattr(settings, "AI_EVALUATION_MODEL", GEMINI_MODEL) or GEMINI_MODEL
+        return ProviderSpec("gemini", "Google", model) if model != GEMINI_MODEL else GEMINI
     raise ValueError("Neither OPENAI_API_KEY nor GEMINI_API_KEY is configured in the environment.")
 
 

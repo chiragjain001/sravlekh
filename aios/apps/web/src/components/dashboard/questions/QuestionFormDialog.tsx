@@ -132,44 +132,43 @@ export function QuestionFormDialog({ isOpen, onClose, subjects, editTarget, isPe
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(15,23,42,0.55)', backdropFilter: 'blur(6px)' }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-fadein"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col overflow-hidden border border-slate-100"
+        className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-2xl max-h-[92dvh] sm:max-h-[85vh] flex flex-col overflow-hidden border border-slate-100 animate-slide-up"
         role="dialog"
         aria-modal="true"
         aria-labelledby="question-dialog-title"
       >
-        <div className="flex items-center justify-between p-5 border-b border-slate-100 bg-gradient-to-r from-indigo-50 to-white">
+        <div className="flex items-center justify-between p-4 sm:p-5 border-b border-slate-100 bg-gradient-to-r from-indigo-50/80 to-white shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center">
-              <FileText className="w-5 h-5 text-white" />
+            <div className="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center text-white shadow-2xs shrink-0">
+              <FileText className="w-5 h-5" />
             </div>
             <div>
-              <h3 id="question-dialog-title" className="text-sm font-bold text-slate-900">
+              <h3 id="question-dialog-title" className="text-sm sm:text-base font-bold text-slate-900">
                 {isEditMode ? 'Edit Question' : 'Add Question'}
               </h3>
-              <p className="text-[11px] text-slate-500 mt-0.5">
+              <p className="text-[11px] sm:text-xs text-slate-500 mt-0.5">
                 {isEditMode ? 'Editing creates a new version if content changes' : 'Add a question to the bank'}
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 transition-colors"
+            className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 transition-colors cursor-pointer"
             aria-label="Close dialog"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} noValidate>
-          <div className="p-5 space-y-4 max-h-[65vh] overflow-y-auto">
+        <form onSubmit={handleSubmit} noValidate className="flex flex-col flex-1 overflow-hidden">
+          <div className="p-4 sm:p-5 space-y-4 overflow-y-auto custom-scrollbar flex-1 overscroll-contain">
             {/* Curriculum linkage */}
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Curriculum</p>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <SelectField label="Subject" required value={form.subjectId} onChange={handleSubjectChange}
                 options={subjects.map((s) => ({ value: s.id, label: s.name }))} placeholder="Select subject" />
               <SelectField label="Chapter" required value={form.chapterId} onChange={handleChapterChange}
@@ -181,7 +180,7 @@ export function QuestionFormDialog({ isOpen, onClose, subjects, editTarget, isPe
             </div>
 
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pt-1">Question</p>
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="col-span-2">
                 <SelectField label="Type" required value={form.type} onChange={(v) => set('type', v as QuestionType)}
                   options={QUESTION_TYPES} />
@@ -190,7 +189,7 @@ export function QuestionFormDialog({ isOpen, onClose, subjects, editTarget, isPe
                 options={DIFFICULTIES} />
               <NumberField label="Marks" required value={form.marks} onChange={(v) => set('marks', v)} min={0} />
             </div>
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <NumberField label="Negative Marks" value={form.negativeMarks} onChange={(v) => set('negativeMarks', v)} min={0} />
             </div>
 
@@ -204,7 +203,7 @@ export function QuestionFormDialog({ isOpen, onClose, subjects, editTarget, isPe
                     Options{form.type === 'MCQ' ? ' (mark the one correct answer)' : ' (mark all correct answers)'}
                   </label>
                   <button type="button" onClick={addOption}
-                    className="flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:text-indigo-700">
+                    className="flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:text-indigo-700 cursor-pointer">
                     <Plus className="w-3 h-3" /> Add option
                   </button>
                 </div>
@@ -225,18 +224,18 @@ export function QuestionFormDialog({ isOpen, onClose, subjects, editTarget, isPe
                             updateOption(i, { isCorrect: e.target.checked });
                           }
                         }}
-                        className="w-4 h-4 accent-indigo-600"
+                        className="w-4 h-4 accent-indigo-600 shrink-0"
                         aria-label={`Option ${opt.label} is correct`}
                       />
-                      <span className="text-xs font-bold text-slate-400 w-4">{opt.label}</span>
+                      <span className="text-xs font-bold text-slate-400 w-4 shrink-0">{opt.label}</span>
                       <input
                         value={opt.text}
                         onChange={(e) => updateOption(i, { text: e.target.value })}
                         placeholder={`Option ${opt.label} text`}
-                        className="flex-1 px-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                        className="flex-1 px-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400 min-w-0"
                       />
                       <button type="button" onClick={() => removeOption(i)}
-                        className="p-1.5 text-slate-400 hover:text-rose-600" aria-label="Remove option">
+                        className="p-1.5 text-slate-400 hover:text-rose-600 shrink-0 cursor-pointer" aria-label="Remove option">
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
@@ -252,13 +251,13 @@ export function QuestionFormDialog({ isOpen, onClose, subjects, editTarget, isPe
               placeholder="Optional — e.g. textbook chapter" />
           </div>
 
-          <div className="flex items-center justify-end gap-3 p-4 border-t border-slate-100 bg-slate-50/50">
+          <div className="flex items-center justify-end gap-2.5 p-3.5 sm:p-4 border-t border-slate-100 bg-slate-50/80 shrink-0">
             <button type="button" onClick={onClose}
-              className="px-4 py-2 text-[13px] font-semibold text-slate-700 border border-slate-200 rounded-xl hover:bg-white transition-colors">
+              className="px-4 py-2 text-[12.5px] sm:text-[13px] font-bold text-slate-600 hover:bg-slate-200/60 rounded-xl transition-colors cursor-pointer">
               Cancel
             </button>
             <button type="submit" disabled={!canSubmit || isPending}
-              className="flex items-center gap-2 px-5 py-2 bg-indigo-600 text-white text-[13px] font-bold rounded-xl hover:bg-indigo-700 disabled:opacity-40 transition-colors">
+              className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white text-[12.5px] sm:text-[13px] font-bold rounded-xl disabled:opacity-40 transition-all shadow-sm cursor-pointer">
               {isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
               {isEditMode ? 'Save Changes' : 'Add Question'}
             </button>

@@ -73,6 +73,7 @@ export class StudentsService {
       const profile = await tx.studentProfile.create({
         data: {
           userId: user.id,
+          instituteId,
           rollNumber: dto.rollNumber,
           dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : undefined,
           guardianName: dto.guardianName,
@@ -110,6 +111,7 @@ export class StudentsService {
     // total and the list it links to disagreed, and a "deleted" student still
     // appeared on the roster.
     const where: Record<string, unknown> = {
+      instituteId,
       user: { instituteId, status: 'ACTIVE' },
     };
 
@@ -173,7 +175,7 @@ export class StudentsService {
     this.assertInstituteAccess(actor, instituteId);
 
     const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor);
-    const scopeWhere: Record<string, unknown> = { user: { instituteId } };
+    const scopeWhere: Record<string, unknown> = { instituteId, user: { instituteId } };
     if (teacherBatchIds !== null) {
       scopeWhere['batchId'] = { in: teacherBatchIds };
     }
@@ -283,13 +285,28 @@ export class StudentsService {
         masteryScores: {
           include: { topic: { select: { name: true } }, subject: { select: { name: true } } },
           orderBy: { lastUpdatedAt: 'desc' },
-          take: 10,
+          take: 100,
+        },
+        interventions: {
+          include: { topic: { select: { name: true } } },
+          orderBy: { createdAt: 'desc' },
+          take: 20,
         },
         scoreRecords: {
           where: scoreRecordsWhere,
-          include: { exam: { select: { id: true, title: true, scheduledDate: true, type: true } } },
+          include: {
+            exam: {
+              select: {
+                id: true,
+                title: true,
+                scheduledDate: true,
+                type: true,
+                blueprint: { select: { subject: { select: { name: true } } } },
+              },
+            },
+          },
           orderBy: { createdAt: 'desc' },
-          take: 10,
+          take: 50,
         },
       },
     });

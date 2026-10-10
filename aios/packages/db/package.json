@@ -13,6 +13,7 @@
     "seed": "tsx --env-file .env src/seed.ts",
     "seed:demo-school": "tsx --env-file .env src/seed-demo-school.ts",
     "seed:ncert": "tsx --env-file .env src/seed-ncert.ts",
+    "backfill:attendance": "tsx src/backfill-attendance-sessions.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

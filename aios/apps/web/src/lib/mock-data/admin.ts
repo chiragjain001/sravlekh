@@ -58,8 +58,8 @@ export const adminData = {
   },
 
   navItems: [
-    'Dashboard', 'Students', 'Teachers', 'Batches', 'Academics', 'Question Bank',
-    'Papers', 'Assignments', 'Exams', 'Doubts', 'Timetable', 'Attendance', 'Communication',
-    'Reports', 'Analytics', 'System Settings', 'Audit Logs', 'Evaluation Quality',
+    'Dashboard', 'Students', 'Teachers', 'Batches',
+    'Exams', 'Timetable', 'Attendance', 'Communication',
+    'Analytics & Reports', 'System Settings', 'Audit Logs',
   ],
 };

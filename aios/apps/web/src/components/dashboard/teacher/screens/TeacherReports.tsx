@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { FileText, Loader2, ExternalLink } from 'lucide-react';
 import { useBatches, useStudents, useReportsList, useRequestReport, useReport } from '@/hooks/useApi';
+import { InlineLoadingSpinner } from '@/components/ui/foundation';
 
 const REPORT_TYPES: { id: string; name: string; desc: string; color: string; needsStudent: boolean }[] = [
   { id: 'BATCH_REPORT', name: 'Batch Performance Report', desc: 'Roster-wide performance summary for a selected batch.', color: 'indigo', needsStudent: false },
@@ -147,7 +148,11 @@ export function TeacherReports() {
             </thead>
             <tbody className="divide-y divide-slate-50">
               {isLoading ? (
-                <tr><td colSpan={4} className="py-12 text-center text-slate-400 text-[13px]">Loading reports…</td></tr>
+                <tr>
+                  <td colSpan={4} className="py-8">
+                    <InlineLoadingSpinner label="Loading generated reports from server..." />
+                  </td>
+                </tr>
               ) : reports.length === 0 ? (
                 <tr><td colSpan={4} className="py-12 text-center text-slate-400 text-[13px]">No reports generated yet.</td></tr>
               ) : (

@@ -6,6 +6,7 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
@@ -14,8 +15,12 @@ import { ExamsService } from './exams.service';
 import {
   CreateExamDto,
   GradeAnswerSheetDto,
+  ListExamsDto,
   UpdateExamStatusDto,
   UnlockExamDto,
+  SelectOfficialPaperDto,
+  RejectCandidatePaperDto,
+  RequestChangesDto,
 } from './dto/exam.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -41,12 +46,13 @@ export class ExamsController {
 
   @Get()
   @Roles(UserRole.STUDENT, UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
-  @ApiOperation({ summary: 'List exams for this institute — a STUDENT sees only their own batch, published exams onward' })
+  @ApiOperation({ summary: 'List exams for this institute (paginated). A STUDENT sees only their own batch, published exams onward.' })
   findAll(
     @Param('instituteId') instituteId: string,
+    @Query() query: ListExamsDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.examsService.findAll(instituteId, user);
+    return this.examsService.findAll(instituteId, user, query);
   }
 
   @Get(':examId')
@@ -117,6 +123,67 @@ export class ExamsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.examsService.linkPaper(instituteId, examId, paperId, user);
+  }
+
+  @Get(':examId/candidate-papers')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'List candidate papers submitted for this exam' })
+  getCandidatePapers(
+    @Param('instituteId') instituteId: string,
+    @Param('examId') examId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.examsService.getCandidatePapers(instituteId, examId, user);
+  }
+
+  @Post(':examId/candidate-papers/:paperId/submit')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Teacher submits candidate paper to an exam for review' })
+  submitCandidatePaper(
+    @Param('instituteId') instituteId: string,
+    @Param('examId') examId: string,
+    @Param('paperId') paperId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.examsService.submitCandidatePaper(instituteId, examId, paperId, user);
+  }
+
+  @Post(':examId/select-paper')
+  @Roles(UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Admin selects official paper for an exam (notifies all candidate teachers)' })
+  selectOfficialPaper(
+    @Param('instituteId') instituteId: string,
+    @Param('examId') examId: string,
+    @Body() dto: SelectOfficialPaperDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.examsService.selectOfficialPaper(instituteId, examId, dto, user);
+  }
+
+  @Post(':examId/candidate-papers/:paperId/reject')
+  @Roles(UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Admin rejects candidate paper with optional feedback' })
+  rejectCandidatePaper(
+    @Param('instituteId') instituteId: string,
+    @Param('examId') examId: string,
+    @Param('paperId') paperId: string,
+    @Body() dto: RejectCandidatePaperDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.examsService.rejectCandidatePaper(instituteId, examId, paperId, dto, user);
+  }
+
+  @Post(':examId/candidate-papers/:paperId/request-changes')
+  @Roles(UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Admin requests changes from teacher on candidate paper' })
+  requestPaperChanges(
+    @Param('instituteId') instituteId: string,
+    @Param('examId') examId: string,
+    @Param('paperId') paperId: string,
+    @Body() dto: RequestChangesDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.examsService.requestPaperChanges(instituteId, examId, paperId, dto, user);
   }
 
   @Post(':examId/answer-sheets/:studentProfileId')

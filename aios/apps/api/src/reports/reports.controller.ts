@@ -48,4 +48,15 @@ export class ReportsController {
   ) {
     return this.reportsService.findById(instituteId, reportId, user);
   }
+
+  @Post(':reportId/retry')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Retry a failed report generation job' })
+  retryReport(
+    @Param('instituteId') instituteId: string,
+    @Param('reportId') reportId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.reportsService.retryReport(instituteId, reportId, user);
+  }
 }

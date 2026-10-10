@@ -1,163 +1,484 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
-import { AttendanceStatus, UserRole } from '@prisma/client';
+import { BadRequestException, ForbiddenException, NotFoundException, ConflictException } from '@nestjs/common';
+import { AttendanceStatus, TimetableExceptionType, UserRole, AuditAction } from '@prisma/client';
 import { AttendanceService } from './attendance.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { PermissionsService } from '../permissions/permissions.service';
 import { AuthenticatedUser } from '../auth/auth.types';
 
-describe('AttendanceService — tenant isolation and RBAC (13-TESTING-STRATEGY.md §7)', () => {
+describe('AttendanceService — V4 Production Architecture & Invariants', () => {
   let service: AttendanceService;
-  let prisma: {
-    batch: { findUnique: jest.Mock };
-    studentProfile: { findMany: jest.Mock };
-    attendanceRecord: { findUnique: jest.Mock; findMany: jest.Mock; count: jest.Mock; update: jest.Mock };
-    teacherProfile: { findUnique: jest.Mock };
-    batchTeacher: { findMany: jest.Mock };
-    auditLog: { create: jest.Mock };
-    $transaction: jest.Mock;
+  let prisma: any;
+  let permissionsService: { hasPermission: jest.Mock };
+
+  const admin: AuthenticatedUser = {
+    id: 'admin-1',
+    email: 'admin@aios.test',
+    name: 'Admin User',
+    role: UserRole.ADMIN,
+    instituteId: 'inst-1',
   };
 
-  const admin: AuthenticatedUser = { id: 'admin-1', email: 'a@x.com', name: 'Admin', role: UserRole.ADMIN, instituteId: 'inst-1' };
-  const teacher: AuthenticatedUser = { ...admin, id: 'teacher-1', role: UserRole.TEACHER };
+  const teacher1: AuthenticatedUser = {
+    id: 'teacher-1',
+    email: 't1@aios.test',
+    name: 'Teacher One',
+    role: UserRole.TEACHER,
+    instituteId: 'inst-1',
+  };
+
+  const substituteTeacher: AuthenticatedUser = {
+    id: 'teacher-sub',
+    email: 'sub@aios.test',
+    name: 'Substitute Teacher',
+    role: UserRole.TEACHER,
+    instituteId: 'inst-1',
+  };
+
+  const studentUser: AuthenticatedUser = {
+    id: 'student-user-1',
+    email: 's1@aios.test',
+    name: 'Student One',
+    role: UserRole.STUDENT,
+    instituteId: 'inst-1',
+  };
 
   beforeEach(async () => {
     prisma = {
+      institute: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'inst-1', featureFlags: {} }),
+        update: jest.fn().mockResolvedValue({ id: 'inst-1' }),
+      },
       batch: { findUnique: jest.fn() },
-      studentProfile: { findMany: jest.fn() },
-      attendanceRecord: { findUnique: jest.fn(), findMany: jest.fn(), count: jest.fn(), update: jest.fn() },
+      subject: { findUnique: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
+      user: { findUnique: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
+      studentProfile: { findUnique: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
       teacherProfile: { findUnique: jest.fn() },
-      batchTeacher: { findMany: jest.fn() },
-      auditLog: { create: jest.fn() },
-      $transaction: jest.fn(async (ops: any) => Array.isArray(ops) ? Promise.all(ops) : ops),
+      batchTeacher: { findMany: jest.fn().mockResolvedValue([]) },
+      timetableSlot: { findMany: jest.fn().mockResolvedValue([]), findUnique: jest.fn() },
+      timetableException: { findMany: jest.fn().mockResolvedValue([]), upsert: jest.fn() },
+      exam: { findMany: jest.fn().mockResolvedValue([]) },
+      attendanceSession: {
+        findUnique: jest.fn(),
+        findFirst: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
+        create: jest.fn(),
+        update: jest.fn(),
+      },
+      attendanceSessionRoster: {
+        findMany: jest.fn().mockResolvedValue([]),
+        upsert: jest.fn(),
+      },
+      attendanceRecord: {
+        findUnique: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
+        count: jest.fn().mockResolvedValue(0),
+        upsert: jest.fn(),
+        create: jest.fn(),
+        update: jest.fn(),
+      },
+      attendanceCorrectionLog: {
+        create: jest.fn(),
+      },
+      notice: { create: jest.fn().mockResolvedValue({ id: 'notice-1' }) },
+      noticeDelivery: { create: jest.fn().mockResolvedValue({ id: 'nd-1' }) },
+      auditLog: { create: jest.fn().mockResolvedValue({ id: 'audit-1' }) },
+      $transaction: jest.fn(async (cb: any) => {
+        if (typeof cb === 'function') {
+          return cb(prisma);
+        }
+        return Array.isArray(cb) ? Promise.all(cb) : cb;
+      }),
     };
+
+    permissionsService = {
+      hasPermission: jest.fn().mockResolvedValue(false),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
-      providers: [AttendanceService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        AttendanceService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: PermissionsService, useValue: permissionsService },
+      ],
     }).compile();
+
     service = module.get(AttendanceService);
   });
 
-  describe('markAttendance', () => {
-    const dto = { batchId: 'batch-1', date: '2026-08-24', entries: [{ studentProfileId: 's1', status: AttendanceStatus.PRESENT }] };
+  describe('1. Timetable Authority & Substitute Rules', () => {
+    const mockSession: any = {
+      id: 'session-1',
+      instituteId: 'inst-1',
+      batchId: 'batch-1',
+      subjectId: 'sub-1',
+      snapshotTeacherUserId: 'teacher-1',
+      snapshotTeacherName: 'Teacher One',
+      snapshotBatchName: 'Class 10-A',
+      snapshotSubjectName: 'Physics',
+      snapshotPeriodNumber: 1,
+      snapshotStartTime: new Date('2026-10-09T09:00:00Z'),
+      snapshotEndTime: new Date('2026-10-09T10:00:00Z'),
+      substituteUserId: null,
+      examOverrideId: null,
+      finalizedAt: null,
+      cancelledAt: null,
+      version: 1,
+      rosterSnapshotAt: new Date(),
+      roster: [{ id: 'r-1', studentProfileId: 's-1' }],
+      records: [],
+    };
 
-    it('rejects a TEACHER marking a batch they are not assigned to', async () => {
-      prisma.teacherProfile.findUnique.mockResolvedValueOnce({ id: 'tp-1' });
-      prisma.batchTeacher.findMany.mockResolvedValueOnce([{ batchId: 'batch-OTHER' }]);
+    it('allows scheduled teacher to save attendance draft', async () => {
+      prisma.attendanceSession.findUnique.mockResolvedValueOnce(mockSession);
+      prisma.attendanceSession.update.mockResolvedValueOnce({ ...mockSession, version: 2 });
 
-      await expect(service.markAttendance('inst-1', dto, teacher)).rejects.toThrow(ForbiddenException);
-      expect(prisma.batch.findUnique).not.toHaveBeenCalled();
+      const res = await service.saveDraft('inst-1', 'session-1', {
+        expectedVersion: 1,
+        entries: [{ studentProfileId: 's-1', status: AttendanceStatus.PRESENT }],
+      }, teacher1);
+
+      expect(res.version).toBe(2);
+      expect(prisma.attendanceRecord.upsert).toHaveBeenCalled();
     });
 
-    it('rejects a batch from a different institute', async () => {
-      prisma.batch.findUnique.mockResolvedValueOnce({ id: 'batch-1', instituteId: 'inst-OTHER' });
-      await expect(service.markAttendance('inst-1', dto, admin)).rejects.toThrow(NotFoundException);
+    it('blocks an unassigned teacher who is not the scheduled teacher', async () => {
+      prisma.attendanceSession.findUnique.mockResolvedValueOnce(mockSession);
+
+      const unassignedTeacher: AuthenticatedUser = {
+        ...teacher1,
+        id: 'teacher-unassigned',
+      };
+
+      await expect(
+        service.saveDraft('inst-1', 'session-1', {
+          expectedVersion: 1,
+          entries: [{ studentProfileId: 's-1', status: AttendanceStatus.PRESENT }],
+        }, unassignedTeacher),
+      ).rejects.toThrow(ForbiddenException);
     });
 
-    it('rejects a student not enrolled in the target batch', async () => {
-      prisma.batch.findUnique.mockResolvedValueOnce({ id: 'batch-1', instituteId: 'inst-1' });
-      prisma.studentProfile.findMany.mockResolvedValueOnce([]); // s1 not found in this batch
+    it('blocks the scheduled teacher when a substitute is assigned (substitute exclusivity)', async () => {
+      const sessionWithSub = {
+        ...mockSession,
+        substituteUserId: 'teacher-sub',
+      };
+      prisma.attendanceSession.findUnique.mockResolvedValueOnce(sessionWithSub);
 
-      await expect(service.markAttendance('inst-1', dto, admin)).rejects.toThrow(BadRequestException);
+      await expect(
+        service.saveDraft('inst-1', 'session-1', {
+          expectedVersion: 1,
+          entries: [{ studentProfileId: 's-1', status: AttendanceStatus.PRESENT }],
+        }, teacher1),
+      ).rejects.toThrow('Attendance handled by assigned substitute.');
     });
 
-    it('rejects an empty entries array', async () => {
-      prisma.batch.findUnique.mockResolvedValueOnce({ id: 'batch-1', instituteId: 'inst-1' });
-      await expect(service.markAttendance('inst-1', { ...dto, entries: [] }, admin)).rejects.toThrow(BadRequestException);
+    it('allows the assigned substitute teacher to operate the session', async () => {
+      const sessionWithSub = {
+        ...mockSession,
+        substituteUserId: 'teacher-sub',
+      };
+      prisma.attendanceSession.findUnique.mockResolvedValueOnce(sessionWithSub);
+      prisma.attendanceSession.update.mockResolvedValueOnce({ ...sessionWithSub, version: 2 });
+
+      const res = await service.saveDraft('inst-1', 'session-1', {
+        expectedVersion: 1,
+        entries: [{ studentProfileId: 's-1', status: AttendanceStatus.PRESENT }],
+      }, substituteTeacher);
+
+      expect(res.version).toBe(2);
+    });
+  });
+
+  describe('2. Optimistic Concurrency Control (OCC)', () => {
+    const mockSession: any = {
+      id: 'session-1',
+      instituteId: 'inst-1',
+      batchId: 'batch-1',
+      snapshotTeacherUserId: 'teacher-1',
+      version: 5,
+      finalizedAt: null,
+      cancelledAt: null,
+      rosterSnapshotAt: new Date(),
+      roster: [{ id: 'r-1', studentProfileId: 's-1' }],
+    };
+
+    it('returns 409 Conflict when expectedVersion does not match session version', async () => {
+      prisma.attendanceSession.findUnique.mockResolvedValueOnce(mockSession);
+
+      await expect(
+        service.saveDraft('inst-1', 'session-1', {
+          expectedVersion: 4, // Stale version!
+          entries: [{ studentProfileId: 's-1', status: AttendanceStatus.PRESENT }],
+        }, teacher1),
+      ).rejects.toThrow(ConflictException);
     });
 
-    it('upserts each entry keyed on the compound unique constraint and writes an audit entry', async () => {
-      prisma.batch.findUnique.mockResolvedValueOnce({ id: 'batch-1', instituteId: 'inst-1' });
-      prisma.studentProfile.findMany.mockResolvedValueOnce([{ id: 's1' }]);
-      (prisma as any).attendanceRecord.upsert = jest.fn().mockResolvedValue({ id: 'ar-1' });
+    it('returns 409 Conflict when finalizing with stale version', async () => {
+      prisma.attendanceSession.findUnique.mockResolvedValueOnce(mockSession);
 
-      const result = await service.markAttendance('inst-1', dto, admin);
+      await expect(
+        service.finalizeSession('inst-1', 'session-1', {
+          expectedVersion: 3,
+        }, teacher1),
+      ).rejects.toThrow(ConflictException);
+    });
+  });
 
-      expect((prisma as any).attendanceRecord.upsert).toHaveBeenCalledWith(
+  describe('3. Finalization Roster Completeness', () => {
+    const mockSession: any = {
+      id: 'session-1',
+      instituteId: 'inst-1',
+      batchId: 'batch-1',
+      snapshotTeacherUserId: 'teacher-1',
+      version: 1,
+      finalizedAt: null,
+      cancelledAt: null,
+      rosterSnapshotAt: new Date(),
+      roster: [
+        { id: 'r-1', studentProfileId: 's-1' },
+        { id: 'r-2', studentProfileId: 's-2' },
+      ],
+    };
+
+    it('blocks finalization when some students in roster are unmarked', async () => {
+      prisma.attendanceSession.findUnique.mockResolvedValueOnce(mockSession);
+      prisma.attendanceRecord.findMany.mockResolvedValueOnce([
+        { studentProfileId: 's-1', status: AttendanceStatus.PRESENT },
+      ]); // s-2 is missing!
+
+      await expect(
+        service.finalizeSession('inst-1', 'session-1', { expectedVersion: 1 }, teacher1),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('finalizes successfully when 100% of students are marked', async () => {
+      prisma.attendanceSession.findUnique.mockResolvedValueOnce(mockSession);
+      prisma.attendanceRecord.findMany.mockResolvedValueOnce([
+        { studentProfileId: 's-1', status: AttendanceStatus.PRESENT },
+        { studentProfileId: 's-2', status: AttendanceStatus.ABSENT },
+      ]);
+      prisma.attendanceSession.update.mockResolvedValueOnce({
+        ...mockSession,
+        finalizedAt: new Date(),
+        version: 2,
+      });
+
+      const res = await service.finalizeSession('inst-1', 'session-1', { expectedVersion: 1 }, teacher1);
+      expect(res.session.finalizedAt).toBeDefined();
+    });
+  });
+
+  describe('4. Post-Finalization Audited Corrections', () => {
+    it('requires capability and creates insert-only correction log', async () => {
+      const mockSession = {
+        id: 'session-1',
+        instituteId: 'inst-1',
+        date: '2026-10-09',
+        version: 2,
+      };
+      const mockRecord = {
+        id: 'rec-1',
+        sessionId: 'session-1',
+        studentProfileId: 's-1',
+        status: AttendanceStatus.ABSENT,
+        version: 1,
+      };
+
+      prisma.attendanceSession.findUnique.mockResolvedValueOnce(mockSession);
+      prisma.attendanceRecord.findUnique.mockResolvedValueOnce(mockRecord);
+      prisma.attendanceCorrectionLog.create.mockResolvedValueOnce({ id: 'log-1' });
+      prisma.attendanceRecord.update.mockResolvedValueOnce({
+        ...mockRecord,
+        status: AttendanceStatus.PRESENT,
+        version: 2,
+      });
+
+      const updated = await service.correctAttendanceRecord(
+        'inst-1',
+        'session-1',
+        'rec-1',
+        {
+          expectedVersion: 1,
+          status: AttendanceStatus.PRESENT,
+          reason: 'Student arrived right after roll call with medical note',
+        },
+        admin,
+      );
+
+      expect(prisma.attendanceCorrectionLog.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { studentProfileId_batchId_date: { studentProfileId: 's1', batchId: 'batch-1', date: new Date('2026-08-24') } },
+          data: expect.objectContaining({
+            previousStatus: AttendanceStatus.ABSENT,
+            newStatus: AttendanceStatus.PRESENT,
+            reason: 'Student arrived right after roll call with medical note',
+          }),
         }),
       );
-      expect(prisma.auditLog.create).toHaveBeenCalled();
-      expect(result.records).toHaveLength(1);
+      expect(updated.status).toBe(AttendanceStatus.PRESENT);
     });
   });
 
-  describe('correctAttendance', () => {
-    const dto = { status: AttendanceStatus.PRESENT, reason: 'Marked absent by mistake' };
-
-    it('404s for a nonexistent record', async () => {
-      prisma.attendanceRecord.findUnique.mockResolvedValueOnce(null);
-      await expect(service.correctAttendance('inst-1', 'ar-1', dto, admin)).rejects.toThrow(NotFoundException);
-    });
-
-    it('rejects a record whose batch belongs to a different institute', async () => {
-      prisma.attendanceRecord.findUnique.mockResolvedValueOnce({ id: 'ar-1', batchId: 'batch-1', batch: { id: 'batch-1', instituteId: 'inst-OTHER' } });
-      await expect(service.correctAttendance('inst-1', 'ar-1', dto, admin)).rejects.toThrow(ForbiddenException);
-    });
-
-    it('rejects a TEACHER correcting a record outside their assigned batches', async () => {
-      prisma.attendanceRecord.findUnique.mockResolvedValueOnce({ id: 'ar-1', batchId: 'batch-1', batch: { id: 'batch-1', instituteId: 'inst-1' } });
-      prisma.teacherProfile.findUnique.mockResolvedValueOnce({ id: 'tp-1' });
-      prisma.batchTeacher.findMany.mockResolvedValueOnce([{ batchId: 'batch-OTHER' }]);
-
-      await expect(service.correctAttendance('inst-1', 'ar-1', dto, teacher)).rejects.toThrow(ForbiddenException);
-    });
-
-    it('sets correctedAt/correctionReason and writes an audit entry', async () => {
-      prisma.attendanceRecord.findUnique.mockResolvedValueOnce({ id: 'ar-1', batchId: 'batch-1', status: AttendanceStatus.ABSENT, batch: { id: 'batch-1', instituteId: 'inst-1' } });
-      prisma.attendanceRecord.update.mockResolvedValueOnce({ id: 'ar-1', status: AttendanceStatus.PRESENT, correctedAt: new Date(), correctionReason: dto.reason });
-
-      const result = await service.correctAttendance('inst-1', 'ar-1', dto, admin);
-
-      expect(prisma.attendanceRecord.update).toHaveBeenCalledWith({
-        where: { id: 'ar-1' },
-        data: expect.objectContaining({ status: AttendanceStatus.PRESENT, correctionReason: dto.reason }),
+  describe('5. Student Visibility Isolation', () => {
+    it('only returns finalized attendance records for authenticated student', async () => {
+      prisma.studentProfile.findUnique.mockResolvedValueOnce({
+        id: 'sp-1',
+        userId: 'student-user-1',
+        instituteId: 'inst-1',
       });
-      expect(prisma.auditLog.create).toHaveBeenCalled();
-      expect(result.correctionReason).toBe(dto.reason);
+
+      prisma.attendanceRecord.findMany
+        .mockResolvedValueOnce([
+          { id: 'rec-1', status: AttendanceStatus.PRESENT, subjectId: 'sub-1', date: new Date('2026-10-09') },
+        ])
+        .mockResolvedValueOnce([
+          {
+            id: 'rec-1',
+            status: AttendanceStatus.PRESENT,
+            date: new Date('2026-10-09'),
+            session: { snapshotSubjectName: 'Physics' },
+            batch: { id: 'batch-1', name: 'Class 10-A' },
+          },
+        ]);
+      prisma.attendanceRecord.count.mockResolvedValueOnce(1);
+
+      const res = await service.getStudentAttendance('inst-1', studentUser, {});
+
+      expect(res.overall.percentage).toBe(100);
+      expect(res.history).toHaveLength(1);
     });
   });
 
-  describe('findAll — teacher batch scoping', () => {
-    it('restricts a TEACHER to their assigned batches only', async () => {
-      prisma.teacherProfile.findUnique.mockResolvedValueOnce({ id: 'tp-1' });
-      prisma.batchTeacher.findMany.mockResolvedValueOnce([{ batchId: 'batch-1' }]);
-      prisma.attendanceRecord.findMany.mockResolvedValueOnce([]);
-      prisma.attendanceRecord.count.mockResolvedValueOnce(0);
+  describe('6. Admin Attendance Policy Settings', () => {
+    it('returns default attendance policy when none is configured', async () => {
+      const policy = await service.getAttendancePolicy('inst-1', admin);
+      expect(policy.cutoffHour).toBe(18);
+      expect(policy.openBeforeMinutes).toBe(15);
+      expect(policy.gracePeriodMinutes).toBe(30);
+      expect(policy.timezone).toBe('Asia/Kolkata');
+      expect(policy.allowTeacherHistoricalEdit).toBe(false);
+      expect(policy.allowFinalizedCorrection).toBe(true);
+    });
 
-      await service.findAll('inst-1', {} as any, teacher);
+    it('updates attendance policy and writes audit log when admin submits', async () => {
+      const res = await service.updateAttendancePolicy(
+        'inst-1',
+        {
+          cutoffHour: 19,
+          openBeforeMinutes: 20,
+          gracePeriodMinutes: 45,
+          timezone: 'Asia/Dubai',
+          allowTeacherHistoricalEdit: true,
+          allowFinalizedCorrection: true,
+        },
+        admin,
+      );
 
-      const call = prisma.attendanceRecord.findMany.mock.calls[0]![0];
-      expect(call.where.batchId).toEqual({ in: ['batch-1'] });
+      expect(res.success).toBe(true);
+      expect(res.policy.cutoffHour).toBe(19);
+      expect(res.policy.timezone).toBe('Asia/Dubai');
+      expect(prisma.institute.update).toHaveBeenCalled();
+      expect(prisma.auditLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            action: AuditAction.UPDATE,
+            entity: 'AttendancePolicy',
+          }),
+        }),
+      );
+    });
+
+    it('blocks teacher from updating attendance policy', async () => {
+      await expect(
+        service.updateAttendancePolicy('inst-1', { cutoffHour: 20 }, teacher1),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('rejects invalid IANA timezone', async () => {
+      await expect(
+        service.updateAttendancePolicy('inst-1', { timezone: 'Invalid/City_Name' }, admin),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 
-  describe('getSummary', () => {
-    it('computes real percentages: PRESENT/LATE count as attended, EXCUSED is removed from the denominator', async () => {
-      prisma.attendanceRecord.findMany.mockResolvedValueOnce([
-        { status: AttendanceStatus.PRESENT, batchId: 'b1', studentProfileId: 's1', batch: { name: 'Alpha' }, studentProfile: { rollNumber: '01', user: { name: 'Aarav' } } },
-        { status: AttendanceStatus.LATE, batchId: 'b1', studentProfileId: 's1', batch: { name: 'Alpha' }, studentProfile: { rollNumber: '01', user: { name: 'Aarav' } } },
-        { status: AttendanceStatus.ABSENT, batchId: 'b1', studentProfileId: 's1', batch: { name: 'Alpha' }, studentProfile: { rollNumber: '01', user: { name: 'Aarav' } } },
-        { status: AttendanceStatus.EXCUSED, batchId: 'b1', studentProfileId: 's1', batch: { name: 'Alpha' }, studentProfile: { rollNumber: '01', user: { name: 'Aarav' } } },
+  describe('7. Dynamic Institute Timezone Handling', () => {
+    it('resolves timezone configured on institute and falls back gracefully', async () => {
+      prisma.institute.findUnique.mockResolvedValueOnce({
+        id: 'inst-1',
+        featureFlags: { attendance: { timezone: 'Asia/Dubai' } },
+      });
+      const tz = await service.getInstituteTimezone('inst-1');
+      expect(tz).toBe('Asia/Dubai');
+
+      prisma.institute.findUnique.mockResolvedValueOnce({
+        id: 'inst-1',
+        featureFlags: { attendance: { timezone: 'Gibberish_Not_Real' } },
+      });
+      const fallbackTz = await service.getInstituteTimezone('inst-1');
+      expect(fallbackTz).toBe('Asia/Kolkata');
+    });
+  });
+
+  describe('8. Automated Missing Attendance Detection & Deduplication', () => {
+    it('deduplicates alerts and dispatches notices to both teacher and admin', async () => {
+      prisma.user.findMany.mockResolvedValueOnce([
+        { id: 'admin-1', role: UserRole.ADMIN },
       ]);
 
-      const summary = await service.getSummary('inst-1', {}, admin);
+      const mockSession = {
+        id: 'sess-missed-1',
+        instituteId: 'inst-1',
+        snapshotTeacherUserId: 'teacher-1',
+        substituteUserId: null,
+        snapshotBatchName: 'Class 10-A',
+        snapshotSubjectName: 'Chemistry',
+        derivedState: 'MISSED',
+        missingAlertSentAt: null,
+      };
 
-      // 2 attended (PRESENT+LATE) out of 3 counted (excludes the 1 EXCUSED) = 67%
-      expect(summary.byBatch).toEqual([{ batchId: 'b1', batchName: 'Alpha', totalMarked: 3, attendancePct: 67 }]);
-      expect(summary.overallAttendancePct).toBe(67);
-      expect(summary.statusBreakdown).toEqual({ PRESENT: 1, ABSENT: 1, LATE: 1, EXCUSED: 1 });
-      // byStudent only populated when a specific batchId is queried
-      expect(summary.byStudent).toEqual([]);
+      jest.spyOn(service, 'getTodaySessions').mockResolvedValueOnce({
+        date: '2026-10-09',
+        timezone: 'Asia/Kolkata',
+        sessions: [mockSession as any],
+        meta: { total: 1, openCount: 0, finalizedCount: 0, awaitingCount: 0, missedCount: 1, cancelledCount: 0 },
+      });
+
+      const res = await service.detectAndAlertMissingSessions('inst-1');
+      expect(res.detectedCount).toBe(1);
+      expect(res.newlyNotifiedCount).toBe(1);
+      expect(prisma.attendanceSession.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'sess-missed-1' },
+          data: expect.objectContaining({
+            missingAlertSentAt: expect.any(Date),
+          }),
+        }),
+      );
+      expect(prisma.notice.create).toHaveBeenCalled();
+      expect(prisma.noticeDelivery.create).toHaveBeenCalled();
     });
 
-    it('populates byStudent only when scoped to a single batch', async () => {
-      prisma.attendanceRecord.findMany.mockResolvedValueOnce([
-        { status: AttendanceStatus.ABSENT, batchId: 'b1', studentProfileId: 's1', batch: { name: 'Alpha' }, studentProfile: { rollNumber: '01', user: { name: 'Aarav' } } },
-      ]);
+    it('skips sessions that have already received a missing alert (deduplication)', async () => {
+      const mockSession = {
+        id: 'sess-already-alerted',
+        instituteId: 'inst-1',
+        snapshotTeacherUserId: 'teacher-1',
+        derivedState: 'MISSED',
+        missingAlertSentAt: new Date(),
+      };
 
-      const summary = await service.getSummary('inst-1', { batchId: 'b1' }, admin);
+      jest.spyOn(service, 'getTodaySessions').mockResolvedValueOnce({
+        date: '2026-10-09',
+        timezone: 'Asia/Kolkata',
+        sessions: [mockSession as any],
+        meta: { total: 1, openCount: 0, finalizedCount: 0, awaitingCount: 0, missedCount: 1, cancelledCount: 0 },
+      });
 
-      expect(summary.byStudent).toEqual([{ studentProfileId: 's1', name: 'Aarav', rollNumber: '01', totalMarked: 1, attendancePct: 0 }]);
+      const res = await service.detectAndAlertMissingSessions('inst-1');
+      expect(res.detectedCount).toBe(1);
+      expect(res.newlyNotifiedCount).toBe(0);
+      expect(prisma.attendanceSession.update).not.toHaveBeenCalled();
     });
   });
 });
+

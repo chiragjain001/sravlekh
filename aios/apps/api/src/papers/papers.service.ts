@@ -11,6 +11,7 @@ import { AuthenticatedUser } from '../auth/auth.types';
 import {
   CreateBlueprintDto,
   GeneratePaperDto,
+  ListBlueprintsDto,
   BlueprintDistributionRuleDto,
   ManualReplaceItemDto,
   ClonePaperDto,
@@ -29,8 +30,20 @@ export class PapersService {
     this.assertInstituteAccess(actor, instituteId);
 
     // Validate sum of marks matches totalMarks
-    const calculatedMarks = dto.distribution.reduce((acc, rule) => acc + (rule.count * rule.marksPerQuestion), 0);
-    if (calculatedMarks !== dto.totalMarks) {
+    let calculatedMarks = 0;
+    if ((dto.format === 'THEORY' || dto.format === 'HYBRID') && Array.isArray(dto.sections)) {
+      calculatedMarks = dto.sections.reduce((acc, sec) => {
+        const attemptCount = sec.internalChoice ? sec.attemptRequired : sec.questionCount;
+        return acc + (attemptCount * sec.marksPerQuestion);
+      }, 0);
+    } else {
+      calculatedMarks = dto.distribution.reduce((acc, rule) => acc + (rule.count * rule.marksPerQuestion), 0);
+    }
+
+    // DEBUG — remove after diagnosing the 400
+    this.logger.debug(`createBlueprint received: totalMarks=${dto.totalMarks} (type=${typeof dto.totalMarks}), calculatedMarks=${calculatedMarks}, distribution=${JSON.stringify(dto.distribution)}`);
+
+    if (Math.round(calculatedMarks * 100) !== Math.round(Number(dto.totalMarks) * 100)) {
       throw new BadRequestException(`Distribution marks sum (${calculatedMarks}) does not match totalMarks (${dto.totalMarks})`);
     }
 
@@ -43,6 +56,10 @@ export class PapersService {
         duration: dto.duration,
         instructions: dto.instructions,
         distribution: dto.distribution as any,
+        format: dto.format as any,
+        sections: dto.sections ?? null,
+        difficultyDistribution: dto.difficultyDistribution ?? null,
+        bloomsDistribution: dto.bloomsDistribution ?? null,
         createdByUserId: actor.id,
       },
     });
@@ -52,13 +69,33 @@ export class PapersService {
     return blueprint;
   }
 
-  async findAllBlueprints(instituteId: string, actor: AuthenticatedUser) {
+  async findAllBlueprints(instituteId: string, actor: AuthenticatedUser, query: ListBlueprintsDto = {}) {
     this.assertInstituteAccess(actor, instituteId);
-    return this.prisma.blueprint.findMany({
-      where: { instituteId },
-      include: { subject: { select: { id: true, name: true } } },
-      orderBy: { createdAt: 'desc' },
-    });
+
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const skip = (page - 1) * limit;
+
+    const where = {
+      instituteId,
+      ...(query.subjectId && { subjectId: query.subjectId }),
+    };
+
+    const [data, total] = await Promise.all([
+      this.prisma.blueprint.findMany({
+        where,
+        include: { subject: { select: { id: true, name: true } } },
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+        skip,
+      }),
+      this.prisma.blueprint.count({ where }),
+    ]);
+
+    return {
+      data,
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
   }
 
   // ── Paper Generator (C-02) ──────────────────────────────────────────────
@@ -76,17 +113,11 @@ export class PapersService {
 
     const rules = blueprint.distribution as unknown as BlueprintDistributionRuleDto[];
     const selectedQuestionIds: string[] = [];
-    const paperItemsData: { questionId: string; marks: number; order: number }[] = [];
+    const selectedFamilyIds = new Set<string>();
+    const paperItemsData: { questionId: string; questionVersionId?: string; marks: number; order: number; sectionId?: string }[] = [];
     
     let orderCounter = 1;
 
-    // Candidates are fetched per rule and sampled in memory. That is a deliberate
-    // trade, not an oversight: `rules` is a blueprint's distribution list (single
-    // digits in practice), and each query is narrowed by topic + type + difficulty
-    // and selects `id` only, so the working set is a few hundred ids per rule rather
-    // than the whole bank. Revisit with a DB-side sample only if a real bank makes
-    // the per-rule candidate set large — the previous TODO here implied a severity
-    // the query shape does not actually have.
     for (const rule of rules) {
       const candidates = await this.prisma.question.findMany({
         where: {
@@ -95,10 +126,13 @@ export class PapersService {
           type: rule.type,
           difficulty: rule.difficulty,
           isApproved: true,
-          // If personalized, we could prioritize questions the student hasn't seen or has failed previously
           id: { notIn: selectedQuestionIds }, 
         },
-        select: { id: true },
+        select: {
+          id: true,
+          familyId: true,
+          versions: { select: { id: true }, orderBy: { versionNo: 'desc' }, take: 1 },
+        },
       });
 
       if (candidates.length < rule.count) {
@@ -107,17 +141,23 @@ export class PapersService {
         );
       }
 
-      // Uniform draw. This was `candidates.sort(() => 0.5 - Math.random())`, which
-      // is not a shuffle — see sampleWithoutReplacement's comment for the measured
-      // bias (first candidate picked 1.87x too often) and why it matters here.
-      const selected = sampleWithoutReplacement(candidates, rule.count);
+      // Anti-family deduplication: prefer candidates whose question family hasn't been chosen yet
+      const preferred = candidates.filter((c) => !c.familyId || !selectedFamilyIds.has(c.familyId));
+      const pool = preferred.length >= rule.count ? preferred : candidates;
+
+      const selected = sampleWithoutReplacement(pool, rule.count);
 
       for (const q of selected) {
         selectedQuestionIds.push(q.id);
+        if (q.familyId) {
+          selectedFamilyIds.add(q.familyId);
+        }
         paperItemsData.push({
           questionId: q.id,
+          questionVersionId: q.versions?.[0]?.id,
           marks: rule.marksPerQuestion,
           order: orderCounter++,
+          sectionId: rule.sectionId,
         });
       }
     }
@@ -129,6 +169,7 @@ export class PapersService {
           blueprintId: dto.blueprintId,
           title: dto.title,
           status: PaperStatus.DRAFT,
+          format: blueprint.format as any,
           isPersonalized: !!dto.targetStudentId,
           targetStudentId: dto.targetStudentId,
           targetBatchId: dto.targetBatchId,
@@ -158,13 +199,24 @@ export class PapersService {
 
   // ── Retrieve Papers ──────────────────────────────────────────────────────
 
-  async findAllPapers(instituteId: string, actor: AuthenticatedUser) {
+  async findAllPapers(instituteId: string, actor: AuthenticatedUser, page = 1, limit = 20) {
     this.assertInstituteAccess(actor, instituteId);
-    return this.prisma.paper.findMany({
-      where: { instituteId },
-      select: { id: true, title: true, status: true, isPersonalized: true, createdAt: true },
-      orderBy: { createdAt: 'desc' },
-    });
+    const skip = (page - 1) * limit;
+    const where = { instituteId };
+    const [data, total] = await Promise.all([
+      this.prisma.paper.findMany({
+        where,
+        select: { id: true, title: true, status: true, isPersonalized: true, createdAt: true },
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+        skip,
+      }),
+      this.prisma.paper.count({ where }),
+    ]);
+    return {
+      data,
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
   }
 
   async getPaper(instituteId: string, paperId: string, actor: AuthenticatedUser) {
@@ -225,6 +277,7 @@ export class PapersService {
           blueprintId: source.blueprintId,
           title: dto.title,
           status: PaperStatus.DRAFT,
+          format: source.format,
           isPersonalized: source.isPersonalized,
           targetBatchId: dto.targetBatchId,
           createdByUserId: actor.id,
@@ -234,6 +287,7 @@ export class PapersService {
                 questionId: item.questionId,
                 marks: item.marks,
                 order: item.order,
+                sectionId: item.sectionId,
               })),
             },
           },

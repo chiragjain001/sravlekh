@@ -7,23 +7,20 @@
 // either, and inventing one would repeat the fee-service mistake this project
 // has already been steered away from once.
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Building, ShieldCheck, Save, Loader2, Check, Plus, Trash2, X, KeyRound } from 'lucide-react';
 import {
   useInstitute, useUpdateInstitute, useAllowList, useAddAllowListEntry, useRemoveAllowListEntry,
-  usePermissionGrants, useCreatePermissionGrant, useTeachers, useBatches, useSubjects,
 } from '@/hooks/useApi';
 import { ConfirmDialog } from '@/components/ui/foundation';
+import { AppleDropdown, AppleDropdownOption } from '@/components/ui/AppleDropdown';
+import { AdminPermissionsPanel } from '@/components/dashboard/admin/permissions/AdminPermissionsPanel';
 
 type SettingsTab = 'profile' | 'access' | 'permissions';
-const ROLES = ['STUDENT', 'TEACHER', 'ADMIN'];
-
-// Only permission this app actually reads server-side today
-// (evaluations.service.ts's override() check) — kept as a fixed choice
-// rather than a free-text field so this screen can't grant a permission
-// string nothing in the backend recognizes.
-const GRANTABLE_PERMISSIONS = [
-  { value: 'REVIEW_EVALUATION', label: 'Review Evaluation', description: 'Lets a teacher override an already-decided evaluation (dispute an existing score), optionally scoped to one batch/subject.' },
+const ROLE_OPTIONS: AppleDropdownOption[] = [
+  { value: 'STUDENT', label: 'STUDENT', badge: 'Student' },
+  { value: 'TEACHER', label: 'TEACHER', badge: 'Faculty' },
+  { value: 'ADMIN', label: 'ADMIN', badge: 'Admin' },
 ];
 
 function ProfileTab() {
@@ -106,21 +103,46 @@ function AccessTab() {
       </div>
 
       {showAdd && (
-        <form onSubmit={handleAdd} className="p-4 bg-slate-50 rounded-xl border border-slate-100 flex items-end gap-2">
+        <form onSubmit={handleAdd} className="p-4 bg-slate-50/80 rounded-2xl border border-slate-200/80 flex flex-col sm:flex-row sm:items-end gap-3 shadow-xs">
           <div className="flex-1">
-            <label className="block text-[11px] font-semibold text-slate-600 mb-1">Email</label>
-            <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@institute.com" className="w-full text-xs border border-slate-200 rounded-lg px-3 py-2 bg-white" />
+            <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wide mb-1.5">
+              Email Address <span className="text-rose-500">*</span>
+            </label>
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="name@institute.com"
+              className="w-full text-xs font-semibold border border-slate-200/90 rounded-xl px-3.5 py-2 bg-white text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 transition-all min-h-[36px]"
+            />
           </div>
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-600 mb-1">Role</label>
-            <select value={role} onChange={(e) => setRole(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-3 py-2 bg-white">
-              {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
-            </select>
+          <div className="w-full sm:w-44">
+            <AppleDropdown
+              label="Assigned Role"
+              value={role}
+              onChange={setRole}
+              options={ROLE_OPTIONS}
+              size="sm"
+            />
           </div>
-          <button type="submit" disabled={addMutation.isPending} className="px-4 py-2 text-xs font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-60">
-            {addMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Add'}
-          </button>
-          <button type="button" onClick={() => setShowAdd(false)} className="px-3 py-2 text-xs font-bold text-slate-500 bg-white border border-slate-200 rounded-lg"><X className="w-3.5 h-3.5" /></button>
+          <div className="flex items-center gap-1.5 pt-1 sm:pt-0">
+            <button
+              type="submit"
+              disabled={addMutation.isPending || !email.trim()}
+              className="px-4 py-2 text-xs font-bold text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer min-h-[36px]"
+            >
+              {addMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Add'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowAdd(false)}
+              className="p-2 text-slate-400 hover:text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-100 transition-all cursor-pointer min-h-[36px] flex items-center justify-center"
+              aria-label="Cancel"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </form>
       )}
 
@@ -156,122 +178,42 @@ function AccessTab() {
   );
 }
 
-function PermissionsTab() {
-  const { data: grants, isPending } = usePermissionGrants();
-  const { data: teachersResp } = useTeachers();
-  const { data: batchesResp } = useBatches();
-  const { data: subjectsResp } = useSubjects();
-  const createGrant = useCreatePermissionGrant();
-
-  const teachers: { id: string; user: { id: string; name: string; email: string } }[] = teachersResp?.data ?? [];
-  const batches: { id: string; name: string }[] = batchesResp?.data ?? batchesResp ?? [];
-  const subjects: { id: string; name: string }[] = subjectsResp ?? [];
-
-  const [userId, setUserId] = useState('');
-  const [permission, setPermission] = useState(GRANTABLE_PERMISSIONS[0]!.value);
-  const [batchId, setBatchId] = useState('');
-  const [subjectId, setSubjectId] = useState('');
-
-  async function handleGrant(e: React.FormEvent) {
-    e.preventDefault();
-    if (!userId) return;
-    await createGrant.mutateAsync({ userId, permission, batchId: batchId || undefined, subjectId: subjectId || undefined });
-    setUserId(''); setBatchId(''); setSubjectId('');
-  }
-
-  return (
-    <div className="space-y-6 max-w-2xl">
-      <div>
-        <p className="text-xs font-bold text-slate-700">Grant a permission</p>
-        <p className="text-[11px] text-slate-500 mt-0.5">Role alone (even Admin) doesn&apos;t imply these — a teacher can only override an already-decided evaluation once granted REVIEW_EVALUATION here, optionally scoped to one batch or subject.</p>
-      </div>
-
-      <form onSubmit={handleGrant} className="p-4 bg-slate-50 rounded-xl border border-slate-100 grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div>
-          <label className="block text-[11px] font-semibold text-slate-600 mb-1">Teacher</label>
-          <select value={userId} onChange={(e) => setUserId(e.target.value)} className="w-full text-xs border border-slate-200 rounded-lg px-3 py-2 bg-white">
-            <option value="">Select a teacher…</option>
-            {teachers.filter((t: any) => !!t.user?.id).map((t: any) => <option key={t.user.id} value={t.user.id}>{t.user.name} ({t.user.email})</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="block text-[11px] font-semibold text-slate-600 mb-1">Permission</label>
-          <select value={permission} onChange={(e) => setPermission(e.target.value)} className="w-full text-xs border border-slate-200 rounded-lg px-3 py-2 bg-white">
-            {GRANTABLE_PERMISSIONS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="block text-[11px] font-semibold text-slate-600 mb-1">Scope to batch (optional)</label>
-          <select value={batchId} onChange={(e) => setBatchId(e.target.value)} className="w-full text-xs border border-slate-200 rounded-lg px-3 py-2 bg-white">
-            <option value="">Institute-wide</option>
-            {batches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="block text-[11px] font-semibold text-slate-600 mb-1">Scope to subject (optional)</label>
-          <select value={subjectId} onChange={(e) => setSubjectId(e.target.value)} className="w-full text-xs border border-slate-200 rounded-lg px-3 py-2 bg-white">
-            <option value="">All subjects</option>
-            {subjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-        </div>
-        <div className="sm:col-span-2 flex justify-end">
-          <button type="submit" disabled={!userId || createGrant.isPending} className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50">
-            {createGrant.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Grant
-          </button>
-        </div>
-      </form>
-
-      <div>
-        <p className="text-xs font-bold text-slate-700 mb-2">Active grants</p>
-        {isPending ? (
-          <div className="space-y-2 animate-pulse">{[1, 2].map((i) => <div key={i} className="h-10 bg-slate-100 rounded-lg" />)}</div>
-        ) : !grants || grants.length === 0 ? (
-          <p className="text-xs text-slate-400 py-6 text-center">No permission grants yet.</p>
-        ) : (
-          <div className="space-y-1.5">
-            {grants.map((g) => (
-              <div key={g.id} className="flex items-center justify-between px-3.5 py-2.5 bg-white border border-slate-100 rounded-lg">
-                <div>
-                  <span className="text-xs font-bold text-slate-800">{g.user?.name ?? 'Unknown User'}</span>
-                  <span className="ml-2 text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">{g.permission}</span>
-                </div>
-                <span className="text-[11px] text-slate-400">
-                  {g.batchId ? batches.find((b) => b.id === g.batchId)?.name ?? 'One batch' : 'Institute-wide'}
-                  {g.subjectId && ` · ${subjects.find((s) => s.id === g.subjectId)?.name ?? 'One subject'}`}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 export function AdminSystemSettings() {
   const [tab, setTab] = useState<SettingsTab>('profile');
 
   return (
-    <div className="p-6 text-[#1e293b] animate-fadein space-y-6 max-w-[1400px] mx-auto w-full">
-      <div className="pb-4 border-b border-gray-200">
-        <h1 className="text-xl font-bold text-gray-900">Institute Settings</h1>
-        <p className="text-xs text-gray-500 mt-0.5">Institute profile and sign-in access control — the only settings backed by a real service today</p>
+    <div className="p-4 sm:p-6 text-[#1e293b] animate-fadein space-y-6 max-w-[1400px] mx-auto w-full">
+      <div className="pb-4 border-b border-gray-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-gray-900">Institute System Settings</h1>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Manage your institute profile, Google OAuth domain access, fine-grained roles, and access control policies
+          </p>
+        </div>
       </div>
 
-      <div className="bg-white rounded-xl border border-gray-100 shadow-[0_2px_10px_rgba(0,0,0,0.02)] overflow-hidden">
-        <div className="flex items-center gap-2 border-b border-gray-100 p-2 bg-gray-50/50">
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-[0_2px_12px_rgba(0,0,0,0.03)] overflow-hidden">
+        <div className="flex items-center gap-1.5 border-b border-slate-100 p-2 bg-slate-50/70 overflow-x-auto no-scrollbar">
           {[
             { id: 'profile' as const, label: 'Institute Profile', icon: Building },
             { id: 'access' as const, label: 'Domain & Access', icon: ShieldCheck },
-            { id: 'permissions' as const, label: 'Permissions', icon: KeyRound },
+            { id: 'permissions' as const, label: 'Permissions & Access Control', icon: KeyRound },
           ].map((t) => (
-            <button key={t.id} onClick={() => setTab(t.id)} className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-lg transition-all ${tab === t.id ? 'bg-indigo-600 text-white shadow-xs' : 'text-gray-600 hover:bg-white hover:text-gray-900'}`}>
-              <t.icon className="w-3.5 h-3.5" /> {t.label}
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-xl transition-all whitespace-nowrap cursor-pointer ${
+                tab === t.id
+                  ? 'bg-white text-indigo-700 shadow-sm border border-slate-200/60 font-bold'
+                  : 'text-slate-600 hover:bg-white/60 hover:text-slate-900'
+              }`}
+            >
+              <t.icon className={`w-3.5 h-3.5 ${tab === t.id ? 'text-indigo-600' : 'text-slate-400'}`} /> {t.label}
             </button>
           ))}
         </div>
-        <div className="p-6">
-          {tab === 'profile' ? <ProfileTab /> : tab === 'access' ? <AccessTab /> : <PermissionsTab />}
+        <div className="p-4 sm:p-6">
+          {tab === 'profile' ? <ProfileTab /> : tab === 'access' ? <AccessTab /> : <AdminPermissionsPanel />}
         </div>
       </div>
     </div>

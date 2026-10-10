@@ -156,26 +156,26 @@ export function ConfirmDialog({
   if (!isOpen) return null;
   const isDanger = variant === 'danger';
   return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-      <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-md p-6 space-y-5">
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-3">
-            <div className={`w-10 h-10 rounded-2xl flex items-center justify-center ${isDanger ? 'bg-rose-50' : 'bg-amber-50'}`}>
+    <div className="fixed inset-0 z-[300] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-fadein">
+      <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-md p-5 sm:p-6 space-y-4 sm:space-y-5 min-w-0 max-w-full overflow-hidden break-words">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <div className={`w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0 ${isDanger ? 'bg-rose-50' : 'bg-amber-50'}`}>
               <WarnIcon className={`w-5 h-5 ${isDanger ? 'text-rose-500' : 'text-amber-500'}`} />
             </div>
-            <h3 className="text-[16px] font-bold text-slate-800">{title}</h3>
+            <h3 className="text-[15px] sm:text-[16px] font-bold text-slate-800 break-words">{title}</h3>
           </div>
-          <button onClick={onCancel} className="p-1 text-slate-400 hover:text-slate-700"><X className="w-4 h-4" /></button>
+          <button onClick={onCancel} className="p-1 text-slate-400 hover:text-slate-700 flex-shrink-0 cursor-pointer"><X className="w-4 h-4" /></button>
         </div>
-        <p className="text-[13px] text-slate-600 leading-relaxed">{description}</p>
-        <div className="flex items-center justify-end gap-3 pt-2">
-          <button onClick={onCancel} className="px-4 py-2 text-[13px] font-semibold text-slate-700 border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors">
+        <p className="text-[12.5px] sm:text-[13px] text-slate-600 leading-relaxed break-words">{description}</p>
+        <div className="flex items-center justify-end gap-2.5 sm:gap-3 pt-2">
+          <button onClick={onCancel} className="px-4 py-2 text-[12.5px] sm:text-[13px] font-semibold text-slate-700 border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors cursor-pointer">
             Cancel
           </button>
           <button
             onClick={onConfirm}
             disabled={isLoading}
-            className={`px-5 py-2 text-[13px] font-bold text-white rounded-xl transition-colors flex items-center gap-2 ${
+            className={`px-5 py-2 text-[12.5px] sm:text-[13px] font-bold text-white rounded-xl transition-colors flex items-center gap-2 cursor-pointer ${
               isDanger ? 'bg-rose-600 hover:bg-rose-700 disabled:bg-rose-400' : 'bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300'
             }`}
           >
@@ -213,6 +213,102 @@ export function EmptyState({ icon, title, description, action, className }: Empt
         <button onClick={action.onClick} className="mt-2 px-5 py-2 bg-indigo-600 text-white text-[13px] font-bold rounded-xl hover:bg-indigo-700 transition-colors">
           {action.label}
         </button>
+      )}
+    </div>
+  );
+}
+
+// ─── InlineLoadingSpinner ─────────────────────────────────────────────────────
+export function InlineLoadingSpinner({
+  label = 'Loading...',
+  className,
+}: {
+  label?: string;
+  className?: string;
+}) {
+  return (
+    <div className={cn('py-10 sm:py-14 flex flex-col items-center justify-center gap-3 text-slate-500 animate-fadein', className)}>
+      <div className="relative flex items-center justify-center">
+        <div className="w-7 h-7 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+      </div>
+      <span className="text-[12.5px] font-medium text-slate-600">{label}</span>
+    </div>
+  );
+}
+
+// ─── ScreenLoadingState ───────────────────────────────────────────────────────
+export function ScreenLoadingState({
+  title = 'Loading...',
+  subtitle = 'Fetching data from server, please wait a moment...',
+  layout = 'cards',
+  className,
+}: {
+  title?: string;
+  subtitle?: string;
+  layout?: 'cards' | 'table' | 'grid' | 'details' | 'overview';
+  className?: string;
+}) {
+  return (
+    <div className={cn('p-4 sm:p-6 lg:p-8 space-y-6 max-w-6xl mx-auto w-full animate-fadein', className)}>
+      {/* Reassuring loading banner with prominent animated spinner */}
+      <div className="flex items-center gap-4 p-4 sm:p-5 bg-white border border-slate-200/80 rounded-2xl shadow-xs">
+        <div className="relative flex items-center justify-center w-11 h-11 rounded-2xl bg-indigo-50 border border-indigo-100 flex-shrink-0">
+          <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h3 className="text-[15px] sm:text-[16px] font-bold text-slate-800 tracking-tight leading-snug">
+            {title}
+          </h3>
+          <p className="text-[12px] sm:text-[12.5px] text-slate-500 mt-0.5 font-medium leading-normal">
+            {subtitle}
+          </p>
+        </div>
+        <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 bg-slate-50 rounded-xl border border-slate-100 text-[11px] font-semibold text-slate-400">
+          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+          <span>Connecting</span>
+        </div>
+      </div>
+
+      {/* Structured placeholder layout corresponding to what user will see */}
+      {layout === 'cards' && <SkeletonCardGrid count={4} />}
+      {layout === 'table' && <SkeletonTable rows={6} cols={5} />}
+      {layout === 'grid' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="p-5 border border-slate-100 rounded-2xl bg-white space-y-3 animate-pulse">
+              <div className="h-4 w-28 bg-slate-200 rounded" />
+              <div className="h-3 w-40 bg-slate-100 rounded" />
+              <div className="h-10 bg-slate-100 rounded-xl" />
+            </div>
+          ))}
+        </div>
+      )}
+      {layout === 'details' && (
+        <div className="p-6 bg-white border border-slate-200/80 rounded-2xl space-y-4 animate-pulse">
+          <div className="h-5 w-48 bg-slate-200 rounded" />
+          <div className="h-3 w-72 bg-slate-100 rounded" />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4">
+            <div className="h-12 bg-slate-100 rounded-xl" />
+            <div className="h-12 bg-slate-100 rounded-xl" />
+            <div className="h-12 bg-slate-100 rounded-xl" />
+            <div className="h-12 bg-slate-100 rounded-xl" />
+          </div>
+        </div>
+      )}
+      {layout === 'overview' && (
+        <div className="space-y-6">
+          <SkeletonCardGrid count={4} />
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+            <div className="lg:col-span-2 p-5 bg-white border border-slate-100 rounded-2xl space-y-3 animate-pulse">
+              <div className="h-5 w-36 bg-slate-200 rounded" />
+              <div className="h-40 bg-slate-50 rounded-xl" />
+            </div>
+            <div className="p-5 bg-white border border-slate-100 rounded-2xl space-y-3 animate-pulse">
+              <div className="h-5 w-28 bg-slate-200 rounded" />
+              <div className="h-40 bg-slate-50 rounded-xl" />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -76,6 +76,42 @@ describe('StorageService — development disk fallback', () => {
     await expect(prod.upload('k', Buffer.from('x'), 'text/plain')).rejects.toThrow(ServiceUnavailableException);
   });
 
+  it('generates a presigned upload URL and allows writing a file back locally', async () => {
+    const s = devService();
+    const key = s.buildKey('inst-1', 'documents', 'doc-upload-1', 'source.pdf');
+    const uploadUrl = await s.getSignedUploadUrl(key, 'application/pdf');
+    const q = new URL(uploadUrl).searchParams;
+
+    expect(q.get('key')).toBe(key);
+    expect(q.get('type')).toBe('application/pdf');
+
+    await s.writeLocalSigned(
+      key,
+      Number(q.get('exp')),
+      q.get('sig')!,
+      Buffer.from('%PDF-1.4 direct upload test'),
+      'application/pdf',
+    );
+
+    const downloadBody = await s.readLocalSigned(key, Number(q.get('exp')), q.get('sig')!);
+    expect(downloadBody.toString()).toBe('%PDF-1.4 direct upload test');
+  });
+
+  it('refuses writeLocalSigned with an invalid signature or expired timestamp', async () => {
+    const s = devService();
+    const key = s.buildKey('inst-1', 'documents', 'doc-upload-2', 'test.pdf');
+    const uploadUrl = await s.getSignedUploadUrl(key, 'application/pdf');
+    const q = new URL(uploadUrl).searchParams;
+
+    await expect(
+      s.writeLocalSigned(key, Number(q.get('exp')), 'bad-signature', Buffer.from('data'), 'application/pdf'),
+    ).rejects.toThrow(ServiceUnavailableException);
+
+    await expect(
+      s.writeLocalSigned(key, Date.now() - 10_000, q.get('sig')!, Buffer.from('data'), 'application/pdf'),
+    ).rejects.toThrow(/expired/i);
+  });
+
   it('prefers real S3 over the fallback when it is configured', () => {
     const s3 = new StorageService(
       config({ NODE_ENV: 'development', S3_BUCKET: 'b', AWS_REGION: 'r', AWS_ACCESS_KEY_ID: 'k', AWS_SECRET_ACCESS_KEY: 's' }),

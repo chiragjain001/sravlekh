@@ -104,6 +104,32 @@ describe('envSchema — INTERNAL_SERVICE_TOKEN fail-closed gate', () => {
       expect(String((err as Error).message)).not.toContain(secret.slice(0, 10));
     }
   });
+
+  it('REFUSES to boot in production when DATABASE_URL points to a test or dev database', () => {
+    expect(() =>
+      envSchema.parse({
+        ...PROD,
+        INTERNAL_SERVICE_TOKEN: VALID,
+        DATABASE_URL: 'postgresql://postgres:secret@db.prod.internal:5432/sarvlekh_test',
+      }),
+    ).toThrow(/indicates a test\/dev database/);
+
+    expect(() =>
+      envSchema.parse({
+        ...PROD,
+        INTERNAL_SERVICE_TOKEN: VALID,
+        DATABASE_URL: 'postgresql://postgres:secret@db.prod.internal:5432/aios_dev',
+      }),
+    ).toThrow(/indicates a test\/dev database/);
+
+    expect(() =>
+      envSchema.parse({
+        ...PROD,
+        INTERNAL_SERVICE_TOKEN: VALID,
+        DATABASE_URL: 'postgresql://postgres:secret@db.prod.internal:5432/test',
+      }),
+    ).toThrow(/indicates a test\/dev database/);
+  });
 });
 
 describe('envSchema — AIOS_ENV=staging target guard', () => {

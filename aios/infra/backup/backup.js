@@ -170,7 +170,7 @@ function applyRetention(dir, keepDaily, keepWeekly) {
     const ageDays = (now - entry.createdAt.getTime()) / DAY;
     if (ageDays <= keepDaily) continue;
 
-    const week = `${entry.createdAt.getUTCFullYear()}-W${Math.floor(entry.createdAt.getTime() / (7 * DAY))}`;
+    const week = `W${Math.floor((ageDays - keepDaily) / 7)}`;
     if (ageDays <= keepDaily + keepWeekly * 7 && !keptWeeks.has(week)) {
       keptWeeks.add(week); // the weekly survivor for this week
       continue;

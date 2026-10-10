@@ -13,6 +13,7 @@ import {
   UpdateQuestionDto,
   QueryQuestionsDto,
 } from './dto/question.dto';
+import { computeContentHashAndFingerprint } from './question-dedup.helper';
 
 // 09-CACHING-STRATEGY.md §1.2 / §3 — broad invalidation by instituteId prefix,
 // not per-filter-key precision, is explicitly acceptable given the short TTL.
@@ -50,8 +51,10 @@ export class QuestionsService {
       throw new NotFoundException('Invalid Subject/Chapter/Topic hierarchy.');
     }
 
+    const { contentHash, fingerprint } = computeContentHashAndFingerprint(dto.content);
+
     const question = await this.prisma.$transaction(async (tx) => {
-      // 1. Create the question in draft/unapproved state
+      // 1. Create the question in draft/unapproved state with full metadata
       const q = await tx.question.create({
         data: {
           instituteId,
@@ -71,6 +74,38 @@ export class QuestionsService {
           isApproved: actor.role === UserRole.FOUNDER || actor.role === UserRole.ADMIN,
           approvedByUserId: (actor.role === UserRole.FOUNDER || actor.role === UserRole.ADMIN) ? actor.id : null,
           approvedAt: (actor.role === UserRole.FOUNDER || actor.role === UserRole.ADMIN) ? new Date() : null,
+
+          // Enhanced Curriculum, Taxonomy & Variant attributes
+          bloomsLevel: dto.bloomsLevel,
+          sourceType: dto.sourceType,
+          sourceDetails: dto.sourceDetails ? (dto.sourceDetails as any) : undefined,
+          contentHash,
+          fingerprint,
+          expectedTimeSec: dto.expectedTimeSec ?? 120,
+          language: dto.language ?? 'en',
+          familyId: dto.familyId,
+          parentQuestionId: dto.parentQuestionId,
+          variantType: dto.variantType,
+          typePayload: dto.typePayload ? (dto.typePayload as any) : undefined,
+          gradeLevelId: dto.gradeLevelId,
+          curriculumVersionId: dto.curriculumVersionId,
+
+          ...(dto.conceptIds && dto.conceptIds.length > 0 && {
+            concepts: {
+              create: dto.conceptIds.map((cid, idx) => ({
+                conceptId: cid,
+                isPrimary: idx === 0,
+              })),
+            },
+          }),
+
+          ...(dto.learningObjectiveIds && dto.learningObjectiveIds.length > 0 && {
+            learningObjectives: {
+              create: dto.learningObjectiveIds.map((loid) => ({
+                learningObjectiveId: loid,
+              })),
+            },
+          }),
         },
       });
 
@@ -111,6 +146,13 @@ export class QuestionsService {
     if (query.topicId) where['topicId'] = query.topicId;
     if (query.difficulty) where['difficulty'] = query.difficulty;
     if (query.type) where['type'] = query.type;
+    if (query.bloomsLevel) where['bloomsLevel'] = query.bloomsLevel;
+    if (query.status) where['status'] = query.status;
+    if (query.sourceType) where['sourceType'] = query.sourceType;
+    if (query.familyId) where['familyId'] = query.familyId;
+    if (query.gradeLevelId) where['gradeLevelId'] = query.gradeLevelId;
+    if (query.language) where['language'] = query.language;
+    if (query.conceptId) where['concepts'] = { some: { conceptId: query.conceptId } };
     if (query.isApproved !== undefined) where['isApproved'] = query.isApproved;
 
     const cacheKey = questionBankKey(instituteId, query);
@@ -123,6 +165,8 @@ export class QuestionsService {
         include: {
           subject: { select: { name: true } },
           topic: { select: { name: true } },
+          concepts: { include: { concept: { select: { name: true, code: true } } } },
+          family: { select: { name: true, code: true } },
         },
         skip,
         take: limit,

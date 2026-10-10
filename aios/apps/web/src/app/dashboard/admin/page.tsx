@@ -10,27 +10,36 @@ import { Suspense } from 'react';
 // Foundation components
 import { RouteGuard, FullPageSkeleton } from '@/components/ui/RouteGuard';
 import { PageErrorBoundary }            from '@/components/ui/ErrorBoundary';
-import { OfflineBanner }                from '@/components/ui/foundation';
+import { OfflineBanner, ScreenLoadingState } from '@/components/ui/foundation';
 
-// Screens
+import dynamic from 'next/dynamic';
+
+// Screens — AdminOverview is eager (landing tab), others are code-split
 import { AdminOverview }      from '@/components/dashboard/admin/screens/AdminOverview';
-import { AdminTeachers }      from '@/components/dashboard/admin/screens/AdminTeachers';
-import { AdminStudents }      from '@/components/dashboard/admin/screens/AdminStudents';
-import { AdminBatches }       from '@/components/dashboard/admin/screens/AdminBatches';
-import { AdminAcademics }     from '@/components/dashboard/admin/screens/AdminAcademics';
-import { QuestionBankManager } from '@/components/dashboard/questions/QuestionBankManager';
-import { PapersList }         from '@/components/dashboard/admin/papers/PapersList';
-import { AdminExams }         from '@/components/dashboard/admin/screens/AdminExams';
-import { DoubtsList }         from '@/components/dashboard/admin/doubts/DoubtsList';
-import { AssignmentsList }    from '@/components/dashboard/admin/assignments/AssignmentsList';
-import { AdminTimetable }     from '@/components/dashboard/admin/screens/AdminTimetable';
-import { AdminAttendance }    from '@/components/dashboard/admin/screens/AdminAttendance';
-import { AdminCommunication } from '@/components/dashboard/admin/screens/AdminCommunication';
-import { AdminReports }       from '@/components/dashboard/admin/screens/AdminReports';
-import { AdminSystemSettings }from '@/components/dashboard/admin/screens/AdminSystemSettings';
-import { AdminAuditLogs }     from '@/components/dashboard/admin/screens/AdminAuditLogs';
-import { AdminAnalytics }     from '@/components/dashboard/admin/screens/AdminAnalytics';
-import { AdminEvaluationQualityDashboard } from '@/components/dashboard/admin/screens/AdminEvaluationQualityDashboard';
+
+const AdminScreenLoader = () => (
+  <ScreenLoadingState
+    title="Loading Admin Console..."
+    subtitle="Fetching institute records and configurations from server..."
+    layout="table"
+  />
+);
+
+const AdminTeachers = dynamic(() => import('@/components/dashboard/admin/screens/AdminTeachers').then((m) => m.AdminTeachers), { loading: AdminScreenLoader });
+const AdminStudents = dynamic(() => import('@/components/dashboard/admin/screens/AdminStudents').then((m) => m.AdminStudents), { loading: AdminScreenLoader });
+const AdminBatches = dynamic(() => import('@/components/dashboard/admin/screens/AdminBatches').then((m) => m.AdminBatches), { loading: AdminScreenLoader });
+const AdminExams = dynamic(() => import('@/components/dashboard/admin/screens/AdminExams').then((m) => m.AdminExams), { loading: AdminScreenLoader });
+const DoubtsList = dynamic(() => import('@/components/dashboard/admin/doubts/DoubtsList').then((m) => m.DoubtsList), { loading: AdminScreenLoader });
+const AssignmentsList = dynamic(() => import('@/components/dashboard/admin/assignments/AssignmentsList').then((m) => m.AssignmentsList), { loading: AdminScreenLoader });
+const AdminTimetable = dynamic(() => import('@/components/dashboard/admin/screens/AdminTimetable').then((m) => m.AdminTimetable), { loading: AdminScreenLoader });
+const AdminAttendance = dynamic(() => import('@/components/dashboard/admin/screens/AdminAttendance').then((m) => m.AdminAttendance), { loading: AdminScreenLoader });
+const AdminCommunication = dynamic(() => import('@/components/dashboard/admin/screens/AdminCommunication').then((m) => m.AdminCommunication), { loading: AdminScreenLoader });
+const AdminReports = dynamic(() => import('@/components/dashboard/admin/screens/AdminReports').then((m) => m.AdminReports), { loading: AdminScreenLoader });
+const AdminSystemSettings = dynamic(() => import('@/components/dashboard/admin/screens/AdminSystemSettings').then((m) => m.AdminSystemSettings), { loading: AdminScreenLoader });
+const AdminAuditLogs = dynamic(() => import('@/components/dashboard/admin/screens/AdminAuditLogs').then((m) => m.AdminAuditLogs), { loading: AdminScreenLoader });
+const AdminAnalytics = dynamic(() => import('@/components/dashboard/admin/screens/AdminAnalytics').then((m) => m.AdminAnalytics), { loading: AdminScreenLoader });
+const AdminEvaluationQualityDashboard = dynamic(() => import('@/components/dashboard/admin/screens/AdminEvaluationQualityDashboard').then((m) => m.AdminEvaluationQualityDashboard), { loading: AdminScreenLoader });
+const AdminAnalyticsHub = dynamic(() => import('@/components/dashboard/admin/screens/AdminAnalyticsHub').then((m) => m.AdminAnalyticsHub), { loading: AdminScreenLoader });
 
 import { useNavigationHistory } from '@/hooks/useNavigationHistory';
 
@@ -41,25 +50,25 @@ function AdminDashboardInner() {
 
   const renderScreen = () => {
     switch (adminNav) {
-      case 'Dashboard':       return <AdminOverview />;
-      case 'Teachers':        return <AdminTeachers />;
-      case 'Students':        return <AdminStudents />;
-      case 'Batches':         return <AdminBatches />;
-      case 'Academics':       return <AdminAcademics />;
-      case 'Question Bank':   return <QuestionBankManager />;
-      case 'Papers':          return <div className="p-6"><PapersList /></div>;
-      case 'Exams':           return <AdminExams />;
-      case 'Doubts':          return <div className="p-6"><DoubtsList /></div>;
-      case 'Assignments':     return <div className="p-6"><AssignmentsList /></div>;
-      case 'Timetable':       return <AdminTimetable />;
-      case 'Attendance':      return <AdminAttendance />;
-      case 'Communication':   return <AdminCommunication />;
-      case 'Reports':         return <AdminReports />;
-      case 'System Settings': return <AdminSystemSettings />;
-      case 'Settings':        return <AdminSystemSettings />;
-      case 'Audit Logs':      return <AdminAuditLogs />;
-      case 'Analytics':       return <AdminAnalytics />;
-      case 'Evaluation Quality': return <AdminEvaluationQualityDashboard />;
+      case 'Dashboard':          return <AdminOverview />;
+      case 'Teachers':            return <AdminTeachers />;
+      case 'Students':            return <AdminStudents />;
+      case 'Batches':             return <AdminBatches />;
+      case 'Exams':               return <AdminExams />;
+      case 'Doubts':              return <div className="p-6"><DoubtsList /></div>;
+      case 'Assignments':         return <div className="p-6"><AssignmentsList /></div>;
+      case 'Timetable':           return <AdminTimetable />;
+      case 'Attendance':          return <AdminAttendance />;
+      case 'Communication':       return <AdminCommunication />;
+      // Merged hub — primary entry point
+      case 'Analytics & Reports': return <AdminAnalyticsHub />;
+      // Legacy deep-link fallbacks — keep routing these so bookmarks don't break
+      case 'Reports':             return <AdminReports />;
+      case 'System Settings':     return <AdminSystemSettings />;
+      case 'Settings':            return <AdminSystemSettings />;
+      case 'Audit Logs':          return <AdminAuditLogs />;
+      case 'Analytics':           return <AdminAnalytics />;
+      case 'Evaluation Quality':  return <AdminEvaluationQualityDashboard />;
       default:
         return (
           <div className="flex items-center justify-center h-[50vh] text-slate-400 animate-fadein">
@@ -74,7 +83,7 @@ function AdminDashboardInner() {
   const todayStr = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
   return (
-    <div className="flex h-screen overflow-hidden bg-bg">
+    <div className="flex h-screen w-full max-w-full overflow-hidden bg-bg">
       <OfflineBanner />
 
       <Sidebar
@@ -88,7 +97,7 @@ function AdminDashboardInner() {
         onLogout={logout}
       />
 
-      <div className="flex-1 overflow-y-auto min-w-0 flex flex-col bg-[#f8fafc]">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden min-w-0 flex flex-col w-full max-w-full bg-[#f8fafc]" style={{ WebkitOverflowScrolling: 'touch' }}>
         <TopHeader
           greeting={adminNav === 'Dashboard' ? `Welcome back, ${adminName.split(' ')[0]}! ☀️` : adminNav}
           subtitle={adminNav === 'Dashboard' ? "Here's an overview of your institute." : `Manage your institute ${adminNav.toLowerCase()}`}
@@ -99,7 +108,7 @@ function AdminDashboardInner() {
           onBack={goBack}
         />
 
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 w-full max-w-full">
           <PageErrorBoundary>
             {renderScreen()}
           </PageErrorBoundary>

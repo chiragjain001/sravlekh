@@ -1,10 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import { Calendar as CalendarIcon, Clock, MapPin, Search } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, MapPin, Search, Plus } from 'lucide-react';
 import { useTimetable } from '@/hooks/useApi';
 import { useAuth } from '@/contexts/auth.context';
 import { useDashboardStore } from '@/store/dashboard-store';
+import { ScheduleExtraClassModal } from '@/components/dashboard/teacher/shared/ScheduleExtraClassModal';
+import { ScreenLoadingState } from '@/components/ui/foundation';
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 const DAY_INDEX: Record<(typeof DAYS)[number], number> = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
@@ -28,9 +30,12 @@ export function TeacherTimeTable() {
   const { teacherCtx, setTeacherNav, setTeacherCtx } = useDashboardStore();
   const { user } = useAuth();
   const [search, setSearch] = useState('');
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalBatchId, setModalBatchId] = useState('');
+  const [modalTopic, setModalTopic] = useState('');
   const q = search.trim().toLowerCase();
 
-  const { data: slotsResp, isLoading } = useTimetable(user ? { teacherUserId: user.id } : undefined);
+  const { data: slotsResp, isLoading, refetch } = useTimetable(user ? { teacherUserId: user.id } : undefined);
   const slots: any[] = slotsResp?.data ?? slotsResp ?? [];
 
   const handleSlotClick = (batchId: string) => {
@@ -64,28 +69,49 @@ export function TeacherTimeTable() {
 
   return (
     <div className="p-6 animate-fadein space-y-6 max-w-6xl mx-auto">
+      <ScheduleExtraClassModal
+        isOpen={modalOpen}
+        onClose={() => setModalOpen(false)}
+        initialBatchId={modalBatchId}
+        initialTopic={modalTopic}
+        onScheduled={() => refetch()}
+      />
+
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-[22px] font-bold text-slate-800">Global Time Table</h1>
-          <p className="text-[13px] text-slate-500 mt-0.5">Your complete weekly schedule across all assigned batches.</p>
+          <h1 className="text-[22px] font-bold text-slate-800">Timetable</h1>
+          <p className="text-[13px] text-slate-500 mt-0.5">Your complete weekly schedule. Schedule remedial or extra classes directly from here.</p>
         </div>
-        <div className="flex items-center gap-3 p-2 bg-white border border-slate-200 rounded-xl">
-          <Search className="w-4 h-4 text-slate-400 ml-2" />
-          <input
-            type="text"
-            placeholder="Search by topic, batch, or room…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="w-52 text-[13px] outline-none placeholder:text-slate-400 bg-transparent"
-          />
-          {search && (
-            <button onClick={() => setSearch('')} className="text-slate-400 hover:text-slate-600 text-[11px] font-bold mr-1">✕</button>
-          )}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 p-2 bg-white border border-slate-200 rounded-xl">
+            <Search className="w-4 h-4 text-slate-400 ml-2" />
+            <input
+              type="text"
+              placeholder="Search by topic, batch, or room…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-44 text-[13px] outline-none placeholder:text-slate-400 bg-transparent"
+            />
+            {search && (
+              <button onClick={() => setSearch('')} className="text-slate-400 hover:text-slate-600 text-[11px] font-bold mr-1">✕</button>
+            )}
+          </div>
+          <button
+            onClick={() => { setModalBatchId(''); setModalTopic(''); setModalOpen(true); }}
+            className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white text-[13px] font-bold rounded-xl hover:bg-indigo-700 transition-colors shadow-sm"
+          >
+            <Plus className="w-4 h-4" /> Schedule Extra Class
+          </button>
         </div>
       </div>
 
       {isLoading ? (
-        <div className="py-16 text-center text-slate-400 text-[13px]">Loading timetable…</div>
+        <ScreenLoadingState
+          title="Loading Time Table..."
+          subtitle="Fetching your weekly teaching schedule, room allocations, and batches..."
+          layout="grid"
+          className="p-0 max-w-none"
+        />
       ) : (
       <div className="grid grid-cols-1 lg:grid-cols-6 gap-4">
         {DAYS.map(day => {

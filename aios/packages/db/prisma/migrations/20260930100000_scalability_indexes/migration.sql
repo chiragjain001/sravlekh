@@ -1,0 +1,14 @@
+-- NOTE: Prisma wraps migrations in a transaction block (BEGIN...COMMIT), which
+-- prohibits the use of CREATE INDEX CONCURRENTLY.
+-- To ensure lock-free index creation on large live tables, these indexes must
+-- be created manually using psql or another client before this migration is
+-- marked as applied.
+-- 
+-- MANUAL SCRIPT:
+-- CREATE INDEX CONCURRENTLY IF NOT EXISTS "assignments_studentProfileId_idx" ON "assignments"("studentProfileId");
+-- CREATE INDEX CONCURRENTLY IF NOT EXISTS "interventions_instituteId_idx" ON "interventions"("instituteId");
+-- CREATE INDEX CONCURRENTLY IF NOT EXISTS "answer_sheets_studentProfileId_idx" ON "answer_sheets"("studentProfileId");
+-- CREATE INDEX CONCURRENTLY IF NOT EXISTS "responses_questionId_idx" ON "responses"("questionId");
+--
+-- After manual execution, Prisma will record this migration as applied without
+-- running any additional schema changes.

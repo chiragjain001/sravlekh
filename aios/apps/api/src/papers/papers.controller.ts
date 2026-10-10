@@ -5,6 +5,7 @@ import {
   Patch,
   Body,
   Param,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
@@ -12,6 +13,7 @@ import { PapersService } from './papers.service';
 import {
   CreateBlueprintDto,
   GeneratePaperDto,
+  ListBlueprintsDto,
   ManualReplaceItemDto,
   ClonePaperDto,
 } from './dto/paper.dto';
@@ -40,12 +42,13 @@ export class PapersController {
 
   @Get('blueprints')
   @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
-  @ApiOperation({ summary: 'List all blueprints' })
+  @ApiOperation({ summary: 'List all blueprints (paginated, optionally filtered by subjectId)' })
   findAllBlueprints(
     @Param('instituteId') instituteId: string,
+    @Query() query: ListBlueprintsDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.papersService.findAllBlueprints(instituteId, user);
+    return this.papersService.findAllBlueprints(instituteId, user, query);
   }
 
   @Post('papers/generate')

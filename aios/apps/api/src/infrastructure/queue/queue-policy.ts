@@ -175,6 +175,15 @@ export const QUEUE_POLICY = {
     concurrency: fromEnv('QUEUE_CONCURRENCY_REPORT_GENERATION', 2),
     jobOptions: { removeOnComplete: true, removeOnFail: { count: 300, age: 14 * DAY } },
   },
+
+  /**
+   * ATTENDANCE MISSING CHECK — Periodic scan detecting overdue sessions
+   * and alerting responsible teachers/substitutes and administrators.
+   */
+  attendanceMissingCheck: {
+    concurrency: fromEnv('QUEUE_CONCURRENCY_ATTENDANCE_CHECK', 2),
+    jobOptions: { removeOnComplete: true, removeOnFail: { count: 300, age: 7 * DAY } },
+  },
 } as const satisfies Record<string, QueuePolicy>;
 
 /**
@@ -193,6 +202,6 @@ export const QUEUE_POLICY = {
 export const RUN_WORKERS = process.env['RUN_WORKERS'] !== 'false';
 
 /** Worker options for a @Processor: concurrency plus the autorun switch. */
-export function workerOptions(policy: QueuePolicy) {
-  return { concurrency: policy.concurrency, autorun: RUN_WORKERS };
+export function workerOptions(policy?: QueuePolicy) {
+  return { concurrency: policy?.concurrency ?? 2, autorun: RUN_WORKERS };
 }

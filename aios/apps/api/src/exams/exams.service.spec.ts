@@ -1,9 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
-import { ExamStatus, UserRole, Prisma } from '@prisma/client';
+import { ExamStatus, UserRole, PaperStatus, Prisma } from '@prisma/client';
 import { ExamsService } from './exams.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AnalyticsService } from '../analytics/analytics.service';
+import { CacheService } from '../infrastructure/cache/cache.service';
 import { AuthenticatedUser } from '../auth/auth.types';
 
 const ALL_STATUSES = Object.values(ExamStatus);
@@ -19,25 +20,14 @@ const VALID_FORWARD: Record<ExamStatus, ExamStatus | null> = {
 
 describe('ExamsService — state machine', () => {
   let service: ExamsService;
-  let prisma: {
-    exam: { findUnique: jest.Mock; findMany: jest.Mock; update: jest.Mock; delete: jest.Mock; create: jest.Mock };
-    teacherProfile: { findUnique: jest.Mock };
-    batchTeacher: { findMany: jest.Mock };
-    scoreRecord: { findMany: jest.Mock };
-    answerSheet: { findMany: jest.Mock; count: jest.Mock };
-    auditLog: { create: jest.Mock };
-    paper: { updateMany: jest.Mock };
-    blueprint: { findUnique: jest.Mock };
-    batch: { findUnique: jest.Mock };
-    $transaction: jest.Mock;
-  };
+  let prisma: any;
 
   const admin: AuthenticatedUser = { id: 'admin-1', email: 'a@x.com', name: 'Admin', role: UserRole.ADMIN, instituteId: 'inst-1' };
   const teacher: AuthenticatedUser = { ...admin, id: 'teacher-1', role: UserRole.TEACHER };
 
   beforeEach(async () => {
     prisma = {
-      exam: { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn(), delete: jest.fn(), create: jest.fn() },
+      exam: { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn(), delete: jest.fn(), create: jest.fn(), count: jest.fn().mockResolvedValue(1) },
       teacherProfile: { findUnique: jest.fn() },
       batchTeacher: { findMany: jest.fn() },
       scoreRecord: { findMany: jest.fn() },
@@ -48,18 +38,24 @@ describe('ExamsService — state machine', () => {
       // separately below, in 'governance gate (P1 A4)'.
       answerSheet: { findMany: jest.fn(), count: jest.fn().mockResolvedValue(0) },
       auditLog: { create: jest.fn() },
-      paper: { updateMany: jest.fn() },
-      blueprint: { findUnique: jest.fn() },
+      paper: { updateMany: jest.fn(), findUnique: jest.fn(), update: jest.fn(), findMany: jest.fn() },
+      blueprint: { findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn() },
+      subject: { findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn() },
       batch: { findUnique: jest.fn() },
+      user: { findMany: jest.fn().mockResolvedValue([]) },
+      notice: { create: jest.fn().mockResolvedValue({ id: 'not-1' }) },
+      noticeDelivery: { create: jest.fn() },
       // LOCK/UNLOCK go through prisma.$transaction([...]) so the audit entry is
       // atomic with the mutation — mirror Prisma's array-form behavior in the mock.
-      $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
+      $transaction: jest.fn((ops: any) => typeof ops === 'function' ? ops(prisma) : Promise.all(ops)),
+      $queryRaw: jest.fn().mockResolvedValue([]),
     };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ExamsService,
         { provide: PrismaService, useValue: prisma },
         { provide: AnalyticsService, useValue: {} },
+        { provide: CacheService, useValue: { get: jest.fn(), set: jest.fn(), del: jest.fn() } },
       ],
     }).compile();
     service = module.get(ExamsService);
@@ -316,7 +312,10 @@ describe('ExamsService — state machine', () => {
       prisma.exam.findUnique.mockResolvedValueOnce({ id: 'exam-1', instituteId: 'inst-1', batchId: 'batch-1' });
       prisma.scoreRecord.findMany.mockResolvedValueOnce([
         { studentProfileId: 's1', obtainedMarks: 8, totalMarks: 10, percentage: 80, isFinalized: true, studentProfile: { user: { name: 'Aarav' } } },
-        { studentProfileId: 's2', obtainedMarks: 4, totalMarks: 10, percentage: 40, isFinalized: true, studentProfile: { user: { name: 'Diya' } } },
+        { studentProfileId: 's1', obtainedMarks: 4, totalMarks: 10, percentage: 40, isFinalized: true, studentProfile: { user: { name: 'Diya' } } },
+      ]);
+      prisma.$queryRaw.mockResolvedValueOnce([
+        { question_id: 'q1', topic_name: 'Kinematics', difficulty: 'EASY', content: 'Q1', total: 2n, correct: 1n }
       ]);
       prisma.answerSheet.findMany.mockResolvedValueOnce([
         {
@@ -326,10 +325,19 @@ describe('ExamsService — state machine', () => {
           ],
         },
       ]);
+      prisma.answerSheet.count.mockResolvedValueOnce(1);
 
       const result = await service.getResults('inst-1', 'exam-1', admin);
 
-      expect(result.summary).toEqual({ participated: 1, graded: 2, avgScore: 60, topScore: 80 });
+      expect(result.summary).toEqual({
+        totalEnrolled: 1,
+        participated: 1,
+        absent: 0,
+        notAttempted: 0,
+        graded: 2,
+        avgScore: 60,
+        topScore: 80,
+      });
       expect(result.students).toHaveLength(2);
       expect(result.questionAnalysis).toEqual([
         expect.objectContaining({ questionId: 'q1', topic: 'Kinematics', correct: 1, total: 2, correctPct: 50 }),
@@ -355,6 +363,7 @@ describe('ExamsService — state machine', () => {
           ExamsService,
           { provide: PrismaService, useValue: prismaWithAnswerSheet },
           { provide: AnalyticsService, useValue: {} },
+          { provide: CacheService, useValue: { get: jest.fn(), set: jest.fn(), del: jest.fn() } },
         ],
       }).compile();
       const lockedService = module.get(ExamsService);
@@ -439,6 +448,54 @@ describe('ExamsService — state machine', () => {
     it('is not evaluated at all when no scheduledDate is given — a draft with no date yet stays valid', async () => {
       await expect(service.createExam('inst-1', validDto, admin)).resolves.toBeDefined();
       expect(prisma.exam.create).toHaveBeenCalled();
+    });
+  });
+
+  describe('Candidate paper workflow & official selection', () => {
+    it('allows a teacher to submit their candidate paper for an exam', async () => {
+      prisma.exam.findUnique.mockResolvedValueOnce({ id: 'exam-1', instituteId: 'inst-1', status: ExamStatus.DRAFT });
+      prisma.paper.findUnique.mockResolvedValueOnce({ id: 'paper-1', instituteId: 'inst-1', createdByUserId: 'teacher-1', status: PaperStatus.DRAFT });
+      prisma.paper.update.mockResolvedValueOnce({ id: 'paper-1', status: PaperStatus.SUBMITTED });
+      prisma.exam.update.mockResolvedValueOnce({ id: 'exam-1', status: ExamStatus.REVIEW });
+
+      await expect(service.submitCandidatePaper('inst-1', 'exam-1', 'paper-1', teacher)).resolves.toEqual({
+        message: 'Candidate paper submitted successfully.',
+      });
+      expect(prisma.paper.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'paper-1' },
+          data: expect.objectContaining({ status: PaperStatus.SUBMITTED, examId: 'exam-1' }),
+        }),
+      );
+    });
+
+    it('rejects a student submitting a candidate paper', async () => {
+      const studentUser: AuthenticatedUser = { id: 's-1', email: 's@x.com', name: 'Student', instituteId: 'inst-1', role: UserRole.STUDENT };
+      await expect(
+        service.submitCandidatePaper('inst-1', 'exam-1', 'paper-1', studentUser),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('allows an admin to select an official paper, archives competitors, and notifies teachers', async () => {
+      prisma.exam.findUnique.mockResolvedValueOnce({ id: 'exam-1', instituteId: 'inst-1', title: 'Half Yearly', status: ExamStatus.REVIEW });
+      prisma.paper.findUnique.mockResolvedValueOnce({ id: 'paper-1', instituteId: 'inst-1', examId: 'exam-1', createdByUserId: 'teacher-1' });
+      prisma.paper.findMany.mockResolvedValueOnce([
+        { id: 'paper-2', examId: 'exam-1', createdByUserId: 'teacher-2', status: PaperStatus.SUBMITTED },
+      ]);
+      prisma.paper.update.mockResolvedValueOnce({ id: 'paper-1', status: PaperStatus.APPROVED });
+      prisma.paper.updateMany.mockResolvedValueOnce({ count: 1 });
+      prisma.exam.update.mockResolvedValueOnce({ id: 'exam-1', status: ExamStatus.APPROVED });
+
+      const res = await service.selectOfficialPaper('inst-1', 'exam-1', { paperId: 'paper-1', comment: 'Excellent question distribution' }, admin);
+
+      expect(res.officialPaperId).toBe('paper-1');
+      expect(prisma.notice.create).toHaveBeenCalledTimes(2); // One for selected, one for non-selected
+    });
+
+    it('rejects non-admin selecting an official paper', async () => {
+      await expect(
+        service.selectOfficialPaper('inst-1', 'exam-1', { paperId: 'paper-1' }, teacher),
+      ).rejects.toThrow(ForbiddenException);
     });
   });
 });

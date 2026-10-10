@@ -2,7 +2,14 @@ import { Controller, Get, Post, Patch, Body, Param, Query, Headers, UseIntercept
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiConsumes } from '@nestjs/swagger';
 import { DocumentsService } from './documents.service';
-import { CreateDocumentBundleDto, ReprocessDocumentDto, CreatePageRegionDto, UpdatePageRegionDto } from './dto/document.dto';
+import {
+  CreateDocumentBundleDto,
+  ReprocessDocumentDto,
+  CreatePageRegionDto,
+  UpdatePageRegionDto,
+  GetUploadUrlDto,
+  ConfirmDocumentUploadDto,
+} from './dto/document.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { AuthenticatedUser } from '../auth/auth.types';
@@ -29,6 +36,31 @@ export class DocumentsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.documentsService.createBundle(instituteId, dto, user);
+  }
+
+  @Post('document-bundles/:bundleId/upload-url')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Request a presigned S3 upload URL for direct browser booklet upload' })
+  getUploadUrl(
+    @Param('instituteId') instituteId: string,
+    @Param('bundleId') bundleId: string,
+    @Body() dto: GetUploadUrlDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.documentsService.getUploadUrl(instituteId, bundleId, dto, user);
+  }
+
+  @Post('document-bundles/:bundleId/confirm-upload')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: 'Confirm a direct browser upload after S3 PUT finishes' })
+  confirmUpload(
+    @Param('instituteId') instituteId: string,
+    @Param('bundleId') bundleId: string,
+    @Body() dto: ConfirmDocumentUploadDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.documentsService.confirmUpload(instituteId, bundleId, dto, user);
   }
 
   @Post('document-bundles/:bundleId/documents')

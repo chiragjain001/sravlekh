@@ -7,26 +7,44 @@ import {
   IsDateString,
   Min,
   IsBoolean,
+  IsArray,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { AssignmentStatus } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 
 export class CreateAssignmentDto {
-  @ApiPropertyOptional({ description: 'Batch ID if this is a batch-wide assignment' })
+  @ApiPropertyOptional({ description: 'Batch ID if this is a single batch-wide assignment' })
   @IsOptional()
   @IsString()
   batchId?: string;
+
+  @ApiPropertyOptional({ description: 'Batch IDs if assigning to multiple batches' })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  batchIds?: string[];
 
   @ApiPropertyOptional({ description: 'Student Profile ID for personalized assignment' })
   @IsOptional()
   @IsString()
   studentProfileId?: string;
 
-  @ApiProperty()
+  @ApiPropertyOptional()
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  topicId!: string;
+  topicId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  chapterId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  chapterIds?: string[];
 
   @ApiProperty()
   @IsString()

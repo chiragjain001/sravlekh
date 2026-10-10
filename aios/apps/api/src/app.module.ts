@@ -28,6 +28,7 @@ import { EvaluationPoliciesModule } from './evaluation-policies/evaluation-polic
 import { CaptureProvidersModule } from './capture-providers/capture-providers.module';
 import { AssessmentsModule } from './assessments/assessments.module';
 import { AttemptsModule } from './attempts/attempts.module';
+import { LeaderboardModule } from './leaderboard/leaderboard.module';
 import { RubricsModule } from './rubrics/rubrics.module';
 import { DocumentsModule } from './documents/documents.module';
 import { IdentityResolutionModule } from './identity-resolution/identity-resolution.module';
@@ -117,6 +118,7 @@ import { CacheService } from './infrastructure/cache/cache.service';
     FeatureFlagsModule,
     SupportTicketsModule,
     EntitlementsModule,
+    LeaderboardModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

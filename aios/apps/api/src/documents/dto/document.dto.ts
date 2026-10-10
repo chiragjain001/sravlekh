@@ -85,3 +85,38 @@ export class UpdatePageRegionDto {
   @IsBoolean()
   discardMarks?: boolean;
 }
+
+export class GetUploadUrlDto {
+  @ApiProperty({ example: 'exam-booklet.pdf', description: 'Original file name' })
+  @IsString()
+  @IsNotEmpty()
+  filename!: string;
+
+  @ApiProperty({ example: 'application/pdf', description: 'MIME type of the file to upload' })
+  @IsString()
+  @IsNotEmpty()
+  mimeType!: string;
+
+  @ApiPropertyOptional({ example: 1048576, description: 'File size in bytes (optional)' })
+  @IsOptional()
+  @IsNumber()
+  fileSize?: number;
+}
+
+export class ConfirmDocumentUploadDto {
+  @ApiProperty({ description: 'Storage key returned by getUploadUrl' })
+  @IsString()
+  @IsNotEmpty()
+  key!: string;
+
+  @ApiProperty({ example: 'application/pdf' })
+  @IsString()
+  @IsNotEmpty()
+  mimeType!: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  filename?: string;
+}
+

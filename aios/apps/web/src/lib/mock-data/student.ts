@@ -236,7 +236,7 @@ export const studentData = {
   ],
 
   navItems: [
-    'Overview', 'My Tests', 'Assignments', 'Study Plan', 'Weak Topics',
+    'Overview', 'Attendance', 'My Tests', 'Assignments', 'Study Plan', 'Weak Topics',
     'Doubt Center', 'Time Table', 'Extra Classes', 'Progress', 'Leaderboard',
     'Resources', 'Settings',
   ],

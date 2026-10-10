@@ -509,7 +509,8 @@ async def test_batch_isolates_a_single_response_failure_from_the_rest():
             find_unique=AsyncMock(return_value=SimpleNamespace(assessment=SimpleNamespace(instituteId="inst-1")))
         ),
         response=SimpleNamespace(
-            find_many=AsyncMock(return_value=[SimpleNamespace(id="resp-good-1"), SimpleNamespace(id="resp-bad"), SimpleNamespace(id="resp-good-2")])
+            find_many=AsyncMock(return_value=[SimpleNamespace(id="resp-good-1"), SimpleNamespace(id="resp-bad"), SimpleNamespace(id="resp-good-2")]),
+            count=AsyncMock(return_value=3),
         ),
     )
 
@@ -517,7 +518,7 @@ async def test_batch_isolates_a_single_response_failure_from_the_rest():
          patch("src.evaluation.ai_evaluator.evaluate_response", fake_evaluate):
         result = await evaluate_delivery_batch("inst-1", "delivery-1", "user-1")
 
-    assert result == {"totalResponses": 3, "succeeded": 2, "skipped": 0, "failed": 1}
+    assert result == {"totalResponses": 3, "succeeded": 2, "skipped": 0, "failed": 1, "hasMore": False}
 
 
 @pytest.mark.asyncio
@@ -526,7 +527,10 @@ async def test_c3_same_tenant_batch_request_proceeds_normally():
         assessmentdelivery=SimpleNamespace(
             find_unique=AsyncMock(return_value=SimpleNamespace(assessment=SimpleNamespace(instituteId="inst-1")))
         ),
-        response=SimpleNamespace(find_many=AsyncMock(return_value=[SimpleNamespace(id="resp-1")])),
+        response=SimpleNamespace(
+            find_many=AsyncMock(return_value=[SimpleNamespace(id="resp-1")]),
+            count=AsyncMock(return_value=1),
+        ),
     )
 
     async def fake_evaluate(institute_id, response_id, requested_by_user_id):
@@ -536,7 +540,7 @@ async def test_c3_same_tenant_batch_request_proceeds_normally():
          patch("src.evaluation.ai_evaluator.evaluate_response", fake_evaluate):
         result = await evaluate_delivery_batch("inst-1", "delivery-1", "user-1")
 
-    assert result == {"totalResponses": 1, "succeeded": 1, "skipped": 0, "failed": 0}
+    assert result == {"totalResponses": 1, "succeeded": 1, "skipped": 0, "failed": 0, "hasMore": False}
 
 
 @pytest.mark.asyncio

@@ -10,7 +10,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ReportType } from '@prisma/client';
+import { ReportType, ReportStatus } from '@prisma/client';
 
 export class ReportScopeDto {
   @ApiPropertyOptional({ description: 'StudentProfile id — for student-scoped reports' })
@@ -22,6 +22,11 @@ export class ReportScopeDto {
   @IsOptional()
   @IsString()
   batchId?: string;
+
+  @ApiPropertyOptional({ description: 'TeacherProfile id — for teacher-scoped reports' })
+  @IsOptional()
+  @IsString()
+  teacherId?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -44,7 +49,7 @@ export class CreateReportDto {
   @Type(() => ReportScopeDto)
   scope!: ReportScopeDto;
 
-  @ApiPropertyOptional({ enum: ['PDF', 'EXCEL'], default: 'PDF' })
+  @ApiPropertyOptional({ enum: ['PDF', 'EXCEL', 'HTML', 'CSV'], default: 'PDF' })
   @IsOptional()
   @IsString()
   format?: string = 'PDF';
@@ -65,4 +70,14 @@ export class QueryReportsDto {
   @Min(1)
   @Max(100)
   limit?: number = 20;
+
+  @ApiPropertyOptional({ enum: ReportStatus })
+  @IsOptional()
+  @IsEnum(ReportStatus)
+  status?: ReportStatus;
+
+  @ApiPropertyOptional({ enum: ReportType })
+  @IsOptional()
+  @IsEnum(ReportType)
+  type?: ReportType;
 }

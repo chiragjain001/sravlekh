@@ -7,6 +7,7 @@ node_modules/
 # the filled-in file holding a real provider key must never be. Note that the
 # bare `.env` rule above does NOT match `staging.env`.
 infra/staging/staging.env
+load-tests/.env*
 .next/
 dist/
 build/
@@ -30,3 +31,12 @@ __pycache__/
 # committed, and the tooling writes them here by default so that a routine
 # `git add -A` cannot sweep one in.
 infra/backup/artifacts/
+
+# K6 load testing binaries and executables
+load-tests/k6-*/
+*.exe
+
+# Ephemeral benchmark & lighthouse test runs
+scripts/lh_*.json
+scripts/summary_*.json
+scripts/login_html.txt

@@ -6,7 +6,7 @@ import { useDashboardStore } from '@/store/dashboard-store';
 import { useSwitchBatch } from '@/contexts/academic-context';
 import { useExams, useExamResults } from '@/hooks/useApi';
 import { toDisplayExamStatus } from '@/lib/exam-status';
-import { EmptyState } from '@/components/ui/foundation';
+import { EmptyState, InlineLoadingSpinner } from '@/components/ui/foundation';
 
 const statusStyle = (s: string) => ({
   scheduled: 'bg-purple-100 text-purple-700',
@@ -21,54 +21,75 @@ function TestDetailModal({ exam, onClose }: { exam: any; onClose: () => void }) 
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center p-4 animate-fadein"
+      className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 animate-fadein"
       style={{ backdropFilter: 'blur(6px)', background: 'rgba(15,23,42,0.45)' }}
       onClick={onClose}
     >
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-4xl h-[90vh] sm:h-[70vh] flex flex-col" onClick={e => e.stopPropagation()}>
-        <div className="flex items-start justify-between p-5 border-b border-slate-100 bg-slate-50/50 rounded-t-2xl">
-          <div>
-            <div className="flex items-center gap-3 mb-1">
+      <div
+        className="relative bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-4xl max-h-[92vh] sm:h-[75vh] flex flex-col overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between p-4 sm:p-5 border-b border-slate-100 bg-slate-50/70">
+          <div className="min-w-0 pr-3">
+            <div className="flex items-center gap-2 sm:gap-3 mb-1 flex-wrap">
               <span className={`text-[10px] font-bold px-2 py-0.5 rounded capitalize ${statusStyle(displayStatus)}`}>{exam.status}</span>
-              <h2 className="text-[18px] font-black text-slate-800 leading-tight">{exam.title}</h2>
+              <h2 className="text-[16px] sm:text-[18px] font-black text-slate-800 leading-tight truncate">{exam.title}</h2>
             </div>
             {results && (
-              <p className="text-[13px] text-slate-500 font-medium">
+              <p className="text-[12px] sm:text-[13px] text-slate-500 font-medium">
                 {results.summary.participated} students · Avg: <span className="font-bold text-slate-700">{results.summary.avgScore}%</span>
               </p>
             )}
           </div>
-          <button onClick={onClose} className="flex-shrink-0 w-8 h-8 rounded-full hover:bg-slate-200 flex items-center justify-center text-slate-500 hover:text-slate-800 transition-colors">
+          <button
+            onClick={onClose}
+            className="flex-shrink-0 w-8 h-8 rounded-full hover:bg-slate-200 flex items-center justify-center text-slate-500 hover:text-slate-800 transition-colors"
+          >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        <div className="overflow-y-auto flex-1 bg-slate-50 p-5 space-y-4">
+        <div className="overflow-y-auto flex-1 bg-slate-50/50 p-3.5 sm:p-5 space-y-3.5 sm:space-y-4">
           {isLoading ? (
-            <div className="py-16 text-center text-slate-400 text-[13px]">Loading results…</div>
+            <InlineLoadingSpinner label="Loading test results..." />
           ) : (
             <>
               {displayStatus === 'grading' && (
                 <button
                   onClick={() => setTeacherNav('evaluation-queue')}
-                  className="w-full flex items-center justify-center gap-2 py-3 bg-slate-900 text-white text-[13px] font-bold rounded-xl hover:bg-slate-800 transition-all"
+                  className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-slate-900 text-white text-[12.5px] sm:text-[13px] font-bold rounded-xl hover:bg-slate-800 active:scale-[0.98] transition-all text-center"
                 >
-                  <ClipboardList className="w-4 h-4" /> Continue Grading in Evaluation Queue ({results?.summary.graded ?? 0}/{results?.summary.participated ?? 0})
+                  <ClipboardList className="w-4 h-4 flex-shrink-0" />
+                  <span className="truncate">Continue Grading in Evaluation Queue ({results?.summary.graded ?? 0}/{results?.summary.participated ?? 0})</span>
                 </button>
               )}
 
               {(results?.questionAnalysis.length ?? 0) > 0 ? (
-                <div className="flex flex-col gap-3">
+                <div className="flex flex-col gap-2.5 sm:gap-3">
                   {[...results!.questionAnalysis].sort((a: any, b: any) => a.correctPct - b.correctPct).map((q: any) => (
-                    <div key={q.questionId} className="bg-white border border-slate-100 rounded-2xl p-4 shadow-sm hover:border-indigo-200 transition-colors flex items-center justify-between">
-                      <div>
-                        <div className="flex items-center gap-2 mb-0.5">
-                          <p className="text-[14px] font-bold text-slate-800 leading-tight">{q.topic}</p>
-                          <span className={`text-[9px] font-bold px-2 py-0.5 rounded capitalize ${q.difficulty === 'HARD' ? 'bg-rose-100 text-rose-700' : q.difficulty === 'MEDIUM' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>{q.difficulty}</span>
+                    <div
+                      key={q.questionId}
+                      className="bg-white border border-slate-100 rounded-xl sm:rounded-2xl p-3.5 sm:p-4 shadow-2xs hover:border-indigo-200 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <p className="text-[13.5px] sm:text-[14px] font-bold text-slate-800 leading-tight">{q.topic}</p>
+                          <span className={`text-[9px] font-bold px-2 py-0.5 rounded capitalize ${
+                            q.difficulty === 'HARD' ? 'bg-rose-100 text-rose-700' :
+                            q.difficulty === 'MEDIUM' ? 'bg-amber-100 text-amber-700' :
+                            'bg-emerald-100 text-emerald-700'
+                          }`}>{q.difficulty}</span>
                         </div>
-                        <p className="text-[12px] text-slate-500 max-w-md truncate">{q.content}</p>
+                        <p className="text-[12px] text-slate-500 line-clamp-2 sm:truncate max-w-xl">{q.content}</p>
                       </div>
-                      <span className={`font-black text-[18px] ${q.correctPct < 50 ? 'text-rose-600' : q.correctPct < 70 ? 'text-amber-600' : 'text-emerald-600'}`}>{q.correctPct}%</span>
+                      <div className="flex items-center justify-between sm:justify-end gap-2 pt-1 sm:pt-0 border-t sm:border-t-0 border-slate-50">
+                        <span className="text-[11px] text-slate-400 sm:hidden">Score rate:</span>
+                        <span className={`font-black text-[16px] sm:text-[18px] ${
+                          q.correctPct < 50 ? 'text-rose-600' :
+                          q.correctPct < 70 ? 'text-amber-600' :
+                          'text-emerald-600'
+                        }`}>{q.correctPct}%</span>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -107,50 +128,61 @@ export function BatchTests({ batchId }: { batchId: string }) {
         key={e.id}
         onClick={() => isInteractive && setActiveExamId(e.id)}
         disabled={!isInteractive}
-        className={`w-full flex items-center gap-4 p-5 border border-slate-100 rounded-2xl mb-3 text-left transition-all ${
-          isInteractive ? 'hover:border-indigo-200 hover:shadow-sm group cursor-pointer bg-white' : 'bg-slate-50/50 cursor-default'
+        className={`w-full flex items-center gap-3 sm:gap-4 p-3.5 sm:p-4.5 border border-slate-100 rounded-2xl mb-2.5 sm:mb-3 text-left transition-all ${
+          isInteractive
+            ? 'hover:border-indigo-200 hover:shadow-xs group cursor-pointer bg-white active:scale-[0.99]'
+            : 'bg-slate-50/50 cursor-default'
         }`}
       >
         <div className="flex-1 min-w-0">
-          <p className={`text-[14px] font-bold leading-tight transition-colors ${isInteractive ? 'text-slate-800 group-hover:text-indigo-700' : 'text-slate-600'}`}>{e.title}</p>
-          <p className="text-[12px] text-slate-500 mt-0.5">{e.scheduledDate ? new Date(e.scheduledDate).toLocaleDateString() : 'Not scheduled'}</p>
+          <p className={`text-[13.5px] sm:text-[14px] font-bold leading-tight transition-colors truncate ${
+            isInteractive ? 'text-slate-800 group-hover:text-indigo-700' : 'text-slate-600'
+          }`}>{e.title}</p>
+          <p className="text-[11.5px] sm:text-[12px] text-slate-500 mt-0.5">
+            {e.scheduledDate ? new Date(e.scheduledDate).toLocaleDateString() : 'Not scheduled'}
+          </p>
         </div>
-        <div className="flex items-center gap-3 flex-shrink-0 ml-2">
-          <span className={`text-[10px] font-bold px-2.5 py-1 rounded-lg capitalize ${statusStyle(displayStatus)}`}>{e.status}</span>
-          {isInteractive && <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-indigo-400 transition-colors" />}
+        <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+          <span className={`text-[10px] font-bold px-2.5 py-1 rounded-lg capitalize ${statusStyle(displayStatus)}`}>
+            {e.status}
+          </span>
+          {isInteractive && (
+            <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-indigo-400 transition-colors" />
+          )}
         </div>
       </button>
     );
   };
 
   return (
-    <div className="space-y-6 animate-fadein">
+    <div className="space-y-4 sm:space-y-6 animate-fadein">
       {activeExam && <TestDetailModal exam={activeExam} onClose={() => setActiveExamId(null)} />}
 
-      <div className="flex items-center justify-between">
-        <h3 className="text-[14px] font-bold text-slate-700">Tests for this batch</h3>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <h3 className="text-[13.5px] sm:text-[14px] font-bold text-slate-700">Tests for this batch</h3>
         <button
           onClick={() => { switchBatch(batchId); setTeacherNav('paper-builder'); }}
-          className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white text-[12.5px] font-bold rounded-xl hover:bg-indigo-700 transition-colors shadow-xs"
+          className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2.5 sm:py-2 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white text-[12.5px] font-bold rounded-xl transition-all shadow-xs"
         >
-          <Plus className="w-3.5 h-3.5" /> Create Test
+          <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+          <span>Create Test</span>
         </button>
       </div>
 
       {isLoading ? (
-        <div className="py-12 text-center text-slate-400 text-[13px]">Loading tests…</div>
+        <InlineLoadingSpinner label="Loading tests for this batch..." />
       ) : (
         <>
           {upcoming.length > 0 && (
             <div>
-              <h4 className="text-[12px] font-bold text-slate-500 uppercase tracking-wide mb-3">Upcoming</h4>
+              <h4 className="text-[11.5px] sm:text-[12px] font-bold text-slate-500 uppercase tracking-wide mb-2.5 sm:mb-3">Upcoming</h4>
               {upcoming.map(renderRow)}
             </div>
           )}
 
           {completed.length > 0 && (
             <div>
-              <h4 className="text-[12px] font-bold text-slate-500 uppercase tracking-wide mb-3">Completed / In Grading</h4>
+              <h4 className="text-[11.5px] sm:text-[12px] font-bold text-slate-500 uppercase tracking-wide mb-2.5 sm:mb-3">Completed / In Grading</h4>
               {completed.map(renderRow)}
             </div>
           )}

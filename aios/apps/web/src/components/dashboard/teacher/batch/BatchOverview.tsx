@@ -5,6 +5,7 @@ import { useDashboardStore } from '@/store/dashboard-store';
 import { useSwitchBatch } from '@/contexts/academic-context';
 import { useBatchPerformance, useExams } from '@/hooks/useApi';
 import { toDisplayExamStatus } from '@/lib/exam-status';
+import { ScreenLoadingState } from '@/components/ui/foundation';
 
 function TrendChip({ trend }: { trend: string }) {
   if (trend === 'up')   return <span className="flex items-center gap-0.5 text-emerald-600 font-bold text-[11px]"><TrendingUp className="w-3.5 h-3.5" /> Improving</span>;
@@ -20,7 +21,13 @@ export function BatchOverview({ batchId }: { batchId: string }) {
   const exams: any[] = examsResp?.data ?? examsResp ?? [];
 
   if (isLoading) {
-    return <div className="py-16 text-center text-slate-400 text-[13px] animate-fadein">Loading batch overview…</div>;
+    return (
+      <ScreenLoadingState
+        title="Loading Batch Overview..."
+        subtitle="Computing batch performance, average scores, and student analytics..."
+        layout="overview"
+      />
+    );
   }
 
   const students = performance?.students ?? [];
@@ -28,71 +35,147 @@ export function BatchOverview({ batchId }: { batchId: string }) {
   const excellent = students.filter((s: any) => s.status === 'excellent').length;
   const gradingExams = exams.filter((e: any) => toDisplayExamStatus(e.status) === 'grading');
   const completedExams = exams.filter((e: any) => toDisplayExamStatus(e.status) === 'completed');
+  const avgScore = performance?.batch.avgScore ?? 0;
+  const hasCompletedExams = completedExams.length > 0;
 
   return (
-    <div className="space-y-6 animate-fadein">
-      {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="card border border-slate-100 rounded-2xl p-5">
-          <div className="flex items-center gap-2 mb-2"><Users className="w-4 h-4 text-indigo-500" /><p className="text-[11px] text-slate-500">Total Students</p></div>
-          <p className="text-[24px] font-black text-slate-800 leading-tight">{performance?.batch.studentCount ?? 0}</p>
-          <TrendChip trend={performance?.batch.trend ?? 'stable'} />
+    <div className="space-y-4 sm:space-y-5 animate-fadein">
+      {/* ── iOS-Grade 2x2 / 4-Col KPI Widget Grid ─────────────────────────── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4">
+        {/* Total Students */}
+        <div className="bg-white border border-slate-100 rounded-2xl p-3.5 sm:p-4 shadow-2xs hover:shadow-xs transition-shadow flex flex-col justify-between min-w-0">
+          <div className="flex items-center gap-2 mb-2 min-w-0">
+            <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center flex-shrink-0">
+              <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            </div>
+            <p className="text-[11px] sm:text-[12px] font-bold text-slate-500 truncate">Total Students</p>
+          </div>
+          <p className="text-[22px] sm:text-[26px] font-black text-slate-800 leading-tight mb-1">
+            {performance?.batch.studentCount ?? 0}
+          </p>
+          <div className="pt-0.5">
+            <TrendChip trend={performance?.batch.trend ?? 'stable'} />
+          </div>
         </div>
-        <div className="card border border-slate-100 rounded-2xl p-5">
-          <div className="flex items-center gap-2 mb-2"><Target className="w-4 h-4 text-emerald-500" /><p className="text-[11px] text-slate-500">Average Score</p></div>
-          <p className={`text-[24px] font-black leading-tight ${(performance?.batch.avgScore ?? 0) >= 75 ? 'text-emerald-600' : (performance?.batch.avgScore ?? 0) >= 65 ? 'text-amber-600' : 'text-rose-600'}`}>{performance?.batch.avgScore ?? 0}%</p>
+
+        {/* Average Score */}
+        <div className="bg-white border border-slate-100 rounded-2xl p-3.5 sm:p-4 shadow-2xs hover:shadow-xs transition-shadow flex flex-col justify-between min-w-0">
+          <div className="flex items-center gap-2 mb-2 min-w-0">
+            <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center flex-shrink-0">
+              <Target className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            </div>
+            <p className="text-[11px] sm:text-[12px] font-bold text-slate-500 truncate">Average Score</p>
+          </div>
+          <p className={`text-[22px] sm:text-[26px] font-black leading-tight mb-1 ${
+            !hasCompletedExams && avgScore === 0
+              ? 'text-slate-700'
+              : avgScore >= 75
+              ? 'text-emerald-600'
+              : avgScore >= 65
+              ? 'text-amber-600'
+              : 'text-rose-600'
+          }`}>
+            {avgScore}%
+          </p>
+          <p className="text-[10px] sm:text-[10.5px] text-slate-400 font-medium">
+            {hasCompletedExams ? 'Class aggregate' : 'No tests graded yet'}
+          </p>
         </div>
-        <div className="card border border-rose-50 rounded-2xl p-5 border">
-          <div className="flex items-center gap-2 mb-2"><AlertTriangle className="w-4 h-4 text-rose-500" /><p className="text-[11px] text-slate-500">Need Help</p></div>
-          <p className={`text-[24px] font-black leading-tight ${weak > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{weak}</p>
-          <p className="text-[10px] text-slate-400">students weak</p>
+
+        {/* Need Help */}
+        <div className={`rounded-2xl p-3.5 sm:p-4 shadow-2xs hover:shadow-xs transition-shadow flex flex-col justify-between min-w-0 border ${
+          weak > 0 ? 'bg-rose-50/20 border-rose-100' : 'bg-white border-slate-100'
+        }`}>
+          <div className="flex items-center gap-2 mb-2 min-w-0">
+            <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-xl bg-rose-50 text-rose-500 flex items-center justify-center flex-shrink-0">
+              <AlertTriangle className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            </div>
+            <p className="text-[11px] sm:text-[12px] font-bold text-slate-500 truncate">Need Help</p>
+          </div>
+          <p className={`text-[22px] sm:text-[26px] font-black leading-tight mb-1 ${weak > 0 ? 'text-rose-600' : 'text-slate-800'}`}>
+            {weak}
+          </p>
+          <p className="text-[10px] sm:text-[10.5px] text-slate-400 font-medium flex items-center gap-1.5 truncate">
+            <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${weak > 0 ? 'bg-rose-500 animate-pulse' : 'bg-slate-300'}`} />
+            <span>{weak === 1 ? '1 student weak' : `${weak} students weak`}</span>
+          </p>
         </div>
-        <div className="card border border-emerald-50 rounded-2xl p-5 border">
-          <div className="flex items-center gap-2 mb-2"><CheckCircle2 className="w-4 h-4 text-emerald-500" /><p className="text-[11px] text-slate-500">Excellent</p></div>
-          <p className="text-[24px] font-black text-emerald-600 leading-tight">{excellent}</p>
-          <p className="text-[10px] text-slate-400">students excelling</p>
+
+        {/* Excellent */}
+        <div className={`rounded-2xl p-3.5 sm:p-4 shadow-2xs hover:shadow-xs transition-shadow flex flex-col justify-between min-w-0 border ${
+          excellent > 0 ? 'bg-emerald-50/20 border-emerald-100' : 'bg-white border-slate-100'
+        }`}>
+          <div className="flex items-center gap-2 mb-2 min-w-0">
+            <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center flex-shrink-0">
+              <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            </div>
+            <p className="text-[11px] sm:text-[12px] font-bold text-slate-500 truncate">Excellent</p>
+          </div>
+          <p className="text-[22px] sm:text-[26px] font-black text-emerald-600 leading-tight mb-1">
+            {excellent}
+          </p>
+          <p className="text-[10px] sm:text-[10.5px] text-slate-400 font-medium flex items-center gap-1.5 truncate">
+            <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${excellent > 0 ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+            <span>{excellent === 1 ? '1 student excelling' : `${excellent} students excelling`}</span>
+          </p>
         </div>
       </div>
 
-      <div className="flex justify-end">
+      {/* ── Action Button ─────────────────────────────────────────────────── */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2 pt-1">
         <button
           onClick={() => { switchBatch(batchId); setTeacherNav('paper-builder'); }}
-          className="px-4 py-1.5 border border-indigo-300 bg-indigo-600 text-white text-[12px] font-bold rounded-xl hover:bg-indigo-700 transition-all flex items-center gap-1"
+          className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 sm:py-2.5 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white text-[13px] font-bold rounded-xl shadow-xs hover:shadow transition-all"
         >
-          <Plus className="w-3.5 h-3.5" /> Create Test for This Batch
+          <Plus className="w-4 h-4 stroke-[2.5]" />
+          <span>Create Test for This Batch</span>
         </button>
       </div>
 
+      {/* ── Pending Grading Alert ─────────────────────────────────────────── */}
       {gradingExams.length > 0 && (
-        <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <ClipboardList className="w-5 h-5 text-amber-500 flex-shrink-0" />
-            <div>
-              <p className="text-[13px] font-bold text-amber-800">{gradingExams.length} test{gradingExams.length > 1 ? 's' : ''} pending grading</p>
-              <p className="text-[11.5px] text-amber-600">{gradingExams.map((e: any) => e.title).join(', ')}</p>
+        <div className="p-3.5 sm:p-4 bg-amber-50/90 border border-amber-200/80 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+          <div className="flex items-start sm:items-center gap-3 min-w-0">
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center flex-shrink-0">
+              <ClipboardList className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[12.5px] sm:text-[13px] font-bold text-amber-900 truncate">
+                {gradingExams.length} test{gradingExams.length > 1 ? 's' : ''} pending grading
+              </p>
+              <p className="text-[11px] sm:text-[11.5px] text-amber-700 truncate">
+                {gradingExams.map((e: any) => e.title).join(', ')}
+              </p>
             </div>
           </div>
           <button
             onClick={() => setTeacherNav('evaluation-queue')}
-            className="text-[11px] font-bold text-amber-700 bg-amber-100 border border-amber-200 px-3 py-1.5 rounded-lg whitespace-nowrap hover:bg-amber-200 transition-colors"
+            className="w-full sm:w-auto text-[12px] font-bold text-amber-800 bg-amber-200/80 hover:bg-amber-200 active:scale-[0.98] px-3.5 py-2 rounded-xl transition-all text-center flex-shrink-0"
           >
             Grade Now
           </button>
         </div>
       )}
 
+      {/* ── Recent Tests List ─────────────────────────────────────────────── */}
       {completedExams.length > 0 && (
-        <div className="card border border-slate-100 rounded-2xl overflow-hidden">
-          <div className="flex items-center gap-2 p-4 border-b border-slate-50">
-            <ClipboardList className="w-4 h-4 text-slate-500" />
-            <h3 className="text-[14px] font-bold text-slate-800">Recent Tests</h3>
-            <span className="ml-auto text-[11px] text-slate-400">{completedExams.length} test{completedExams.length !== 1 ? 's' : ''}</span>
+        <div className="bg-white border border-slate-100 rounded-2xl overflow-hidden shadow-2xs">
+          <div className="flex items-center gap-2 px-4 py-3 sm:px-5 sm:py-3.5 border-b border-slate-100/80">
+            <div className="w-6 h-6 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center flex-shrink-0">
+              <ClipboardList className="w-3.5 h-3.5" />
+            </div>
+            <h3 className="text-[13.5px] sm:text-[14px] font-bold text-slate-800">Recent Tests</h3>
+            <span className="ml-auto text-[10.5px] sm:text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+              {completedExams.length} test{completedExams.length !== 1 ? 's' : ''}
+            </span>
           </div>
-          <div className="divide-y divide-slate-50">
+          <div className="divide-y divide-slate-100/80">
             {completedExams.slice(0, 3).map((e: any) => (
-              <div key={e.id} className="flex items-center justify-between px-5 py-3.5">
-                <p className="text-[13px] font-semibold text-slate-700">{e.title}</p>
-                <p className="text-[11px] text-slate-400">{e.scheduledDate ? new Date(e.scheduledDate).toLocaleDateString() : '—'}</p>
+              <div key={e.id} className="flex items-center justify-between px-4 py-3 sm:px-5 sm:py-3.5 hover:bg-slate-50/50 transition-colors">
+                <p className="text-[12.5px] sm:text-[13px] font-semibold text-slate-800 truncate pr-3">{e.title}</p>
+                <p className="text-[11px] text-slate-400 flex-shrink-0 font-medium">
+                  {e.scheduledDate ? new Date(e.scheduledDate).toLocaleDateString() : '—'}
+                </p>
               </div>
             ))}
           </div>

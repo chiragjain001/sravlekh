@@ -4,6 +4,7 @@
 // apps/web/src/hooks/useApi.ts (apiClient → apps/api/src/students). No mock
 // data, no invented fields — every value here traces back to a real endpoint.
 
+import { useEffect } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
@@ -82,8 +83,40 @@ function toProfile(raw: any): StudentProfile {
 // ── Read hooks ──────────────────────────────────────────────────────────────
 
 export function useStudentsList(params: GetStudentsParams) {
-  const { page, pageSize, ...rest } = params;
+  const { page = 1, pageSize = 20, ...rest } = params;
   const query = useStudentsRaw({ ...rest, page, limit: pageSize });
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+
+  // Prefetch next and previous pages for instantaneous page navigation
+  useEffect(() => {
+    if (!user?.instituteId || !query.data?.meta?.totalPages) return;
+
+    if (page < query.data.meta.totalPages) {
+      const nextPageParams = { ...rest, page: page + 1, limit: pageSize };
+      queryClient.prefetchQuery({
+        queryKey: ['students', user.instituteId, nextPageParams],
+        queryFn: async () => {
+          const res = await apiClient.get(`/institutes/${user.instituteId}/students`, { params: nextPageParams });
+          return res.data;
+        },
+        staleTime: 30_000,
+      });
+    }
+
+    if (page > 1) {
+      const prevPageParams = { ...rest, page: page - 1, limit: pageSize };
+      queryClient.prefetchQuery({
+        queryKey: ['students', user.instituteId, prevPageParams],
+        queryFn: async () => {
+          const res = await apiClient.get(`/institutes/${user.instituteId}/students`, { params: prevPageParams });
+          return res.data;
+        },
+        staleTime: 30_000,
+      });
+    }
+  }, [page, pageSize, rest, query.data?.meta?.totalPages, user?.instituteId, queryClient]);
+
   const data = query.data
     ? {
         data: ((query.data.data ?? []) as any[]).map(toListItem),

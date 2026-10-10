@@ -35,6 +35,7 @@ export class TimetableService {
   // ── F-02: Create Timetable Slot ──────────────────────────────────────────
 
   async createSlot(instituteId: string, dto: CreateTimetableSlotDto, actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
     if (actor.role === UserRole.STUDENT) {
       throw new ForbiddenException('Students cannot create timetable slots.');
     }
@@ -65,42 +66,63 @@ export class TimetableService {
     }
 
     if (dto.roomRef) {
-      const roomConflict = await this.prisma.timetableSlot.findFirst({
-        where: { instituteId, roomRef: dto.roomRef, ...overlapping },
-      });
-      if (roomConflict) {
-        throw new ConflictException({
-          code: 'TIMETABLE_ROOM_CONFLICT',
-          message: `Room "${dto.roomRef}" is already booked for "${roomConflict.title}" during this time.`,
+      const isOnline =
+        dto.roomRef.toLowerCase().includes('http') ||
+        dto.roomRef.toLowerCase().includes('meet.') ||
+        dto.roomRef.toLowerCase().includes('zoom') ||
+        dto.roomRef.toLowerCase().startsWith('online');
+
+      if (!isOnline) {
+        const roomConflict = await this.prisma.timetableSlot.findFirst({
+          where: { instituteId, roomRef: dto.roomRef, ...overlapping },
         });
+        if (roomConflict) {
+          throw new ConflictException({
+            code: 'TIMETABLE_ROOM_CONFLICT',
+            message: `Room "${dto.roomRef}" is already booked for "${roomConflict.title}" during this time.`,
+          });
+        }
       }
     }
 
-    const slot = await this.prisma.timetableSlot.create({
-      data: {
-        instituteId,
-        batchId: dto.batchId,
-        type: dto.type,
-        title: dto.title,
-        teacherUserId: dto.teacherUserId,
-        subjectId: dto.subjectId,
-        roomRef: dto.roomRef,
-        startTime,
-        endTime,
-        isRecurring: dto.isRecurring,
-        recurRule: dto.recurRule,
-      },
-    });
+    const targetBatchIds = dto.batchIds && dto.batchIds.length > 0
+      ? dto.batchIds
+      : [dto.batchId];
 
-    await this.writeAudit(instituteId, actor.id, AuditAction.CREATE, 'timetableSlots', slot.id, null, { title: slot.title });
+    const createdSlots = await Promise.all(
+      targetBatchIds.map((bId) =>
+        this.prisma.timetableSlot.create({
+          data: {
+            instituteId,
+            batchId: bId ?? null,
+            type: dto.type,
+            title: dto.title,
+            teacherUserId: dto.teacherUserId,
+            subjectId: dto.subjectId,
+            roomRef: dto.roomRef,
+            startTime,
+            endTime,
+            isRecurring: dto.isRecurring,
+            recurRule: dto.recurRule,
+          },
+        })
+      )
+    );
+
+    const slot = createdSlots[0]!;
+    await this.writeAudit(instituteId, actor.id, AuditAction.CREATE, 'timetableSlots', slot.id, null, {
+      title: slot.title,
+      batchCount: targetBatchIds.length,
+    });
     await this.cache.delByPrefix(timetablePrefix(instituteId));
 
-    return slot;
+    return createdSlots.length === 1 ? slot : createdSlots;
   }
 
   // ── Cancel a slot ────────────────────────────────────────────────────────
 
   async deleteSlot(instituteId: string, slotId: string, actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
     if (actor.role === UserRole.STUDENT) {
       throw new ForbiddenException('Students cannot remove timetable slots.');
     }
@@ -120,6 +142,7 @@ export class TimetableService {
   // ── Query Timetable ──────────────────────────────────────────────────────
 
   async findAll(instituteId: string, query: QueryTimetableDto, actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
     const where: Prisma.TimetableSlotWhereInput = { instituteId };
 
     if (actor.role === UserRole.STUDENT) {
@@ -150,13 +173,20 @@ export class TimetableService {
     const slots = await this.prisma.timetableSlot.findMany({
       where,
       include: {
-        batch: { select: { name: true } },
+        batch: { select: { id: true, name: true, classYear: true } },
       },
       orderBy: { startTime: 'asc' },
     });
 
     await this.cache.set(cacheKey, slots, TIMETABLE_TTL_SECONDS);
     return slots;
+  }
+
+  private assertInstituteAccess(actor: AuthenticatedUser, instituteId: string) {
+    if (actor.role === UserRole.FOUNDER) return;
+    if (actor.instituteId !== instituteId) {
+      throw new ForbiddenException("You don't have access to this.");
+    }
   }
 
   private async writeAudit(instituteId: string, actorId: string, action: AuditAction, entity: string, entityId: string, oldValue: unknown, newValue: unknown) {

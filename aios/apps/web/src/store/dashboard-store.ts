@@ -57,6 +57,10 @@ export function useDashboardStore() {
   const sidebar       = useUIStore(s => s.sidebarCollapsed);
   const toggleSidebar = useUIStore(s => s.toggleSidebar);
   const setSidebarCollapsed = useUIStore(s => s.setSidebarCollapsed);
+  const mobileSidebarOpen = useUIStore(s => s.mobileSidebarOpen);
+  const toggleMobileSidebar = useUIStore(s => s.toggleMobileSidebar);
+  const closeMobileSidebar = useUIStore(s => s.closeMobileSidebar);
+  const setMobileSidebarOpen = useUIStore(s => s.setMobileSidebarOpen);
   const studentNav    = useStudentStore(s => s.studentNav);
   const setStudentNav = useStudentStore(s => s.setStudentNav);
   const adminNav      = useAdminStore(s => s.adminNav);
@@ -69,6 +73,10 @@ export function useDashboardStore() {
     sidebarCollapsed: sidebar,
     toggleSidebar,
     setSidebarCollapsed,
+    mobileSidebarOpen,
+    toggleMobileSidebar,
+    closeMobileSidebar,
+    setMobileSidebarOpen,
 
     // ── Teacher (maps new store to old interface)
     teacherNav,

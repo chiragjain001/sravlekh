@@ -496,4 +496,21 @@ describe('AuthService.validateJwtPayload', () => {
     });
     await expect(service.validateJwtPayload(payload)).rejects.toThrow(UnauthorizedException);
   });
+
+  it('caches the validated user in Redis for 60s and avoids repeating DB query on subsequent requests (C-2 fix)', async () => {
+    prisma.user.findUnique.mockResolvedValueOnce({
+      id: 'user-cache-1', email: 'cache@b.com', name: 'C', role: UserRole.TEACHER, instituteId: 'inst-1',
+      status: UserStatus.ACTIVE, avatarUrl: null, tokenVersion: 0, institute: { status: InstituteStatus.ACTIVE },
+    });
+    const cachePayload = { ...payload, sub: 'user-cache-1', tokenVersion: 0 };
+
+    const first = await service.validateJwtPayload(cachePayload);
+    expect(first.id).toBe('user-cache-1');
+    expect(prisma.user.findUnique).toHaveBeenCalledTimes(1);
+
+    // Second call with same userId and tokenVersion hits cache Double, no DB call
+    const second = await service.validateJwtPayload(cachePayload);
+    expect(second.id).toBe('user-cache-1');
+    expect(prisma.user.findUnique).toHaveBeenCalledTimes(1);
+  });
 });

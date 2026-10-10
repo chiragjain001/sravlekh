@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getQueueToken } from '@nestjs/bullmq';
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { ReportStatus, ReportType, UserRole } from '@prisma/client';
 import { ReportsService } from './reports.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -11,7 +11,7 @@ import { AuthenticatedUser } from '../auth/auth.types';
 describe('ReportsService', () => {
   let service: ReportsService;
   let prisma: {
-    report: { create: jest.Mock; findUnique: jest.Mock; findMany: jest.Mock };
+    report: { create: jest.Mock; findUnique: jest.Mock; findMany: jest.Mock; update: jest.Mock };
     teacherProfile: { findUnique: jest.Mock };
     batchTeacher: { findFirst: jest.Mock };
     auditLog: { create: jest.Mock };
@@ -25,11 +25,13 @@ describe('ReportsService', () => {
 
   beforeEach(async () => {
     prisma = {
-      report: { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn() },
-      teacherProfile: { findUnique: jest.fn() },
+      report: { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
+      teacherProfile: { findUnique: jest.fn(), findFirst: jest.fn() },
+      studentProfile: { findFirst: jest.fn() },
+      batch: { findFirst: jest.fn() },
       batchTeacher: { findFirst: jest.fn() },
       auditLog: { create: jest.fn() },
-    };
+    } as any;
     queue = { add: jest.fn() };
     storage = {
       buildKey: jest.fn((instituteId: string, ...segments: string[]) => ['institutes', instituteId, ...segments].join('/')),
@@ -50,11 +52,51 @@ describe('ReportsService', () => {
   describe('requestReport', () => {
     it('rejects a student requesting a report', async () => {
       await expect(
-        service.requestReport('inst-1', { type: ReportType.CLASS_REPORT, scope: {} }, student),
+        service.requestReport('inst-1', { type: ReportType.CLASS_REPORT, scope: { batchId: 'batch-1' } }, student),
       ).rejects.toThrow(ForbiddenException);
     });
 
+    it('rejects a report with missing required scope', async () => {
+      await expect(
+        service.requestReport('inst-1', { type: ReportType.REPORT_CARD, scope: {} }, admin),
+      ).rejects.toThrow(BadRequestException);
+
+      await expect(
+        service.requestReport('inst-1', { type: ReportType.CLASS_REPORT, scope: {} }, admin),
+      ).rejects.toThrow(BadRequestException);
+
+      await expect(
+        service.requestReport('inst-1', { type: ReportType.TEACHER_REPORT, scope: {} }, admin),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects a studentId that does not exist or belongs to another institute', async () => {
+      (prisma as any).studentProfile.findFirst = jest.fn().mockResolvedValueOnce(null);
+      await expect(
+        service.requestReport('inst-1', { type: ReportType.REPORT_CARD, scope: { studentId: 'foreign-stu' } }, admin),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects a batchId that does not exist or belongs to another institute', async () => {
+      (prisma as any).batch.findFirst = jest.fn().mockResolvedValueOnce(null);
+      await expect(
+        service.requestReport('inst-1', { type: ReportType.CLASS_REPORT, scope: { batchId: 'foreign-batch' } }, admin),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects an inverted date range (dateFrom > dateTo)', async () => {
+      (prisma as any).studentProfile.findFirst = jest.fn().mockResolvedValueOnce({ id: 's-1', instituteId: 'inst-1' });
+      await expect(
+        service.requestReport(
+          'inst-1',
+          { type: ReportType.REPORT_CARD, scope: { studentId: 's-1', dateFrom: '2026-10-10', dateTo: '2026-10-01' } },
+          admin,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
     it("rejects a teacher requesting a report for a batch they don't teach", async () => {
+      (prisma as any).batch.findFirst = jest.fn().mockResolvedValueOnce({ id: 'batch-1', instituteId: 'inst-1' });
       prisma.teacherProfile.findUnique.mockResolvedValueOnce({ id: 'tp-1' });
       prisma.batchTeacher.findFirst.mockResolvedValueOnce(null);
 
@@ -64,6 +106,7 @@ describe('ReportsService', () => {
     });
 
     it('queues a QUEUED report and a generation job for a valid request', async () => {
+      (prisma as any).studentProfile.findFirst = jest.fn().mockResolvedValueOnce({ id: 's-1', instituteId: 'inst-1' });
       prisma.report.create.mockResolvedValueOnce({ id: 'report-1', status: ReportStatus.QUEUED });
 
       const result = await service.requestReport('inst-1', { type: ReportType.REPORT_CARD, scope: { studentId: 's-1' } }, admin);
@@ -73,6 +116,38 @@ describe('ReportsService', () => {
       );
       expect(queue.add).toHaveBeenCalledWith('generate', { reportId: 'report-1' }, expect.any(Object));
       expect(result.status).toBe(ReportStatus.QUEUED);
+    });
+  });
+
+  describe('retryReport', () => {
+    it('re-queues a failed report atomically', async () => {
+      prisma.report.findUnique = jest.fn().mockResolvedValueOnce({ id: 'r-fail', instituteId: 'inst-1', status: ReportStatus.FAILED });
+      (prisma.report as any).updateMany = jest.fn().mockResolvedValueOnce({ count: 1 });
+
+      const result = await service.retryReport('inst-1', 'r-fail', admin);
+      expect((prisma.report as any).updateMany).toHaveBeenCalledWith({
+        where: { id: 'r-fail', instituteId: 'inst-1', status: ReportStatus.FAILED },
+        data: { status: ReportStatus.QUEUED },
+      });
+      expect(queue.add).toHaveBeenCalledWith('generate', { reportId: 'r-fail' }, expect.any(Object));
+      expect(result.status).toBe(ReportStatus.QUEUED);
+    });
+
+    it('rejects retrying a report that is not in FAILED status', async () => {
+      prisma.report.findUnique = jest.fn().mockResolvedValueOnce({ id: 'r-comp', instituteId: 'inst-1', status: ReportStatus.COMPLETE });
+      await expect(service.retryReport('inst-1', 'r-comp', admin)).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects retrying if another concurrent attempt already changed status', async () => {
+      prisma.report.findUnique = jest.fn().mockResolvedValueOnce({ id: 'r-fail', instituteId: 'inst-1', status: ReportStatus.FAILED });
+      (prisma.report as any).updateMany = jest.fn().mockResolvedValueOnce({ count: 0 });
+
+      await expect(service.retryReport('inst-1', 'r-fail', admin)).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects retrying a report belonging to another institute', async () => {
+      prisma.report.findUnique = jest.fn().mockResolvedValueOnce({ id: 'r-foreign', instituteId: 'inst-2', status: ReportStatus.FAILED });
+      await expect(service.retryReport('inst-1', 'r-foreign', admin)).rejects.toThrow(NotFoundException);
     });
   });
 

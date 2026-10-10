@@ -8,9 +8,10 @@ import { SCORE_AGGREGATION_QUEUE } from '../../evaluations/score-aggregation.con
 import { MASTERY_RECALC_QUEUE } from '../../analytics/mastery-recalc.constants';
 import { NOTICE_DISPATCH_QUEUE } from '../../notices/notice-dispatch.constants';
 import { REPORT_GENERATION_QUEUE } from '../../reports/report-generation.constants';
+import { ATTENDANCE_CHECK_QUEUE } from '../../attendance/attendance.constants';
 
 /**
- * Depth monitoring for all six queues.
+ * Depth monitoring for all queues.
  *
  * Each registerQueue here reuses the named queue its owning module already
  * registered — same Redis connection, same jobs, only a second injectable
@@ -37,6 +38,7 @@ import { REPORT_GENERATION_QUEUE } from '../../reports/report-generation.constan
       { name: MASTERY_RECALC_QUEUE },
       { name: NOTICE_DISPATCH_QUEUE },
       { name: REPORT_GENERATION_QUEUE },
+      { name: ATTENDANCE_CHECK_QUEUE },
     ),
   ],
   providers: RUN_WORKERS ? [QueueMonitorService] : [],

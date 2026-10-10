@@ -4,7 +4,10 @@ import {
   ForbiddenException,
   ConflictException,
   Logger,
+  Optional,
 } from '@nestjs/common';
+import { CacheService } from '../infrastructure/cache/cache.service';
+import { invalidateTeacherBatchCache } from '../shared/teacher-scope';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditAction, UserRole, Prisma } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
@@ -25,6 +28,7 @@ export class TeachersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly entitlements: EntitlementsService,
+    @Optional() private readonly cache?: CacheService,
   ) {}
 
   // ── B-03: Create teacher ──────────────────────────────────────────────────
@@ -54,7 +58,7 @@ export class TeachersService {
         },
       });
 
-      return tx.teacherProfile.create({
+      const teacherProfile = await tx.teacherProfile.create({
         data: {
           userId: user.id,
           qualification: dto.qualification,
@@ -62,7 +66,28 @@ export class TeachersService {
         },
         include: { user: { select: { id: true, name: true, email: true } } },
       });
+
+      if (dto.batchIds && dto.batchIds.length > 0) {
+        const validBatches = await tx.batch.findMany({
+          where: { id: { in: dto.batchIds }, instituteId },
+          select: { id: true },
+        });
+        for (const b of validBatches) {
+          await tx.batchTeacher.create({
+            data: {
+              batchId: b.id,
+              teacherProfileId: teacherProfile.id,
+            },
+          });
+        }
+      }
+
+      return teacherProfile;
     });
+
+    if (this.cache) {
+      await invalidateTeacherBatchCache(result.userId, this.cache);
+    }
 
     await this.writeAudit(instituteId, actor.id, AuditAction.CREATE, 'teacher_profiles', result.id, null, { email: dto.email, name: dto.name });
 
@@ -189,7 +214,7 @@ export class TeachersService {
     const profile = await this.prisma.teacherProfile.findUnique({
       where: { id: profileId },
       include: {
-        user: { select: { id: true, name: true, email: true, role: true, status: true, lastLoginAt: true, createdAt: true } },
+        user: { select: { id: true, name: true, email: true, role: true, status: true, lastLoginAt: true, createdAt: true, instituteId: true } },
         batchAssignments: {
           where: { removedAt: null },
           include: {
@@ -201,9 +226,14 @@ export class TeachersService {
 
     if (!profile) throw new NotFoundException('Teacher profile not found.');
 
-    const userRecord = await this.prisma.user.findUnique({ where: { id: profile.userId } });
-    if (!userRecord || userRecord.instituteId !== instituteId) {
-      throw new ForbiddenException("You don't have access to this.");
+    const userInstituteId = (profile as any).user?.instituteId;
+    if (userInstituteId !== undefined) {
+      if (userInstituteId !== instituteId) throw new ForbiddenException("You don't have access to this.");
+    } else {
+      const userRecord = await this.prisma.user.findUnique({ where: { id: profile.userId } });
+      if (!userRecord || userRecord.instituteId !== instituteId) {
+        throw new ForbiddenException("You don't have access to this.");
+      }
     }
 
     return profile;
@@ -215,9 +245,20 @@ export class TeachersService {
 
   async findMyProfile(instituteId: string, actor: AuthenticatedUser) {
     this.assertInstituteAccess(actor, instituteId);
+    const cacheKey = `teacher-profile:${instituteId}:${actor.id}`;
+    if (this.cache) {
+      const cached = await this.cache.get(cacheKey);
+      if (cached) return cached;
+    }
+
     const profile = await this.prisma.teacherProfile.findUnique({ where: { userId: actor.id } });
     if (!profile) throw new NotFoundException('Teacher profile not found.');
-    return this.findById(instituteId, profile.id, actor);
+    const result = await this.findById(instituteId, profile.id, actor);
+
+    if (this.cache) {
+      await this.cache.set(cacheKey, result, 60);
+    }
+    return result;
   }
 
   async updateMyProfile(instituteId: string, dto: UpdateMyProfileDto, actor: AuthenticatedUser) {
@@ -235,6 +276,10 @@ export class TeachersService {
     });
 
     await this.writeAudit(instituteId, actor.id, AuditAction.UPDATE, 'teacher_profiles', profile.id, null, dto);
+
+    if (this.cache) {
+      await this.cache.del(`teacher-profile:${instituteId}:${actor.id}`);
+    }
 
     return this.findById(instituteId, profile.id, actor);
   }
@@ -262,7 +307,44 @@ export class TeachersService {
           ...(dto.subjectIds !== undefined && { subjectIds: dto.subjectIds }),
         },
       });
+
+      if (dto.batchIds !== undefined) {
+        const currentAssignments = await tx.batchTeacher.findMany({
+          where: { teacherProfileId: profileId, removedAt: null },
+        });
+        const currentBatchIds = new Set(currentAssignments.map((a) => a.batchId));
+        const newBatchIds = new Set(dto.batchIds);
+
+        const toRemove = currentAssignments.filter((a) => !newBatchIds.has(a.batchId));
+        if (toRemove.length > 0) {
+          await tx.batchTeacher.updateMany({
+            where: { id: { in: toRemove.map((a) => a.id) } },
+            data: { removedAt: new Date() },
+          });
+        }
+
+        const toAdd = dto.batchIds.filter((bId) => !currentBatchIds.has(bId));
+        if (toAdd.length > 0) {
+          const validBatches = await tx.batch.findMany({
+            where: { id: { in: toAdd }, instituteId },
+            select: { id: true },
+          });
+          for (const b of validBatches) {
+            await tx.batchTeacher.create({
+              data: {
+                batchId: b.id,
+                teacherProfileId: profileId,
+              },
+            });
+          }
+        }
+      }
     });
+
+    if (this.cache) {
+      await this.cache.del(`teacher-profile:${instituteId}:${profile.userId}`);
+      await invalidateTeacherBatchCache(profile.userId, this.cache);
+    }
 
     await this.writeAudit(instituteId, actor.id, AuditAction.UPDATE, 'teacher_profiles', profileId, null, dto);
 
@@ -310,6 +392,11 @@ export class TeachersService {
 
     await this.writeAudit(instituteId, actor.id, AuditAction.CREATE, 'batch_teachers', assignment.id, null, { batchId: dto.batchId, teacherProfileId: profileId });
 
+    if (this.cache) {
+      await this.cache.del(`teacher-profile:${instituteId}:${profile.userId}`);
+      await invalidateTeacherBatchCache(profile.userId, this.cache);
+    }
+
     return assignment;
   }
 
@@ -323,7 +410,7 @@ export class TeachersService {
   ) {
     this.assertAdminAccess(actor, instituteId);
 
-    await this.getProfileWithTenantCheck(profileId, instituteId);
+    const profile = await this.getProfileWithTenantCheck(profileId, instituteId);
 
     const assignment = await this.prisma.batchTeacher.findUnique({ where: { id: batchTeacherId } });
     if (!assignment || assignment.teacherProfileId !== profileId) {
@@ -335,6 +422,11 @@ export class TeachersService {
       where: { id: batchTeacherId },
       data: { removedAt: new Date() },
     });
+
+    if (this.cache) {
+      await this.cache.del(`teacher-profile:${instituteId}:${profile.userId}`);
+      await invalidateTeacherBatchCache(profile.userId, this.cache);
+    }
 
     return { message: 'Teacher removed from batch.' };
   }

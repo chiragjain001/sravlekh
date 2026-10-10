@@ -491,12 +491,9 @@ async def evaluate_delivery_batch(institute_id: str, assessment_delivery_id: str
     if delivery is None or delivery.assessment.instituteId != institute_id:
         return {"totalResponses": 0, "succeeded": 0, "skipped": 0, "failed": 0}
 
-    responses = await db.response.find_many(
+    total_pending = await db.response.count(
         where={
             "attempt": {"is": {"assessmentDeliveryId": assessment_delivery_id}},
-            # Subjective questions anywhere, plus anything handwritten on a page —
-            # a numerical worked out in a booklet is graded, not captured
-            # (analytics/evaluation_status.needs_human_evaluation).
             "AND": [
                 {
                     "OR": [
@@ -509,6 +506,22 @@ async def evaluate_delivery_batch(institute_id: str, assessment_delivery_id: str
         }
     )
 
+    responses = await db.response.find_many(
+        where={
+            "attempt": {"is": {"assessmentDeliveryId": assessment_delivery_id}},
+            "AND": [
+                {
+                    "OR": [
+                        {"question": {"is": {"type": {"in": sorted(SUBJECTIVE_QUESTION_TYPES)}}}},
+                        {"evidenceType": PAGE_REGION_EVIDENCE},
+                    ]
+                },
+                {"OR": [{"evaluation": {"is": None}}, {"evaluation": {"is": {"status": "PENDING"}}}]},
+            ],
+        },
+        take=5
+    )
+
     semaphore = asyncio.Semaphore(5)
     results = {"succeeded": 0, "skipped": 0, "failed": 0}
 
@@ -518,12 +531,11 @@ async def evaluate_delivery_batch(institute_id: str, assessment_delivery_id: str
                 outcome = await evaluate_response(institute_id, response_id, requested_by_user_id)
                 results["skipped" if outcome.get("skipped") else "succeeded"] += 1
             except Exception:
-                # 27 §6: AI failure never blocks human evaluation — the response
-                # simply stays PENDING and surfaces in the manual queue as usual.
                 results["failed"] += 1
 
     await asyncio.gather(*(run_one(r.id) for r in responses))
-    return {"totalResponses": len(responses), **results}
+    has_more = total_pending > len(responses)
+    return {"totalResponses": len(responses), "hasMore": has_more, **results}
 
 
 def _build_prompt(template, question_content, reference_answer, student_answer, max_marks, criteria, format_instructions) -> str:

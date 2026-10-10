@@ -25,6 +25,7 @@ export function RouteGuard({ allowedRoles, children }: RouteGuardProps) {
   const { user, isLoading } = useAuth();
   const router = useRouter();
 
+  const rolesKey = allowedRoles.join(',');
   useEffect(() => {
     if (isLoading) return;
 
@@ -36,7 +37,8 @@ export function RouteGuard({ allowedRoles, children }: RouteGuardProps) {
     if (!allowedRoles.includes(user.role)) {
       router.replace('/login?reason=unauthorized');
     }
-  }, [user, isLoading, allowedRoles]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, isLoading, rolesKey, router]);
 
   if (isLoading) return <FullPageSkeleton />;
   if (!user) return null;

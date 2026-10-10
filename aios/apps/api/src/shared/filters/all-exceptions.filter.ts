@@ -63,7 +63,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
         extra: { instituteId: user?.instituteId },
       });
     } else {
-      this.logger.warn(`[${requestId}] ${request.method} ${request.url} -> ${status} ${body.code}`);
+      const detailStr = body.details ? ` | details: ${JSON.stringify(body.details)}` : '';
+      this.logger.warn(`[${requestId}] ${request.method} ${request.url} -> ${status} ${body.code}: ${body.message}${detailStr}`);
     }
 
     // 12-LOGGING-MONITORING.md §2 — machine-parseable line alongside the

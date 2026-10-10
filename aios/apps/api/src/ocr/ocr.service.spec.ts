@@ -141,7 +141,12 @@ describe('OcrService', () => {
       expect(axios.post).toHaveBeenCalledWith(
         'http://python:8000/ocr/extract',
         { instituteId: 'inst-1', questionRegionId: 'region-1', imageUrl: 'https://signed.example/img', blockType: 'HANDWRITTEN_TEXT' },
-        expect.objectContaining({ headers: { 'X-Internal-Token': 'internal-token-1' } }),
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            'X-Internal-Token': 'internal-token-1',
+            'X-Correlation-Id': 'ocr-region-1',
+          }),
+        }),
       );
     });
 

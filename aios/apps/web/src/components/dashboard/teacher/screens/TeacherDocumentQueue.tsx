@@ -13,6 +13,7 @@ import { CreateStructuredAssessmentModal } from '../digital-copy/CreateStructure
 import { RecordAttemptPanel } from '../digital-copy/RecordAttemptPanel';
 import { UploadBookletModal } from '../digital-copy/UploadBookletModal';
 import { DocumentDetailPanel } from '../digital-copy/DocumentDetailPanel';
+import { InlineLoadingSpinner } from '@/components/ui/foundation';
 
 const DOC_STATUS_STYLE: Record<string, string> = {
   UPLOADED: 'bg-slate-100 text-slate-600',
@@ -119,7 +120,10 @@ export function TeacherDocumentQueue() {
       <div className="bg-white border border-slate-200 rounded-2xl p-4">
         <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Digital Assessment</label>
         {assessmentsLoading ? (
-          <p className="text-[13px] text-slate-400">Loading…</p>
+          <div className="flex items-center gap-2 py-2 text-slate-500 text-[13px]">
+            <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+            <span>Loading assessments...</span>
+          </div>
         ) : assessments.length === 0 ? (
           <p className="text-[13px] text-slate-500">No digital-copy assessments yet — create one to get started.</p>
         ) : (
@@ -187,7 +191,7 @@ export function TeacherDocumentQueue() {
           </div>
 
           {documentsLoading ? (
-            <p className="text-[13px] text-slate-400 py-8 text-center">Loading documents…</p>
+            <InlineLoadingSpinner label="Loading uploaded booklets from server..." />
           ) : documents.length === 0 ? (
             <div className="p-12 text-center bg-white border-2 border-dashed border-slate-200 rounded-2xl">
               <FileStack className="w-8 h-8 text-slate-300 mx-auto mb-3" />
