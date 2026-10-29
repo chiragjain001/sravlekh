@@ -2,7 +2,7 @@
   "extends": "../../packages/config/tsconfig.base.json",
   "compilerOptions": {
     "module": "CommonJS",
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "rootDir": "./src",
     "outDir": "./dist",
     "emitDecoratorMetadata": true,
@@ -10,6 +10,7 @@
     "strictPropertyInitialization": false,
     "declaration": false,
     "declarationMap": false,
+    "types": ["jest", "node", "express", "multer"],
     "paths": {
       "@aios/db": [
         "../../packages/db/src/index.ts"
