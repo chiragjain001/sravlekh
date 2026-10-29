@@ -5,7 +5,7 @@
   "description": "AIOS NestJS API server",
   "scripts": {
     "dev": "nest start --watch",
-    "build": "nest build",
+    "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
     "start:worker": "node dist/worker.js",
     "lint": "eslint \"src/**/*.ts\"",
@@ -50,6 +50,8 @@
     "@nestjs/cli": "^11.0.24",
     "@nestjs/schematics": "^11.1.0",
     "@nestjs/testing": "^11.2.1",
+    "@swc/core": "^1.16.20",
+    "@swc/jest": "^0.2.39",
     "@types/cookie-parser": "^1.4.7",
     "@types/express": "^5.0.6",
     "@types/jest": "^29.5.12",
@@ -61,6 +63,6 @@
     "eslint": "^8.57.0",
     "jest": "^29.7.0",
     "ts-jest": "^29.1.5",
-    "typescript": "^6.0.3"
+    "typescript": "^7.0.2"
   }
 }
