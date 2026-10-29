@@ -12,6 +12,7 @@ import { CacheService } from '../infrastructure/cache/cache.service';
 import { AuditAction, UserRole, UserStatus } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { getTeacherBatchIds } from '../shared/teacher-scope';
+import { studentsStatsKey, studentsStatsPrefix } from '../shared/cache-keys';
 import { EntitlementsService } from '../entitlements/entitlements.service';
 import { EntitlementResource } from '../entitlements/plan-definitions';
 import {
@@ -179,7 +180,7 @@ export class StudentsService {
 
     const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor, this.cache);
     const scope = teacherBatchIds ? teacherBatchIds.slice().sort().join(',') : 'all';
-    const cacheKey = "students-stats:" + instituteId + ":" + scope;
+    const cacheKey = studentsStatsKey(instituteId, scope);
     if (this.cache) {
       const cached = await this.cache.get<any>(cacheKey);
       if (cached) return cached;
@@ -633,7 +634,7 @@ export class StudentsService {
         },
       });
       if (this.cache) {
-        await this.cache.delByPrefix("students-stats:" + instituteId + ":");
+        await this.cache.delByPrefix(studentsStatsPrefix(instituteId));
       }
     } catch (err) {
       this.logger.error('Failed to write audit log', err);

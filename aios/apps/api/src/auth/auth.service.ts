@@ -11,7 +11,13 @@ import { OAuth2Client, TokenPayload } from 'google-auth-library';
 import { PrismaService } from '../prisma/prisma.service';
 import { RefreshTokenService, RefreshTokenMetadata } from './refresh-token.service';
 import { CacheService } from '../infrastructure/cache/cache.service';
-import { allowlistCheckKey, loginFailureCountKey, loginLockoutKey } from '../shared/cache-keys';
+import {
+  allowlistCheckKey,
+  loginFailureCountKey,
+  loginLockoutKey,
+  jwtUserCacheKey,
+  jwtUserCachePrefix,
+} from '../shared/cache-keys';
 import { AuditAction, UserStatus, UserRole, InstituteStatus, type AllowListEntry, type Institute } from '@prisma/client';
 import { JwtPayload, AuthenticatedUser } from './auth.types';
 
@@ -33,16 +39,7 @@ const ALLOWLIST_CHECK_TTL_SECONDS = 60; // 09-CACHING-STRATEGY.md §1.5
  * The existing DB query runs as the fallback, matching the pre-cache behaviour.
  */
 const JWT_USER_CACHE_TTL_SECONDS = 60;
-function jwtUserCacheKey(userId: string, tokenVersion: number, impersonatorId?: string): string {
-  return impersonatorId
-    ? `auth:user:${userId}:${tokenVersion}:imp:${impersonatorId}`
-    : `auth:user:${userId}:${tokenVersion}`;
-}
-
-/** Cache-key prefix used to invalidate all tokenVersions for one user at once. */
-export function jwtUserCachePrefix(userId: string): string {
-  return `auth:user:${userId}:`;
-}
+export { jwtUserCachePrefix };
 
 @Injectable()
 export class AuthService {

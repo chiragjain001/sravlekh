@@ -10,6 +10,7 @@ import { CacheService } from '../infrastructure/cache/cache.service';
 import { AuditAction, UserRole } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { getTeacherBatchIds } from '../shared/teacher-scope';
+import { academicsTreeKey, batchesListKey, batchesStatsKey, batchPerfSummaryKey } from '../shared/cache-keys';
 import {
   CreateBatchDto,
   UpdateBatchDto,
@@ -23,10 +24,7 @@ import {
 
 // 09-CACHING-STRATEGY.md §1.1 / §3
 const ACADEMICS_TREE_TTL_SECONDS = 30 * 60;
-const academicsTreeKey = (instituteId: string) => `academics-tree:${instituteId}`;
 const BATCHES_CACHE_TTL_SECONDS = 60;
-const batchesListKey = (instituteId: string, scope: string) => `batches:${instituteId}:${scope}`;
-const batchesStatsKey = (instituteId: string, scope: string) => `batches-stats:${instituteId}:${scope}`;
 
 export interface BatchStats {
   total: number;
@@ -326,7 +324,7 @@ export class BatchesService {
 
     const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor, this.cache);
     const scope = teacherBatchIds !== null ? `teacher:${actor.id}` : 'all';
-    const cacheKey = `batch-perf-summary:${instituteId}:${scope}`;
+    const cacheKey = batchPerfSummaryKey(instituteId, scope);
 
     const cached = await this.cache.get<any[]>(cacheKey);
     if (cached) return cached;

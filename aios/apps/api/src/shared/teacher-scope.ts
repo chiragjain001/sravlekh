@@ -2,6 +2,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CacheService } from '../infrastructure/cache/cache.service';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { UserRole } from '@prisma/client';
+import { teacherBatchCacheKey } from './cache-keys';
 
 /**
  * Batch-level read scoping for the TEACHER role. Most list endpoints
@@ -20,7 +21,6 @@ import { UserRole } from '@prisma/client';
  * with null, so the cache key is never written or read for them.
  */
 const TEACHER_BATCH_CACHE_TTL_SECONDS = 60;
-const teacherBatchCacheKey = (userId: string) => `teacher-batches:${userId}`;
 
 export async function getTeacherBatchIds(
   prisma: PrismaService,

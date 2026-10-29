@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { CacheService } from '../infrastructure/cache/cache.service';
 import { invalidateTeacherBatchCache } from '../shared/teacher-scope';
+import { teacherProfileKey } from '../shared/cache-keys';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditAction, UserRole, Prisma } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
@@ -245,7 +246,7 @@ export class TeachersService {
 
   async findMyProfile(instituteId: string, actor: AuthenticatedUser) {
     this.assertInstituteAccess(actor, instituteId);
-    const cacheKey = `teacher-profile:${instituteId}:${actor.id}`;
+    const cacheKey = teacherProfileKey(instituteId, actor.id);
     if (this.cache) {
       const cached = await this.cache.get(cacheKey);
       if (cached) return cached;
@@ -278,7 +279,7 @@ export class TeachersService {
     await this.writeAudit(instituteId, actor.id, AuditAction.UPDATE, 'teacher_profiles', profile.id, null, dto);
 
     if (this.cache) {
-      await this.cache.del(`teacher-profile:${instituteId}:${actor.id}`);
+      await this.cache.del(teacherProfileKey(instituteId, actor.id));
     }
 
     return this.findById(instituteId, profile.id, actor);
@@ -342,7 +343,7 @@ export class TeachersService {
     });
 
     if (this.cache) {
-      await this.cache.del(`teacher-profile:${instituteId}:${profile.userId}`);
+      await this.cache.del(teacherProfileKey(instituteId, profile.userId));
       await invalidateTeacherBatchCache(profile.userId, this.cache);
     }
 
@@ -393,7 +394,7 @@ export class TeachersService {
     await this.writeAudit(instituteId, actor.id, AuditAction.CREATE, 'batch_teachers', assignment.id, null, { batchId: dto.batchId, teacherProfileId: profileId });
 
     if (this.cache) {
-      await this.cache.del(`teacher-profile:${instituteId}:${profile.userId}`);
+      await this.cache.del(teacherProfileKey(instituteId, profile.userId));
       await invalidateTeacherBatchCache(profile.userId, this.cache);
     }
 
@@ -424,7 +425,7 @@ export class TeachersService {
     });
 
     if (this.cache) {
-      await this.cache.del(`teacher-profile:${instituteId}:${profile.userId}`);
+      await this.cache.del(teacherProfileKey(instituteId, profile.userId));
       await invalidateTeacherBatchCache(profile.userId, this.cache);
     }
 
