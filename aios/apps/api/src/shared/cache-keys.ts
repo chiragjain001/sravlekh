@@ -115,3 +115,13 @@ export function timetableKey(instituteId: string, criteriaKey: string): string {
 export function featureFlagCacheKey(instituteId: string, flag: string): string {
   return `ff:${instituteId}:${flag}`;
 }
+
+// ── ATTENDANCE ───────────────────────────────────────────────────────────────
+
+export function attendancePolicyKey(instituteId: string): string {
+  return `attendance:${instituteId}:policy`;
+}
+
+export function instituteTimezoneKey(instituteId: string): string {
+  return `institute:${instituteId}:timezone`;
+}

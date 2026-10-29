@@ -5,7 +5,10 @@ import {
   BadRequestException,
   ConflictException,
   Logger,
+  Optional,
 } from '@nestjs/common';
+import { CacheService } from '../infrastructure/cache/cache.service';
+import { attendancePolicyKey, instituteTimezoneKey } from '../shared/cache-keys';
 import { PrismaService } from '../prisma/prisma.service';
 import { PermissionsService } from '../permissions/permissions.service';
 import {
@@ -52,6 +55,7 @@ export class AttendanceService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly permissionsService: PermissionsService,
+    @Optional() private readonly cache?: CacheService,
   ) {}
 
   // ── 1. Query Today's Sessions (Timetable-Derived, Snapshot-Backed) ─────────
@@ -1308,6 +1312,11 @@ export class AttendanceService {
 
   async getAttendancePolicy(instituteId: string, actor: AuthenticatedUser) {
     this.assertInstituteAccess(actor, instituteId);
+    const key = attendancePolicyKey(instituteId);
+    if (this.cache) {
+      const cached = await this.cache.get<any>(key);
+      if (cached) return cached;
+    }
     const institute = await this.prisma.institute.findUnique({
       where: { id: instituteId },
       select: { featureFlags: true },
@@ -1315,7 +1324,7 @@ export class AttendanceService {
     const flags = (institute?.featureFlags as Record<string, any>) || {};
     const attendance = flags.attendance || {};
 
-    return {
+    const policy = {
       cutoffHour: typeof attendance.cutoffHour === 'number' ? attendance.cutoffHour : 18,
       openBeforeMinutes: typeof attendance.openBeforeMinutes === 'number' ? attendance.openBeforeMinutes : 15,
       gracePeriodMinutes: typeof attendance.gracePeriodMinutes === 'number' ? attendance.gracePeriodMinutes : 30,
@@ -1323,6 +1332,10 @@ export class AttendanceService {
       allowTeacherHistoricalEdit: typeof attendance.allowTeacherHistoricalEdit === 'boolean' ? attendance.allowTeacherHistoricalEdit : false,
       allowFinalizedCorrection: typeof attendance.allowFinalizedCorrection === 'boolean' ? attendance.allowFinalizedCorrection : true,
     };
+    if (this.cache) {
+      await this.cache.set(key, policy, 600);
+    }
+    return policy;
   }
 
   async updateAttendancePolicy(
@@ -1373,6 +1386,11 @@ export class AttendanceService {
       where: { id: instituteId },
       data: { featureFlags: newFlags },
     });
+
+    if (this.cache) {
+      await this.cache.del(attendancePolicyKey(instituteId));
+      await this.cache.del(instituteTimezoneKey(instituteId));
+    }
 
     await this.writeAudit(
       instituteId,
@@ -1783,6 +1801,11 @@ export class AttendanceService {
   }
 
   async getInstituteTimezone(instituteId: string): Promise<string> {
+    const key = instituteTimezoneKey(instituteId);
+    if (this.cache) {
+      const cached = await this.cache.get<string>(key);
+      if (cached) return cached;
+    }
     const institute = await this.prisma.institute.findUnique({
       where: { id: instituteId },
       select: { featureFlags: true },
@@ -1793,11 +1816,13 @@ export class AttendanceService {
     if (tz && typeof tz === 'string') {
       try {
         Intl.DateTimeFormat(undefined, { timeZone: tz });
+        if (this.cache) await this.cache.set(key, tz, 3600);
         return tz;
       } catch {
         // Fallback
       }
     }
+    if (this.cache) await this.cache.set(key, 'Asia/Kolkata', 3600);
     return 'Asia/Kolkata';
   }
 
