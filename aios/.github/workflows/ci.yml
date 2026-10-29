@@ -32,6 +32,7 @@ jobs:
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
       - run: pnpm db:generate
+      - run: pnpm oxlint --quiet
       - run: pnpm --filter @aios/api lint
       - run: pnpm --filter @aios/api typecheck
       # test:ci caps worker concurrency. GitHub's standard runner is 2 cores / 7 GB,

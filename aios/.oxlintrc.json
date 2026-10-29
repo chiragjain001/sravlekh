@@ -1,0 +1,31 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": [
+    "typescript",
+    "react",
+    "nextjs",
+    "unicorn",
+    "oxc"
+  ],
+  "categories": {
+    "correctness": "warn"
+  },
+  "rules": {
+    "typescript/no-explicit-any": "warn",
+    "typescript/no-unused-vars": "warn",
+    "react/no-unescaped-entities": "warn",
+    "no-debugger": "warn",
+    "no-var": "error",
+    "no-empty": "warn"
+  },
+  "ignorePatterns": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/.next/**",
+    "**/coverage/**",
+    "**/*.min.js",
+    "apps/api/dist/**",
+    "apps/web/.next/**",
+    "packages/db/dist/**"
+  ]
+}
