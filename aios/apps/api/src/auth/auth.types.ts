@@ -11,6 +11,9 @@ export interface JwtPayload {
   role: UserRole;
   instituteId: string;
   tokenVersion: number; // Founder Console Phase 4 — must match User.tokenVersion or the session is invalid
+  impersonatedBy?: string;
+  impersonatorId?: string;
+  isImpersonated?: boolean;
   iat?: number;
   exp?: number;
 }
@@ -26,4 +29,7 @@ export interface AuthenticatedUser {
   role: UserRole;
   instituteId: string;
   avatarUrl?: string | null;
+  impersonatedBy?: string;
+  impersonatorId?: string;
+  isImpersonated?: boolean;
 }

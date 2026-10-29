@@ -956,6 +956,8 @@ export class FounderService {
       instituteId: admin.instituteId,
       tokenVersion: admin.tokenVersion,
       impersonatedBy: actor.email,
+      impersonatorId: actor.id,
+      isImpersonated: true,
     };
 
     const accessToken = this.jwt.sign(payload, { expiresIn: '30m' });

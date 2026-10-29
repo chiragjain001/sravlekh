@@ -106,6 +106,11 @@ export const envSchema = z
     // AI
     OPENAI_API_KEY: z.string().optional(),
 
+    // Cryptographic QR signing for examination answer booklets
+    // (07-SECURITY-SPECIFICATION.md). Required in production and staging (min 32 chars).
+    BOOKLET_QR_SIGNING_KEY: z.string().min(32).optional(),
+    BOOKLET_QR_SIGNING_KEYRING: z.string().optional(),
+
     // Internal NestJS -> FastAPI service contract (02-SYSTEM-ARCHITECTURE.md).
     // Optional here so local dev keeps working, but REQUIRED in production by the
     // superRefine below. Unset means the Python service accepts ANY caller: staging
@@ -169,6 +174,28 @@ export const envSchema = z
     // Length is bounded for the same reason as JWT_SECRET: a short token is a
     // guessable one, and this credential is the only thing standing between the
     // AI service and the open network.
+    // Booklet signing key guard (07-SECURITY-SPECIFICATION.md)
+    const MIN_BOOKLET_KEY_LENGTH = 32;
+    if (env.NODE_ENV === 'production' || env.AIOS_ENV === 'staging') {
+      if (!env.BOOKLET_QR_SIGNING_KEY) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['BOOKLET_QR_SIGNING_KEY'],
+          message:
+            'BOOKLET_QR_SIGNING_KEY is required when NODE_ENV=production or AIOS_ENV=staging — without it ' +
+            'cryptographic booklet HMAC signatures cannot be generated or verified securely. Refusing to start.',
+        });
+      } else if (env.BOOKLET_QR_SIGNING_KEY.length < MIN_BOOKLET_KEY_LENGTH) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['BOOKLET_QR_SIGNING_KEY'],
+          message:
+            `BOOKLET_QR_SIGNING_KEY must be at least ${MIN_BOOKLET_KEY_LENGTH} characters in ` +
+            'production/staging. Refusing to start.',
+        });
+      }
+    }
+
     const MIN_INTERNAL_TOKEN_LENGTH = 32;
     if (env.NODE_ENV === 'production') {
       if (!env.INTERNAL_SERVICE_TOKEN) {

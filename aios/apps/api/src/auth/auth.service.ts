@@ -33,8 +33,10 @@ const ALLOWLIST_CHECK_TTL_SECONDS = 60; // 09-CACHING-STRATEGY.md §1.5
  * The existing DB query runs as the fallback, matching the pre-cache behaviour.
  */
 const JWT_USER_CACHE_TTL_SECONDS = 60;
-function jwtUserCacheKey(userId: string, tokenVersion: number): string {
-  return `auth:user:${userId}:${tokenVersion}`;
+function jwtUserCacheKey(userId: string, tokenVersion: number, impersonatorId?: string): string {
+  return impersonatorId
+    ? `auth:user:${userId}:${tokenVersion}:imp:${impersonatorId}`
+    : `auth:user:${userId}:${tokenVersion}`;
 }
 
 /** Cache-key prefix used to invalidate all tokenVersions for one user at once. */
@@ -545,7 +547,8 @@ export class AuthService {
    *  - Redis down: falls through to the DB query, exactly as before.
    */
   async validateJwtPayload(payload: JwtPayload): Promise<AuthenticatedUser> {
-    const cacheKey = jwtUserCacheKey(payload.sub, payload.tokenVersion);
+    const impersonatorTag = payload.impersonatorId || payload.impersonatedBy;
+    const cacheKey = jwtUserCacheKey(payload.sub, payload.tokenVersion, impersonatorTag);
     const cached = await this.cache.get<AuthenticatedUser>(cacheKey);
     if (cached !== undefined) return cached;
 
@@ -592,6 +595,9 @@ export class AuthService {
       role: user.role as UserRole,
       instituteId: user.instituteId,
       avatarUrl: user.avatarUrl,
+      ...(payload.impersonatedBy ? { impersonatedBy: payload.impersonatedBy } : {}),
+      ...(payload.impersonatorId ? { impersonatorId: payload.impersonatorId } : {}),
+      ...(payload.isImpersonated !== undefined ? { isImpersonated: payload.isImpersonated } : {}),
     };
 
     // Write to cache AFTER all checks pass — we never cache a rejected payload.

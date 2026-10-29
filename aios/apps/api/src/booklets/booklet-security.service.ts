@@ -23,9 +23,30 @@ export class BookletSecurityService {
   private readonly keyRing: Map<string, string> = new Map();
 
   constructor(private readonly config: ConfigService) {
-    // Load keys from configuration. In production, keys are provisioned via environment variables
-    const singleKey = this.config.get<string>('BOOKLET_QR_SIGNING_KEY') || 'sarvlekh_secure_booklet_hmac_secret_2026_default';
-    this.keyRing.set('k1', singleKey);
+    const nodeEnv = this.config.get<string>('NODE_ENV') || 'development';
+    const aiosEnv = this.config.get<string>('AIOS_ENV');
+    const isProductionLike = nodeEnv === 'production' || aiosEnv === 'staging';
+
+    const singleKey = this.config.get<string>('BOOKLET_QR_SIGNING_KEY');
+    if (!singleKey) {
+      if (isProductionLike) {
+        throw new Error(
+          'FATAL: BOOKLET_QR_SIGNING_KEY is not configured in production/staging environment. ' +
+          'Refusing to initialize BookletSecurityService without a cryptographic signing key.',
+        );
+      }
+      this.logger.warn(
+        'WARNING: BOOKLET_QR_SIGNING_KEY is not set. Using dev-only ephemeral key. DO NOT USE IN PRODUCTION.',
+      );
+      this.keyRing.set('k1', 'dev_only_ephemeral_booklet_qr_signing_key_32chars_min');
+    } else {
+      if (isProductionLike && singleKey.length < 32) {
+        throw new Error(
+          'FATAL: BOOKLET_QR_SIGNING_KEY must be at least 32 characters in production/staging.',
+        );
+      }
+      this.keyRing.set('k1', singleKey);
+    }
 
     // Support additional rotated keys if defined as JSON (e.g. {"k1": "key1", "k2": "key2"})
     const rawKeyRing = this.config.get<string>('BOOKLET_QR_SIGNING_KEYRING');
