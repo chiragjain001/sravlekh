@@ -116,6 +116,21 @@ export class GeneratePaperDto {
   @IsOptional()
   @IsString()
   targetBatchId?: string;
+
+  @ApiPropertyOptional({ description: 'Number of anti-cheating paper sets to generate (e.g. 2 for Set A & B, 3 for Set A, B & C)', default: 1 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(4)
+  setCount?: number = 1;
+}
+
+export class CreatePaperSetsDto {
+  @ApiProperty({ description: 'List of set labels to generate', example: ['Set A', 'Set B', 'Set C'] })
+  @IsArray()
+  @IsString({ each: true })
+  @IsNotEmpty({ each: true })
+  setLabels!: string[];
 }
 
 /**

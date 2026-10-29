@@ -15,6 +15,7 @@ import { QuestionsModule } from './questions/questions.module';
 import { PapersModule } from './papers/papers.module';
 import { ExamsModule } from './exams/exams.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { InterventionsModule } from './interventions/interventions.module';
 import { DoubtsModule } from './doubts/doubts.module';
 import { AssignmentsModule } from './assignments/assignments.module';
 import { TimetableModule } from './timetable/timetable.module';
@@ -32,6 +33,7 @@ import { LeaderboardModule } from './leaderboard/leaderboard.module';
 import { RubricsModule } from './rubrics/rubrics.module';
 import { DocumentsModule } from './documents/documents.module';
 import { IdentityResolutionModule } from './identity-resolution/identity-resolution.module';
+import { BookletsModule } from './booklets/booklets.module';
 import { OcrModule } from './ocr/ocr.module';
 import { EvaluationsModule } from './evaluations/evaluations.module';
 import { PermissionsModule } from './permissions/permissions.module';
@@ -96,6 +98,7 @@ import { CacheService } from './infrastructure/cache/cache.service';
     PapersModule,
     ExamsModule,
     AnalyticsModule,
+    InterventionsModule,
     DoubtsModule,
     AttendanceModule,
     AssignmentsModule,
@@ -112,6 +115,7 @@ import { CacheService } from './infrastructure/cache/cache.service';
     RubricsModule,
     DocumentsModule,
     IdentityResolutionModule,
+    BookletsModule,
     OcrModule,
     EvaluationsModule,
     PermissionsModule,

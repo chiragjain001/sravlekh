@@ -2,6 +2,7 @@ import {
   Injectable,
   UnauthorizedException,
   ForbiddenException,
+  ConflictException,
   Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -137,25 +138,68 @@ export class AuthService {
     // the status guard below (which runs after) then saw a healthy account. The
     // archive was undone before anything could check it.
     //
-    // Reactivation is an administrative act, not a side effect of signing in.
-    // A new user still starts ACTIVE via the schema default on the create branch.
-    const user = await this.prisma.user.upsert({
-      where: { googleSub },
-      update: {
-        name,
-        avatarUrl,
-        lastLoginAt: new Date(),
-      },
-      create: {
-        googleSub,
-        email,
-        name,
-        avatarUrl,
-        role,
+    // Step 3 — Securely link or create User record.
+    //
+    // Solves BUG-01 (Fatal P2002 Unique Constraint crash on invited users):
+    // When an admin invites a teacher/student, a User record already exists with
+    // a placeholder googleSub (e.g. "local_..."). If we only match by googleSub,
+    // the incoming real Google sub misses the existing user and hits `create()`,
+    // triggering a P2002 collision on @@unique([instituteId, email]).
+    //
+    // Solution:
+    // 1. Look up user by (instituteId, email) first.
+    // 2. If existing user has a local_ placeholder or matching googleSub, safely bind/update real googleSub.
+    // 3. If existing user already has a DIFFERENT real Google sub, reject with ConflictException (hijacking defense).
+    // 4. If no user exists by email, look up by googleSub or create a new user.
+    let user: any;
+    const existingByEmail = await this.prisma.user.findFirst({
+      where: {
         instituteId: institute.id,
-        lastLoginAt: new Date(),
+        email: { equals: email, mode: 'insensitive' },
       },
     });
+
+    if (existingByEmail) {
+      if (!existingByEmail.googleSub || existingByEmail.googleSub.startsWith('local_') || existingByEmail.googleSub === googleSub) {
+        user = await this.prisma.user.update({
+          where: { id: existingByEmail.id },
+          data: {
+            googleSub,
+            name: existingByEmail.name || name,
+            avatarUrl: avatarUrl ?? existingByEmail.avatarUrl,
+            lastLoginAt: new Date(),
+          },
+        });
+      } else {
+        this.logger.warn(`Account linking conflict: email ${email} in institute ${institute.id} is already linked to googleSub ${existingByEmail.googleSub}, incoming sub ${googleSub}`);
+        throw new ConflictException(
+          'This email is already linked to a different Google account. Please use your originally linked Google account or contact your administrator.',
+        );
+      }
+    } else {
+      user = await this.prisma.user.upsert({
+        where: {
+          instituteId_googleSub: {
+            instituteId: institute.id,
+            googleSub,
+          },
+        },
+        update: {
+          name,
+          avatarUrl,
+          lastLoginAt: new Date(),
+        },
+        create: {
+          googleSub,
+          email,
+          name,
+          avatarUrl,
+          role,
+          instituteId: institute.id,
+          lastLoginAt: new Date(),
+        },
+      });
+    }
 
     // Guard: if the user's role has changed in the allow-list, update it
     if (user.role !== role) {
@@ -583,6 +627,9 @@ export class AuthService {
       const payload = ticket.getPayload();
       if (!payload || !payload.email || !payload.sub) {
         throw new UnauthorizedException('Invalid Google token payload.');
+      }
+      if (payload.email_verified !== true) {
+        throw new UnauthorizedException('Google email is not verified. Please verify your email with Google.');
       }
 
       return payload;

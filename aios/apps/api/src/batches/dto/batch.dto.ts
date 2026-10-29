@@ -1,6 +1,7 @@
 import {
-  IsString, IsNotEmpty, IsOptional, IsBoolean, MaxLength, IsArray,
+  IsString, IsNotEmpty, IsOptional, IsBoolean, MaxLength, IsArray, ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateBatchDto {
@@ -136,4 +137,48 @@ export class UpdateTopicDto {
   @ApiPropertyOptional()
   @IsOptional()
   order?: number;
+}
+
+export class BulkBatchRowDto {
+  @ApiProperty({ example: 'Class 10 - Section A' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  name!: string;
+
+  @ApiPropertyOptional({ example: 'Class 10' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  classYear?: string;
+
+  @ApiPropertyOptional({ example: 'A' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  section?: string;
+
+  @ApiPropertyOptional({ example: '2025-2026' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  academicYear?: string;
+
+  @ApiPropertyOptional({ example: 'Main Campus' })
+  @IsOptional()
+  @IsString()
+  branchName?: string;
+
+  @ApiPropertyOptional({ example: 'branch-101' })
+  @IsOptional()
+  @IsString()
+  branchId?: string;
+}
+
+export class BulkCommitBatchesDto {
+  @ApiProperty({ type: [BulkBatchRowDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => BulkBatchRowDto)
+  batches!: BulkBatchRowDto[];
 }

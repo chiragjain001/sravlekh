@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { getQueueToken } from '@nestjs/bullmq';
 import { NotFoundException, ConflictException } from '@nestjs/common';
 import { InstituteStatus, UserRole } from '@prisma/client';
+import { JwtService } from '@nestjs/jwt';
 import axios from 'axios';
 import { FounderService } from './founder.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -25,8 +26,9 @@ describe('FounderService', () => {
   let service: FounderService;
   let prisma: {
     institute: { findMany: jest.Mock; findUnique: jest.Mock; update: jest.Mock };
-    user: { findMany: jest.Mock; count: jest.Mock };
+    user: { findMany: jest.Mock; findFirst: jest.Mock; count: jest.Mock };
     auditLog: { create: jest.Mock };
+    platformSetting: { findUnique: jest.Mock; upsert: jest.Mock };
     planDefinition: { findUnique: jest.Mock; findMany: jest.Mock; count: jest.Mock; createMany: jest.Mock; update: jest.Mock };
     institutePlanHistory: { create: jest.Mock; findMany: jest.Mock };
     exam: { count: jest.Mock };
@@ -44,8 +46,9 @@ describe('FounderService', () => {
   beforeEach(async () => {
     prisma = {
       institute: { findMany: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
-      user: { findMany: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(0) },
+      user: { findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn().mockResolvedValue(null), count: jest.fn().mockResolvedValue(0) },
       auditLog: { create: jest.fn() },
+      platformSetting: { findUnique: jest.fn().mockResolvedValue(null), upsert: jest.fn() },
       planDefinition: {
         findUnique: jest.fn(), findMany: jest.fn().mockResolvedValue([]),
         count: jest.fn().mockResolvedValue(4), createMany: jest.fn(), update: jest.fn(),
@@ -59,6 +62,8 @@ describe('FounderService', () => {
     };
     const makeMockQueue = (withClient: boolean) => ({
       getJobCounts: jest.fn().mockResolvedValue({ waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0 }),
+      getFailed: jest.fn().mockResolvedValue([]),
+      clean: jest.fn().mockResolvedValue([]),
       ...(withClient ? { client: Promise.resolve({ ping: jest.fn().mockResolvedValue('PONG') }) } : {}),
     });
     configValues = {};
@@ -76,11 +81,14 @@ describe('FounderService', () => {
         { provide: CacheService, useValue: { get: jest.fn(), set: jest.fn(), del: jest.fn(), delByPrefix: jest.fn() } },
         { provide: FeatureFlagsService, useValue: { isEnabled: jest.fn(), invalidate: jest.fn() } },
         { provide: StorageService, useValue: storage },
-        // FounderService now delegates plan-definition seeding to the same
-        // service that enforces the limits, so display and enforcement cannot
-        // drift. Seeding is a no-op here; these tests supply planDefinition
-        // rows directly through the Prisma mock.
         { provide: EntitlementsService, useValue: entitlements },
+        {
+          provide: JwtService,
+          useValue: {
+            sign: jest.fn().mockReturnValue('mock-jwt-token'),
+            verify: jest.fn(),
+          },
+        },
         { provide: getQueueToken(MASTERY_RECALC_QUEUE), useValue: makeMockQueue(true) },
         { provide: getQueueToken(AI_EVALUATION_QUEUE), useValue: makeMockQueue(false) },
         { provide: getQueueToken(SCORE_AGGREGATION_QUEUE), useValue: makeMockQueue(false) },
@@ -373,7 +381,7 @@ describe('FounderService', () => {
       expect(s3?.configured).toBe(true);
     });
 
-    it('reports email/SMS/WhatsApp as configured-but-not-wired, matching the real notice-dispatch stub behavior', async () => {
+    it('reports email/SMS/WhatsApp as configured and wired into notice-dispatch', async () => {
       configValues.SENDGRID_API_KEY = 'sg-key';
       configValues.WHATSAPP_API_TOKEN = 'wa-token';
       configValues.SMS_GATEWAY_KEY = 'sms-key';
@@ -383,7 +391,7 @@ describe('FounderService', () => {
       for (const key of ['sendgridEmail', 'whatsapp', 'sms']) {
         const entry = result.find((r) => r.key === key);
         expect(entry?.configured).toBe(true);
-        expect(entry?.wired).toBe(false);
+        expect(entry?.wired).toBe(true);
       }
     });
 
@@ -394,4 +402,164 @@ describe('FounderService', () => {
       expect(python?.status).toBe('down');
     });
   });
+
+  describe('Module Distribution & Packaging', () => {
+    it('returns default platform modules and presets for an institute', async () => {
+      prisma.institute.findUnique.mockResolvedValueOnce({
+        id: 'inst-1',
+        name: 'Delhi Public School',
+        featureFlags: null,
+      });
+
+      const result = await service.getInstituteModules('inst-1');
+      expect(result.instituteId).toBe('inst-1');
+      expect(result.preset).toBe('SCHOOL_CORE');
+      expect(Object.keys(result.modules).length).toBeGreaterThan(0);
+      expect(Object.keys(result.availablePresets).length).toBe(4);
+    });
+
+    it('updates institute modules and audit logs the change', async () => {
+      prisma.institute.findUnique.mockResolvedValueOnce({
+        id: 'inst-1',
+        name: 'DPS',
+        featureFlags: {},
+      });
+      prisma.institute.update.mockResolvedValueOnce({
+        id: 'inst-1',
+        name: 'DPS',
+        featureFlags: {
+          moduleConfig: {
+            preset: 'exam_omr',
+            modules: { exams_omr: true, student_portal: false },
+          },
+        },
+      });
+
+      const updated = await service.updateInstituteModules(
+        'inst-1',
+        { preset: 'exam_omr', modules: { exams_omr: true, student_portal: false } },
+        founder,
+      );
+
+      expect(prisma.institute.update).toHaveBeenCalled();
+      expect(prisma.auditLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            entity: 'institutes',
+            entityId: 'inst-1',
+            instituteId: 'inst-1',
+          }),
+        }),
+      );
+      expect(updated.moduleConfig.preset).toBe('exam_omr');
+    });
+  });
+
+  describe('Finance & Accountant Control', () => {
+    it('calculates finance overview with ARR and margins', async () => {
+      prisma.institute.findMany.mockResolvedValueOnce([
+        { id: 'inst-1', name: 'School A', plan: 'ENTERPRISE', status: InstituteStatus.ACTIVE, createdAt: new Date() },
+        { id: 'inst-2', name: 'School B', plan: 'STANDARD', status: InstituteStatus.ACTIVE, createdAt: new Date() },
+      ]);
+      prisma.evaluationVersion.count.mockResolvedValueOnce(500);
+
+      const overview = await service.getFinanceOverview();
+      expect(overview.metrics.institutesCount).toBe(2);
+      expect(overview.metrics.totalARR).toBeGreaterThan(0);
+      expect(overview.metrics.netAiMargin).toBeDefined();
+    });
+
+    it('creates an invoice and records a payment', async () => {
+      prisma.institute.findUnique.mockResolvedValueOnce({ id: 'inst-1', name: 'School A' });
+      prisma.institute.findMany.mockResolvedValueOnce([]);
+      prisma.platformSetting.findUnique.mockResolvedValueOnce(null);
+      prisma.platformSetting.upsert.mockResolvedValue({});
+
+      const invoice = await service.createInvoice(
+        {
+          instituteId: 'inst-1',
+          amount: 50000,
+          packagePreset: 'enterprise',
+          notes: 'Annual Subscription',
+        },
+        founder,
+      );
+
+      expect(invoice.amount).toBe(50000);
+      expect(invoice.status).toBe('PENDING');
+
+      // Now record payment
+      prisma.platformSetting.findUnique.mockResolvedValueOnce({
+        key: 'finance_invoices',
+        value: JSON.stringify([invoice]),
+      });
+
+      const paid = await service.recordPayment(
+        invoice.id,
+        {
+          paymentMethod: 'NEFT',
+          transactionRef: 'NEFT123456',
+        },
+        founder,
+      );
+
+      expect(paid.status).toBe('PAID');
+      expect(paid.paidAt).toBeDefined();
+    });
+  });
+
+  describe('Ops Self-Healing & Queue Control', () => {
+    it('retries queue jobs and records audit log', async () => {
+      const result = await service.retryQueueJobs({ queueName: 'all' }, founder);
+      expect(result.retriedCount).toBeGreaterThanOrEqual(0);
+      expect(prisma.auditLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            entity: 'queues',
+            entityId: 'all',
+          }),
+        }),
+      );
+    });
+
+    it('triggers manual backup and records audit log', async () => {
+      const backup = await service.triggerBackup(founder);
+      expect(backup.success).toBe(true);
+      expect(backup.snapshotId).toBeDefined();
+      expect(prisma.auditLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            entity: 'database_backups',
+          }),
+        }),
+      );
+    });
+  });
+
+  describe('Ghost Login / Impersonation', () => {
+    it('generates an admin session token for institute impersonation', async () => {
+      prisma.institute.findUnique.mockResolvedValueOnce({ id: 'inst-1', name: 'Target School' });
+      prisma.user.findFirst.mockResolvedValueOnce({
+        id: 'admin-1',
+        name: 'School Principal',
+        email: 'principal@school.com',
+        role: UserRole.ADMIN,
+        instituteId: 'inst-1',
+      });
+
+      const result = await service.impersonateInstituteAdmin('inst-1', founder);
+      expect(result.accessToken).toBe('mock-jwt-token');
+      expect(result.user.email).toBe('principal@school.com');
+      expect(prisma.auditLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            entity: 'impersonation',
+            entityId: 'admin-1',
+            instituteId: 'inst-1',
+          }),
+        }),
+      );
+    });
+  });
 });
+

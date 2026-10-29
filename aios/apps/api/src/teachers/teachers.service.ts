@@ -52,7 +52,7 @@ export class TeachersService {
         data: {
           email: dto.email,
           name: dto.name,
-          googleSub: `local_${Date.now()}_${Math.random()}`,
+          googleSub: null, // Null until user completes first Google login
           role: UserRole.TEACHER,
           instituteId,
         },

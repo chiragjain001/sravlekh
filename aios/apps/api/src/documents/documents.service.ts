@@ -20,6 +20,8 @@ import {
   ProcessingJobStatus,
   DetectionMethod,
   QuestionType,
+  IdentityStatus,
+  IdentityMethod,
   Prisma,
 } from '@prisma/client';
 import { randomUUID } from 'crypto';
@@ -47,6 +49,7 @@ import {
 } from './upload-validation';
 import { isHumanApproved } from '../evaluations/evaluation-status.util';
 import { rateLimitFrom } from '../shared/provider-rate-limit';
+import { IdentityResolutionService } from '../identity-resolution/identity-resolution.service';
 
 /** One suggested answer region as api-python returns it. */
 interface RegionSuggestion {
@@ -69,8 +72,9 @@ interface RenderedPage {
   pageNumber: number;
   width: number;
   height: number;
-  imageBase64: string;
+  imageBase64?: string | null;
   contentType: string;
+  uploaded?: boolean;
 }
 
 const PDF_RENDER_TIMEOUT_MS = 180_000;
@@ -149,7 +153,8 @@ export class DocumentsService {
     private readonly featureFlags: FeatureFlagsService,
     private readonly config: ConfigService,
     @InjectQueue(PDF_SPLIT_QUEUE) private readonly pdfSplitQueue: Queue<PdfSplitJobData>,
-  ) {}
+    private readonly identityResolutionService: IdentityResolutionService,
+  ) { }
 
   // ── DocumentBundle ───────────────────────────────────────────────────────
 
@@ -505,12 +510,29 @@ export class DocumentsService {
       return;
     }
 
+    // Bounded parallel uploads (batch size: 4) to cut upload latency while keeping memory safe
     const stored: { pageNumber: number; key: string }[] = [];
-    for (const page of pages) {
-      const key = this.storage.buildKey(job.instituteId, 'documents', job.documentId, 'pages', String(page.pageNumber), pageObjectName(page.pageNumber, page.contentType));
-      await this.storage.upload(key, Buffer.from(page.imageBase64, 'base64'), page.contentType);
-      stored.push({ pageNumber: page.pageNumber, key });
+    const UPLOAD_BATCH_SIZE = 4;
+    for (let i = 0; i < pages.length; i += UPLOAD_BATCH_SIZE) {
+      const batch = pages.slice(i, i + UPLOAD_BATCH_SIZE);
+      await Promise.all(
+        batch.map(async (page) => {
+          const key = this.storage.buildKey(
+            job.instituteId,
+            'documents',
+            job.documentId,
+            'pages',
+            String(page.pageNumber),
+            pageObjectName(page.pageNumber, page.contentType),
+          );
+          if (page.imageBase64) {
+            await this.storage.upload(key, Buffer.from(page.imageBase64, 'base64'), page.contentType);
+          }
+          stored.push({ pageNumber: page.pageNumber, key });
+        }),
+      );
     }
+    stored.sort((a, b) => a.pageNumber - b.pageNumber);
 
     await this.prisma.$transaction(async (tx) => {
       const fresh = await tx.document.findUnique({ where: { id: job.documentId }, include: { pages: true } });
@@ -529,6 +551,143 @@ export class DocumentsService {
       });
     });
     this.logger.log(`pdf-split: document ${job.documentId} rendered ${stored.length} page(s)`);
+
+    // Inspect cover page for QR booklet serial and OMR roll-number bubbles
+    try {
+      const segRes = await axios.post<{
+        data: {
+          total_pages?: number;
+          totalPdfPages?: number;
+          booklets?: Array<{
+            bookletSerial?: string | null;
+            booklet_serial?: string | null;
+            detectedRollNumber?: string | null;
+            roll_number?: string | null;
+            confidence?: number;
+            roll_number_confidence?: number;
+            deliveryId?: string | null;
+            delivery_id?: string | null;
+            pageIndices?: number[];
+            page_indices?: number[];
+            qrPayload?: string | null;
+            qr_payload?: string | null;
+            isQuarantined?: boolean;
+            quarantineReason?: string | null;
+          }>;
+          segments?: Array<{
+            bookletSerial?: string | null;
+            booklet_serial?: string | null;
+            detectedRollNumber?: string | null;
+            roll_number?: string | null;
+            confidence?: number;
+            roll_number_confidence?: number;
+            deliveryId?: string | null;
+            delivery_id?: string | null;
+            pageIndices?: number[];
+            page_indices?: number[];
+            qrPayload?: string | null;
+            qr_payload?: string | null;
+            isQuarantined?: boolean;
+            quarantineReason?: string | null;
+          }>;
+          quarantinedPages?: number[];
+          quarantined_pages?: number[];
+        };
+      }>(
+        `${baseUrl}/documents/segment-bulk-booklets`,
+        { pdf_url: pdfUrl },
+        {
+          headers: internalToken ? { 'X-Internal-Token': internalToken } : undefined,
+          timeout: PDF_RENDER_TIMEOUT_MS,
+        },
+      );
+
+      const segData = segRes.data?.data;
+      const booklets = segData?.booklets || segData?.segments || [];
+      const quarantined = segData?.quarantinedPages || segData?.quarantined_pages || [];
+
+      if (booklets && booklets.length > 0) {
+        for (let i = 0; i < booklets.length; i++) {
+          const b = booklets[i];
+          if (!b) continue;
+          const bklSerial = b.bookletSerial || b.booklet_serial;
+          const rollNum = b.detectedRollNumber || b.roll_number;
+          const conf = b.confidence ?? b.roll_number_confidence ?? 0;
+          const delId = b.deliveryId || b.delivery_id;
+          const qrPayload = b.qrPayload || b.qr_payload;
+          const pageIndices = b.pageIndices || b.page_indices || [];
+
+          let targetDocId = job.documentId;
+          if (i > 0) {
+            const docRec = await this.prisma.document.findUnique({
+              where: { id: job.documentId },
+            });
+            if (docRec) {
+              const newDoc = await this.prisma.document.create({
+                data: {
+                  documentBundleId: docRec.documentBundleId,
+                  status: 'IDENTITY_PENDING',
+                  layoutType: docRec.layoutType,
+                  bookletSerial: bklSerial,
+                  expectedPageCount: pageIndices.length || 1,
+                },
+              });
+              targetDocId = newDoc.id;
+
+              if (Array.isArray(pageIndices)) {
+                for (let pIdx = 0; pIdx < pageIndices.length; pIdx++) {
+                  const srcPageNum = pageIndices[pIdx];
+                  const matchedStored = stored.find((s) => s.pageNumber === srcPageNum);
+                  if (matchedStored) {
+                    const page = await this.prisma.page.create({
+                      data: { documentId: newDoc.id, pageNumber: pIdx + 1 },
+                    });
+                    await this.prisma.pageImage.create({
+                      data: { pageId: page.id, rawImageUrl: matchedStored.key },
+                    });
+                  }
+                }
+              }
+            }
+          }
+
+          if (bklSerial || rollNum || qrPayload) {
+            await this.identityResolutionService.resolveFromQrAndOmr({
+              instituteId: job.instituteId,
+              documentId: targetDocId,
+              assessmentDeliveryId: delId ?? '',
+              bookletSerial: bklSerial,
+              detectedRollNumber: rollNum,
+              confidence: conf,
+              qrPayload: qrPayload,
+            });
+          }
+        }
+      }
+
+      if (quarantined && quarantined.length > 0) {
+        this.logger.warn(`pdf-split: ${quarantined.length} page(s) quarantined in document ${job.documentId}: pages [${quarantined.join(', ')}]`);
+        const existingRes = await this.prisma.identityResolution.findUnique({
+          where: { documentId: job.documentId },
+        });
+        if (!existingRes || existingRes.status === IdentityStatus.PENDING) {
+          await this.prisma.identityResolution.upsert({
+            where: { documentId: job.documentId },
+            create: {
+              documentId: job.documentId,
+              method: IdentityMethod.MANUAL_ADMIN_MATCH,
+              confidence: 0,
+              status: IdentityStatus.UNRESOLVED,
+            },
+            update: {
+              status: IdentityStatus.UNRESOLVED,
+            },
+          });
+        }
+      }
+    } catch (segErr) {
+      this.logger.warn(`pdf-split: bulk segmentation/OMR detection skipped for document ${job.documentId}`, segErr as Error);
+    }
   }
 
   private async failDocument(documentId: string, reason: string) {
@@ -574,6 +733,16 @@ export class DocumentsService {
   async findById(instituteId: string, documentId: string, actor: AuthenticatedUser) {
     this.assertInstituteAccess(actor, instituteId);
     const document = await this.getDocumentWithTenantCheck(documentId, instituteId);
+
+    // Close BUG-02 (IDOR Vulnerability):
+    // If requesting actor is a STUDENT, verify they own the attempt linked to this document.
+    if (actor.role === UserRole.STUDENT) {
+      const student = await this.prisma.studentProfile.findUnique({ where: { userId: actor.id } });
+      if (!student || document.attemptId === null || student.id !== (await this.attemptStudentId(document.attemptId))) {
+        throw new ForbiddenException("You don't have access to this.");
+      }
+    }
+
     return this.prisma.document.findUnique({
       where: { id: document.id },
       include: {

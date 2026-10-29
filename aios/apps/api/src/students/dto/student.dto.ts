@@ -9,6 +9,7 @@ import {
   MinLength,
   MaxLength,
   IsPhoneNumber,
+  ValidateNested,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
@@ -205,3 +206,76 @@ export class QueryStudentsDto {
   @Max(100)
   limit?: number = 20;
 }
+
+export class BulkStudentRowDto {
+  @ApiProperty({ example: 'Aarav Sharma' })
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(2)
+  @MaxLength(100)
+  name!: string;
+
+  @ApiProperty({ example: 'aarav.sharma@school.edu' })
+  @IsEmail()
+  email!: string;
+
+  @ApiPropertyOptional({ example: '101' })
+  @IsOptional()
+  @IsString()
+  rollNumber?: string;
+
+  @ApiPropertyOptional({ example: 'batch-cuid-or-name' })
+  @IsOptional()
+  @IsString()
+  batchId?: string;
+
+  @ApiPropertyOptional({ example: 'Class 10 - Section A' })
+  @IsOptional()
+  @IsString()
+  batchName?: string;
+
+  @ApiPropertyOptional({ example: '2010-05-15' })
+  @IsOptional()
+  @IsDateString()
+  dateOfBirth?: string;
+
+  @ApiPropertyOptional({ example: 'Male' })
+  @IsOptional()
+  @IsString()
+  gender?: string;
+
+  @ApiPropertyOptional({ example: 'Rajesh Sharma' })
+  @IsOptional()
+  @IsString()
+  guardianName?: string;
+
+  @ApiPropertyOptional({ example: '9876543210' })
+  @IsOptional()
+  @IsString()
+  guardianPhone?: string;
+
+  @ApiPropertyOptional({ example: 'rajesh@email.com' })
+  @IsOptional()
+  @IsEmail()
+  guardianEmail?: string;
+
+  @ApiPropertyOptional({ example: '123 Park Street, Delhi' })
+  @IsOptional()
+  @IsString()
+  address?: string;
+
+  @ApiPropertyOptional({ example: ['fast-learner', 'needs-revision'] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  tags?: string[];
+}
+
+export class BulkCommitStudentsDto {
+  @ApiProperty({ type: [BulkStudentRowDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => BulkStudentRowDto)
+  students!: BulkStudentRowDto[];
+}
+

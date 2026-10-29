@@ -135,6 +135,17 @@ export const envSchema = z
     SENDGRID_API_KEY: z.string().optional(),
     WHATSAPP_API_TOKEN: z.string().optional(),
     SMS_GATEWAY_KEY: z.string().optional(),
+    SENDGRID_FROM_EMAIL: z.string().email().optional(),
+    SENDGRID_FROM_NAME: z.string().optional(),
+    WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
+    WHATSAPP_TEMPLATE_NAME: z.string().optional(),
+    SMS_GATEWAY_URL: z.string().url().optional(),
+    SMS_SENDER_ID: z.string().optional(),
+    NOTIFICATION_DRY_RUN: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((v) => v === 'true'),
+    NOTIFICATION_WEBHOOK_SECRET: z.string().optional(),
   })
   .superRefine((env, ctx) => {
     // Refuse to boot rather than serve a credential-less login endpoint in

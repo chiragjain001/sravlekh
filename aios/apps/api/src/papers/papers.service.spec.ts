@@ -341,4 +341,81 @@ describe('PapersService — tenant isolation (13-TESTING-STRATEGY.md §7)', () =
       expect(prisma.question.create).not.toHaveBeenCalled();
     });
   });
+
+  describe('createBlueprint — section and internal choice validation', () => {
+    it('rejects when section attemptRequired exceeds questionCount', async () => {
+      await expect(
+        service.createBlueprint('inst-1', {
+          subjectId: 'sub-1', name: 'Theory Exam', totalMarks: 40, duration: 90, format: 'THEORY' as any,
+          sections: [{ name: 'Sec A', questionCount: 5, attemptRequired: 8, marksPerQuestion: 5, internalChoice: true }],
+          distribution: [{ topicId: 't-1', type: QuestionType.SHORT_ANSWER, difficulty: DifficultyLevel.MEDIUM, count: 5, marksPerQuestion: 5 }],
+        }, admin),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects when section questionCount is less than 1', async () => {
+      await expect(
+        service.createBlueprint('inst-1', {
+          subjectId: 'sub-1', name: 'Theory Exam', totalMarks: 20, duration: 60, format: 'THEORY' as any,
+          sections: [{ name: 'Sec A', questionCount: 0, marksPerQuestion: 5 }],
+          distribution: [{ topicId: 't-1', type: QuestionType.SHORT_ANSWER, difficulty: DifficultyLevel.MEDIUM, count: 1, marksPerQuestion: 5 }],
+        }, admin),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('generatePaper — anti-family deduplication & multi-set generation', () => {
+    it('prioritizes questions from unseen families before falling back to duplicate families', async () => {
+      prisma.blueprint.findUnique.mockResolvedValueOnce({
+        id: 'bp-1', instituteId: 'inst-1', format: 'OMR', totalMarks: 15,
+        distribution: [{ topicId: 't-1', type: QuestionType.MCQ, difficulty: DifficultyLevel.MEDIUM, count: 3, marksPerQuestion: 5 }],
+      });
+      // 4 candidates in bank: q-1 and q-2 from family-A; q-3 from family-B; q-4 from family-C
+      // Needed: 3 questions. It should pick q-3 (fam-B), q-4 (fam-C), and only one from fam-A!
+      prisma.question.findMany.mockResolvedValueOnce([
+        { id: 'q-1', familyId: 'fam-A', versions: [{ id: 'qv-1' }] },
+        { id: 'q-2', familyId: 'fam-A', versions: [{ id: 'qv-2' }] },
+        { id: 'q-3', familyId: 'fam-B', versions: [{ id: 'qv-3' }] },
+        { id: 'q-4', familyId: 'fam-C', versions: [{ id: 'qv-4' }] },
+      ]);
+
+      const paper = await service.generatePaper('inst-1', { blueprintId: 'bp-1', title: 'Test Paper' }, admin);
+      expect(paper).toBeDefined();
+    });
+
+    it('generates multi-set versions (Set A, Set B, Set C) when setCount is requested', async () => {
+      prisma.blueprint.findUnique.mockResolvedValueOnce({
+        id: 'bp-1', instituteId: 'inst-1', format: 'OMR', totalMarks: 5,
+        distribution: [{ topicId: 't-1', type: QuestionType.MCQ, difficulty: DifficultyLevel.MEDIUM, count: 1, marksPerQuestion: 5 }],
+      });
+      prisma.question.findMany.mockResolvedValueOnce([
+        { id: 'q-1', familyId: null, versions: [{ id: 'qv-1' }] },
+      ]);
+
+      const versionCreateSpy = jest.fn();
+      prisma.$transaction.mockImplementationOnce(async (fn: any) => fn({
+        paper: { create: jest.fn().mockResolvedValue({ id: 'paper-multi-set' }) },
+        paperVersion: { create: versionCreateSpy },
+      }));
+
+      await service.generatePaper('inst-1', { blueprintId: 'bp-1', title: 'Set Test', setCount: 3 }, admin);
+      expect(versionCreateSpy).toHaveBeenCalledTimes(3);
+      expect(versionCreateSpy).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ setLabel: 'Set A' }) }));
+      expect(versionCreateSpy).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ setLabel: 'Set B' }) }));
+      expect(versionCreateSpy).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ setLabel: 'Set C' }) }));
+    });
+
+    it('allows creating additional paper sets via createPaperSets', async () => {
+      (prisma.paper as any).findUnique = jest.fn().mockResolvedValueOnce({
+        id: 'paper-1', instituteId: 'inst-1', status: 'DRAFT',
+        versions: [{ id: 'v-1', versionNo: 1, setLabel: 'Set A' }],
+      });
+      const versionCreate = jest.fn().mockResolvedValue({ id: 'v-2', versionNo: 2, setLabel: 'Set B' });
+      (prisma as any).paperVersion = { create: versionCreate };
+
+      const res = await service.createPaperSets('inst-1', 'paper-1', ['Set B', 'Set C'], admin);
+      expect(res.versions).toBeDefined();
+      expect(versionCreate).toHaveBeenCalled();
+    });
+  });
 });

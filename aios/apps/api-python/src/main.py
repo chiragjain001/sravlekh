@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.config import get_settings
 from src.database import connect_db, db, disconnect_db
-from src.routers import ai, analytics, documents, evaluation, institutes, ocr, users
+from src.routers import ai, analytics, booklets, documents, evaluation, institutes, ocr, reports, users
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +70,8 @@ app.include_router(analytics.router)
 app.include_router(ocr.router)
 app.include_router(evaluation.router)
 app.include_router(documents.router)
+app.include_router(booklets.router)
+app.include_router(reports.router)
 
 @app.get("/")
 async def root():

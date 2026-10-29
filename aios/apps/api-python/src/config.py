@@ -67,6 +67,9 @@ class Settings(BaseSettings):
     # so a future per-institute override doesn't require touching callers.
     MASTERY_INTERVENTION_THRESHOLD: float = 0.50
     MASTERY_MAX_WEAK_TOPICS: int = 1
+    MASTERY_MIN_SAMPLES_FOR_INTERVENTION: int = 2
+    MASTERY_EMA_ALPHA: float = 0.3
+    MASTERY_BASELINE: float = 0.5
 
     # P1 D1: the batch heatmap's CRITICAL/WARNING/HEALTHY display bands. Deliberately
     # NOT derived from MASTERY_INTERVENTION_THRESHOLD above — 01-PRODUCT-REQUIREMENTS.md
@@ -217,4 +220,7 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings():
-    return Settings()
+    s = Settings()
+    if s.DATABASE_URL and not os.environ.get("DATABASE_URL"):
+        os.environ["DATABASE_URL"] = s.DATABASE_URL
+    return s

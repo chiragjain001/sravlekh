@@ -37,6 +37,10 @@ vi.mock('@/features/teachers/hooks/useTeachers', () => ({
   useUpdateTeacher: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteTeacher: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useBulkDeleteTeachers: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useDownloadBulkTeacherTemplate: () => ({ mutate: vi.fn(), isPending: false }),
+  useValidateBulkTeachers: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useCommitBulkTeachers: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useDownloadBulkTeacherErrorReport: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 vi.mock('@/hooks/useApi', () => ({
@@ -51,10 +55,12 @@ describe('AdminTeachers screen UI enhancements', () => {
     // Header title
     expect(screen.getByText('Faculty Directory')).toBeInTheDocument();
 
-    // Export button and Add Teacher button
+    // Export button, Bulk Import button, and Add Teacher button
     const exportBtn = screen.getByRole('button', { name: /export/i });
+    const bulkImportBtn = screen.getByRole('button', { name: /bulk import/i });
     const addTeacherBtn = screen.getByRole('button', { name: /add teacher/i });
     expect(exportBtn).toBeInTheDocument();
+    expect(bulkImportBtn).toBeInTheDocument();
     expect(addTeacherBtn).toBeInTheDocument();
 
     // Segmented tab list with role="tablist"

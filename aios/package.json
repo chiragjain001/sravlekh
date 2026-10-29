@@ -14,7 +14,11 @@
     "backup": "node infra/backup/backup.js",
     "backup:restore": "node infra/backup/restore.js",
     "backup:drill": "node infra/backup/drill.js",
-    "backup:test": "node --test infra/backup/retention.test.js"
+    "backup:test": "node --test infra/backup/retention.test.js",
+    "test:e2e": "node --test tests/e2e/exam-lifecycle.browser.test.js",
+    "test:integrity": "node --test tests/integrity/db-constraints-and-concurrency.test.js",
+    "test:profile": "node tests/performance/workload-profiler.js",
+    "profile": "node tests/performance/workload-profiler.js"
   },
   "devDependencies": {
     "puppeteer": "^25.12.0",

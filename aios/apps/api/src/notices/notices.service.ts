@@ -284,7 +284,7 @@ export class NoticesService {
 
   // ── Private helpers ───────────────────────────────────────────────────────
 
-  private assertInstituteAccess(actor: AuthenticatedUser, instituteId: string) {
+  assertInstituteAccess(actor: AuthenticatedUser, instituteId: string) {
     if (actor.role === UserRole.FOUNDER) return;
     if (actor.instituteId !== instituteId) throw new ForbiddenException("You don't have access to this.");
   }

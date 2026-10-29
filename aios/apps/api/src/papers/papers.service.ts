@@ -22,12 +22,35 @@ import { sampleWithoutReplacement } from '../shared/random-sample';
 export class PapersService {
   private readonly logger = new Logger(PapersService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
 
   // ── Blueprints ──────────────────────────────────────────────────────────
 
   async createBlueprint(instituteId: string, dto: CreateBlueprintDto, actor: AuthenticatedUser) {
     this.assertInstituteAccess(actor, instituteId);
+
+    if (!dto.distribution || !Array.isArray(dto.distribution) || dto.distribution.length === 0) {
+      throw new BadRequestException('Blueprint must include at least one question distribution rule.');
+    }
+
+    // Validate sections if format is THEORY or HYBRID
+    if ((dto.format === 'THEORY' || dto.format === 'HYBRID') && Array.isArray(dto.sections)) {
+      for (const sec of dto.sections) {
+        if (!sec.questionCount || sec.questionCount < 1) {
+          throw new BadRequestException(`Section '${sec.name || sec.id || 'unnamed'}' must require at least 1 question.`);
+        }
+        if (!sec.marksPerQuestion || sec.marksPerQuestion < 1) {
+          throw new BadRequestException(`Section '${sec.name || sec.id || 'unnamed'}' marksPerQuestion must be positive.`);
+        }
+        if (sec.internalChoice) {
+          if (!sec.attemptRequired || sec.attemptRequired < 1 || sec.attemptRequired > sec.questionCount) {
+            throw new BadRequestException(
+              `Section '${sec.name || sec.id || 'unnamed'}' attemptRequired (${sec.attemptRequired}) must be between 1 and questionCount (${sec.questionCount}).`
+            );
+          }
+        }
+      }
+    }
 
     // Validate sum of marks matches totalMarks
     let calculatedMarks = 0;
@@ -40,8 +63,6 @@ export class PapersService {
       calculatedMarks = dto.distribution.reduce((acc, rule) => acc + (rule.count * rule.marksPerQuestion), 0);
     }
 
-    // DEBUG — remove after diagnosing the 400
-    this.logger.debug(`createBlueprint received: totalMarks=${dto.totalMarks} (type=${typeof dto.totalMarks}), calculatedMarks=${calculatedMarks}, distribution=${JSON.stringify(dto.distribution)}`);
 
     if (Math.round(calculatedMarks * 100) !== Math.round(Number(dto.totalMarks) * 100)) {
       throw new BadRequestException(`Distribution marks sum (${calculatedMarks}) does not match totalMarks (${dto.totalMarks})`);
@@ -112,10 +133,14 @@ export class PapersService {
     }
 
     const rules = blueprint.distribution as unknown as BlueprintDistributionRuleDto[];
+    if (!rules || !Array.isArray(rules) || rules.length === 0) {
+      throw new BadRequestException('Blueprint contains no distribution rules.');
+    }
+
     const selectedQuestionIds: string[] = [];
     const selectedFamilyIds = new Set<string>();
     const paperItemsData: { questionId: string; questionVersionId?: string; marks: number; order: number; sectionId?: string }[] = [];
-    
+
     let orderCounter = 1;
 
     for (const rule of rules) {
@@ -126,7 +151,7 @@ export class PapersService {
           type: rule.type,
           difficulty: rule.difficulty,
           isApproved: true,
-          id: { notIn: selectedQuestionIds }, 
+          id: { notIn: selectedQuestionIds },
         },
         select: {
           id: true,
@@ -141,11 +166,17 @@ export class PapersService {
         );
       }
 
-      // Anti-family deduplication: prefer candidates whose question family hasn't been chosen yet
+      // Anti-family deduplication: prioritize candidates whose question family hasn't been chosen yet
       const preferred = candidates.filter((c) => !c.familyId || !selectedFamilyIds.has(c.familyId));
-      const pool = preferred.length >= rule.count ? preferred : candidates;
-
-      const selected = sampleWithoutReplacement(pool, rule.count);
+      let selected: typeof candidates = [];
+      if (preferred.length >= rule.count) {
+        selected = sampleWithoutReplacement(preferred, rule.count);
+      } else {
+        selected = [...preferred];
+        const remainingNeeded = rule.count - preferred.length;
+        const nonPreferred = candidates.filter((c) => !preferred.some((p) => p.id === c.id));
+        selected.push(...sampleWithoutReplacement(nonPreferred, remainingNeeded));
+      }
 
       for (const q of selected) {
         selectedQuestionIds.push(q.id);
@@ -160,6 +191,13 @@ export class PapersService {
           sectionId: rule.sectionId,
         });
       }
+    }
+
+    const totalCalculatedMarks = paperItemsData.reduce((sum, item) => sum + item.marks, 0);
+    if (blueprint.format === 'OMR' && Math.round(totalCalculatedMarks * 100) !== Math.round(Number(blueprint.totalMarks) * 100)) {
+      throw new BadRequestException(
+        `Generated paper items marks sum (${totalCalculatedMarks}) does not match blueprint total marks (${blueprint.totalMarks})`
+      );
     }
 
     const paper = await this.prisma.$transaction(async (tx) => {
@@ -180,14 +218,17 @@ export class PapersService {
         },
       });
 
-      // Create version 1 (Base version)
-      await tx.paperVersion.create({
-        data: {
-          paperId: p.id,
-          versionNo: 1,
-          setLabel: 'Set A',
-        },
-      });
+      const requestedSetCount = dto.setCount && dto.setCount >= 1 ? Math.min(dto.setCount, 4) : 1;
+      const setLabels = ['Set A', 'Set B', 'Set C', 'Set D'].slice(0, requestedSetCount);
+      for (let i = 0; i < setLabels.length; i++) {
+        await tx.paperVersion.create({
+          data: {
+            paperId: p.id,
+            versionNo: i + 1,
+            setLabel: setLabels[i],
+          },
+        });
+      }
 
       return p;
     });
@@ -221,7 +262,7 @@ export class PapersService {
 
   async getPaper(instituteId: string, paperId: string, actor: AuthenticatedUser) {
     this.assertInstituteAccess(actor, instituteId);
-    
+
     const paper = await this.prisma.paper.findUnique({
       where: { id: paperId },
       include: {
@@ -302,6 +343,49 @@ export class PapersService {
     await this.writeAudit(instituteId, actor.id, AuditAction.CREATE, 'papers', clone.id, null, { title: dto.title, clonedFrom: sourcePaperId });
 
     return clone;
+  }
+
+  /**
+   * Generates or adds anti-cheating paper sets (Set A, Set B, Set C, etc.) to a draft paper.
+   */
+  async createPaperSets(instituteId: string, paperId: string, setLabels: string[], actor: AuthenticatedUser) {
+    this.assertInstituteAccess(actor, instituteId);
+
+    const paper = await this.prisma.paper.findUnique({
+      where: { id: paperId },
+      include: { versions: true },
+    });
+    if (!paper || paper.instituteId !== instituteId) {
+      throw new NotFoundException('Paper not found.');
+    }
+    if (paper.status !== PaperStatus.DRAFT) {
+      throw new BadRequestException('Cannot add sets to an already published paper.');
+    }
+    if (!setLabels || setLabels.length === 0) {
+      throw new BadRequestException('At least one set label must be provided.');
+    }
+
+    const existingLabels = new Set(paper.versions.map((v) => v.setLabel));
+    let nextVersionNo = Math.max(0, ...paper.versions.map((v) => v.versionNo)) + 1;
+
+    const createdVersions: any[] = [];
+    for (const label of setLabels) {
+      if (existingLabels.has(label)) continue;
+      const v = await this.prisma.paperVersion.create({
+        data: {
+          paperId,
+          versionNo: nextVersionNo++,
+          setLabel: label,
+        },
+      });
+      createdVersions.push(v);
+    }
+
+    await this.writeAudit(instituteId, actor.id, AuditAction.CREATE, 'paper_versions', paperId, null, {
+      addedSets: createdVersions.map((v) => v.setLabel),
+    });
+
+    return { paperId, versions: [...paper.versions, ...createdVersions] };
   }
 
   // ── Item review (teacher rejects a generated question, before publishing) ──

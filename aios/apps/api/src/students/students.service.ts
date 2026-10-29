@@ -5,8 +5,10 @@ import {
   ConflictException,
   BadRequestException,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { CacheService } from '../infrastructure/cache/cache.service';
 import { AuditAction, UserRole, UserStatus } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { getTeacherBatchIds } from '../shared/teacher-scope';
@@ -28,6 +30,7 @@ export class StudentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly entitlements: EntitlementsService,
+    @Optional() private readonly cache?: CacheService,
   ) {}
 
   // ── B-01: Create student ─────────────────────────────────────────────────
@@ -64,7 +67,7 @@ export class StudentsService {
         data: {
           email: dto.email,
           name: dto.name,
-          googleSub: `local_${Date.now()}_${Math.random()}`, // placeholder until Google login
+          googleSub: null, // Null until user completes first Google login
           role: UserRole.STUDENT,
           instituteId,
         },
@@ -174,7 +177,13 @@ export class StudentsService {
   async getStats(instituteId: string, actor: AuthenticatedUser) {
     this.assertInstituteAccess(actor, instituteId);
 
-    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor);
+    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor, this.cache);
+    const scope = teacherBatchIds ? teacherBatchIds.slice().sort().join(',') : 'all';
+    const cacheKey = "students-stats:" + instituteId + ":" + scope;
+    if (this.cache) {
+      const cached = await this.cache.get<any>(cacheKey);
+      if (cached) return cached;
+    }
     const scopeWhere: Record<string, unknown> = { instituteId, user: { instituteId } };
     if (teacherBatchIds !== null) {
       scopeWhere['batchId'] = { in: teacherBatchIds };
@@ -245,7 +254,7 @@ export class StudentsService {
       if (enrollmentByMonth.has(key)) enrollmentByMonth.set(key, (enrollmentByMonth.get(key) ?? 0) + 1);
     }
 
-    return {
+    const result = {
       total,
       active,
       inactive: total - active,
@@ -258,6 +267,10 @@ export class StudentsService {
       byTag: Array.from(tagCounts.entries()).map(([tag, count]) => ({ tag, count })),
       enrollmentByMonth: Array.from(enrollmentByMonth.entries()).map(([month, count]) => ({ month, count })),
     };
+    if (this.cache) {
+      await this.cache.set(cacheKey, result, 60);
+    }
+    return result;
   }
 
   // ── B-01: Get single student ──────────────────────────────────────────────
@@ -619,6 +632,9 @@ export class StudentsService {
           newValue: newValue ? (newValue as object) : undefined,
         },
       });
+      if (this.cache) {
+        await this.cache.delByPrefix("students-stats:" + instituteId + ":");
+      }
     } catch (err) {
       this.logger.error('Failed to write audit log', err);
     }

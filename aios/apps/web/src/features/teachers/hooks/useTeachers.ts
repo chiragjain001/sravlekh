@@ -155,3 +155,104 @@ export function useBulkDeleteTeachers() {
 
 export const useAssignTeacherToBatch = useAssignTeacherToBatchRaw;
 export const useRemoveTeacherFromBatch = useRemoveTeacherFromBatchRaw;
+
+// ── Bulk Faculty Import Hooks ───────────────────────────────────────────────
+
+export function useDownloadBulkTeacherTemplate() {
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async () => {
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/teachers/bulk-template`, {
+        responseType: 'blob',
+      });
+      const blob = new Blob([res.data], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'AIOS_Faculty_Onboarding_Template.xlsx');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      return true;
+    },
+    onSuccess: () => {
+      toast.success('Official Faculty Excel template downloaded');
+    },
+    onError: () => {
+      toast.error('Failed to download faculty template. Please check connection.');
+    },
+  });
+}
+
+export function useValidateBulkTeachers() {
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async (file: File) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await apiClient.post(
+        `/institutes/${user?.instituteId}/teachers/bulk-validate`,
+        formData,
+        { headers: { 'Content-Type': 'multipart/form-data' } },
+      );
+      return res.data;
+    },
+  });
+}
+
+export function useCommitBulkTeachers() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (teachers: any[]) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/teachers/bulk-import`, {
+        teachers,
+      });
+      return res.data;
+    },
+    onSuccess: (data) => {
+      toast.success(`Successfully onboarded ${data.enrolledCount} teacher(s)!`);
+      queryClient.invalidateQueries({ queryKey: ['teachers', user?.instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['teachers-stats', user?.instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['batches', user?.instituteId] });
+    },
+    onError: (error: any) => {
+      const msg = error.response?.data?.message || 'Failed to complete bulk faculty onboarding';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useDownloadBulkTeacherErrorReport() {
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async (failedRows: any[]) => {
+      const res = await apiClient.post(
+        `/institutes/${user?.instituteId}/teachers/bulk-error-report`,
+        { failedRows },
+        { responseType: 'blob' },
+      );
+      const blob = new Blob([res.data], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'AIOS_Failed_Teachers_Remediation.xlsx');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      return true;
+    },
+    onSuccess: () => {
+      toast.success('Error remediation workbook downloaded');
+    },
+    onError: () => {
+      toast.error('Failed to download error workbook');
+    },
+  });
+}

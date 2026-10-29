@@ -20,6 +20,21 @@ def get_max_weak_topics(institute_id: str | None = None) -> int:
     return get_settings().MASTERY_MAX_WEAK_TOPICS
 
 
+def get_min_samples_for_intervention(institute_id: str | None = None) -> int:
+    del institute_id  # not yet used — see module docstring
+    return getattr(get_settings(), "MASTERY_MIN_SAMPLES_FOR_INTERVENTION", 2)
+
+
+def get_ema_alpha(institute_id: str | None = None) -> float:
+    del institute_id
+    return getattr(get_settings(), "MASTERY_EMA_ALPHA", 0.3)
+
+
+def get_baseline_mastery(institute_id: str | None = None) -> float:
+    del institute_id
+    return getattr(get_settings(), "MASTERY_BASELINE", 0.5)
+
+
 def get_heatmap_critical_threshold_pct(institute_id: str | None = None) -> float:
     """P1 D1: the batch heatmap's CRITICAL band cutoff, 0-100 scale. A genuinely
     different question from get_mastery_threshold() above — see config.py's

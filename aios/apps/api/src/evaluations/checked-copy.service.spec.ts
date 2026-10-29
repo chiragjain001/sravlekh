@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { EvaluationSource, EvaluationStatus, QuestionType, UserRole } from '@prisma/client';
 import { CheckedCopyService } from './checked-copy.service';
 import { EvaluationsService } from './evaluations.service';
@@ -81,6 +81,7 @@ describe('CheckedCopyService', () => {
   let ai: { enqueueSingle: jest.Mock };
   let analytics: { enqueueMasteryRecalc: jest.Mock };
   let scoreAggregation: { recalculate: jest.Mock };
+  let copyCheckerService: { assertTeacherAuthorized: jest.Mock };
   let service: CheckedCopyService;
   let tx: any;
 
@@ -110,10 +111,13 @@ describe('CheckedCopyService', () => {
     ai = { enqueueSingle: jest.fn().mockResolvedValue(undefined) };
     analytics = { enqueueMasteryRecalc: jest.fn().mockResolvedValue(undefined) };
     scoreAggregation = { recalculate: jest.fn().mockResolvedValue(undefined) };
+    copyCheckerService = {
+      assertTeacherAuthorized: jest.fn().mockResolvedValue({ authorized: true, isLead: true, scope: 'BATCH' }),
+    };
     const config = { get: jest.fn().mockImplementation((k: string) => (k === 'PYTHON_SERVICE_URL' ? 'http://py' : undefined)) };
     // resolveMarksAndCriteria is pure — the real implementation, no dependencies needed.
-    const evaluations = new EvaluationsService(null as any, null as any, null as any, null as any, null as any, null as any, null as any);
-    service = new CheckedCopyService(prisma, storage as any, config as any, ai as any, analytics as any, evaluations, scoreAggregation as any);
+    const evaluations = new EvaluationsService(null as any, null as any, null as any, null as any, null as any, null as any, null as any, null as any);
+    service = new CheckedCopyService(prisma, storage as any, config as any, ai as any, analytics as any, evaluations, scoreAggregation as any, copyCheckerService as any);
     mockedAxios.post.mockReset();
     mockedAxios.post.mockResolvedValue({ data: Buffer.from('%PDF-fake') });
   });
@@ -316,6 +320,30 @@ describe('CheckedCopyService', () => {
       expect(payload.questions[0]).toMatchObject({ marksAwarded: 4, verdict: 'PARTIALLY_CORRECT', tags: [{ tag: 'CONCEPT', maxMarks: 5, marksAwarded: 4 }] });
       expect(storage.upload).toHaveBeenCalledWith('institutes/inst-1/checked-copies/att-1/final.pdf', expect.any(Buffer), 'application/pdf');
       expect(result).toEqual({ url: 'https://signed/institutes/inst-1/checked-copies/att-1/final.pdf', status: 'FINAL' });
+    });
+  });
+
+  describe('Copy-Checker Evaluator Authorization', () => {
+    it('rejects an unassigned teacher attempting to access a student checked copy', async () => {
+      load(attempt([response('r1')]));
+      copyCheckerService.assertTeacherAuthorized.mockRejectedValueOnce(
+        new ForbiddenException("You are not authorized to evaluate this student's answer sheet."),
+      );
+
+      await expect(service.get('inst-1', 'att-1', teacher)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('rejects whole-sheet submit when assignment is configured for question-wise evaluation', async () => {
+      load(attempt([response('r1')]));
+      copyCheckerService.assertTeacherAuthorized.mockRejectedValueOnce(
+        new BadRequestException(
+          'This assessment is configured for question-wise evaluation. Whole-sheet finalization is restricted to lead evaluators or administrators.',
+        ),
+      );
+
+      await expect(
+        service.submit('inst-1', 'att-1', { confirmed: true, items: [{ responseId: 'r1', marksAwarded: 5 }] }, teacher),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 });

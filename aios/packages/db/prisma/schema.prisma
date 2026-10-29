@@ -247,12 +247,43 @@ enum AuditAction {
   LOGIN_FAILED
 }
 
+enum EnrollmentStatus {
+  ACTIVE
+  TRANSFERRED
+  COMPLETED
+  WITHDRAWN
+  SUSPENDED
+}
+
+enum AssignmentScope {
+  BATCH
+  STUDENT_LIST
+  QUESTION_WISE
+}
+
+enum PrintRunStatus {
+  PENDING
+  GENERATING
+  READY
+  PRINTED
+  FAILED
+}
+
+enum BookletStatus {
+  GENERATED
+  PRINTED
+  SCANNED
+  VOIDED
+  REPLACED
+}
+
 // ---------------------------------------------------------------------------
 // FOUNDATION — AUTH, TENANCY, ROLES
 // ---------------------------------------------------------------------------
 
 model Institute {
   id              String          @id @default(cuid())
+  shortCode       String?         @unique // Unique readable short identifier (e.g. "SPFD") for QR payloads and booklet roll codes
   name            String
   domainAllowlist String[]        // list of allowed email domains/emails
   plan            InstitutePlan   @default(TRIAL)
@@ -298,6 +329,12 @@ model Institute {
   attendanceSessions       AttendanceSession[]
   attendanceCorrectionLogs AttendanceCorrectionLog[]
   timetableExceptions      TimetableException[]
+
+  // V2 Digital Examination Pipeline, Copy Checker Allocations, & Booklet Infrastructure
+  batchEnrollments         BatchEnrollment[]
+  copyCheckerAssignments   CopyCheckerAssignment[]
+  bookletPrintRuns         BookletPrintRun[]
+  booklets                 Booklet[]
 
   @@map("institutes")
 }
@@ -428,7 +465,7 @@ model AllowListEntry {
 model User {
   id          String     @id @default(cuid())
   instituteId String
-  googleSub   String     @unique // Google's stable subject identifier
+  googleSub   String?    // Google's stable subject identifier (nullable for unlinked accounts)
   email       String
   name        String
   avatarUrl   String?
@@ -450,6 +487,7 @@ model User {
   refreshTokens      RefreshToken[]
 
   @@unique([instituteId, email])
+  @@unique([instituteId, googleSub])
   @@index([email])
   @@index([instituteId, role])
   @@map("users")
@@ -554,7 +592,9 @@ model StudentProfile {
   /// Eliminates the join-through-User footgun: any query that forgets the join
   /// would otherwise return cross-tenant data. Backfilled on migration.
   instituteId     String
+  studentCode     String?  // Institute-scoped readable student identifier (e.g. "STU-2026-0001")
   rollNumber      String?
+  externalIds     Json?    // Official external identifiers (CBSE roll, state board ID)
   dateOfBirth     DateTime?
   guardianName    String?
   guardianPhone   String?
@@ -570,6 +610,7 @@ model StudentProfile {
 
   user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   batch           Batch?           @relation(fields: [batchId], references: [id])
+  enrollments     BatchEnrollment[]
   scoreRecords    ScoreRecord[]
   masteryScores   MasteryScore[]
   assignments     Assignment[]
@@ -582,9 +623,12 @@ model StudentProfile {
   attendanceRosters AttendanceSessionRoster[]
   conceptMasteries  StudentConceptMastery[]
   questionExposures StudentQuestionExposure[]
+  copyCheckerAllocations CopyCheckerStudentAllocation[]
 
+  @@unique([instituteId, studentCode])
   @@index([batchId])
   @@index([instituteId])
+  @@index([instituteId, admissionDate])
   @@map("student_profiles")
 }
 
@@ -611,6 +655,7 @@ model StudentHistory {
 model TeacherProfile {
   id                 String   @id @default(cuid())
   userId             String   @unique
+  teacherCode        String?  // Institute-scoped readable teacher identifier (e.g. "TCH-PHY-01")
   qualification      String?
   subjectIds         String[] // references Subject.id
   availability       Json?    // weekly schedule blocks
@@ -619,6 +664,7 @@ model TeacherProfile {
 
   user               User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   batchAssignments   BatchTeacher[]
+  copyCheckerAssignments CopyCheckerAssignment[]
 
   @@map("teacher_profiles")
 }
@@ -643,6 +689,7 @@ model Batch {
   branch      Branch?        @relation(fields: [branchId], references: [id])
   teachers    BatchTeacher[]
   students    StudentProfile[]
+  enrollments BatchEnrollment[]
   exams       Exam[]
   timetableSlots TimetableSlot[]
   assignments Assignment[]
@@ -814,6 +861,7 @@ model Question {
   concepts              QuestionConcept[]
   learningObjectives    QuestionLearningObjective[]
   studentExposures      StudentQuestionExposure[]
+  copyCheckerAllocations CopyCheckerQuestionAllocation[]
 
   @@index([instituteId, subjectId, topicId, difficulty])
   @@index([instituteId, createdAt(sort: Desc)])
@@ -1205,17 +1253,20 @@ model Exam {
   captureMode     CaptureMode @default(MANUAL_GRID)
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
+  assessmentDeliveryId String? @unique // Canonical bridge to v2 AssessmentDelivery
 
-  institute    Institute     @relation(fields: [instituteId], references: [id], onDelete: Cascade)
-  batch        Batch         @relation(fields: [batchId], references: [id])
-  blueprint    Blueprint     @relation(fields: [blueprintId], references: [id])
-  papers       Paper[]
-  answerSheets AnswerSheet[]
-  scoreRecords ScoreRecord[]
+  institute          Institute           @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  batch              Batch               @relation(fields: [batchId], references: [id])
+  blueprint          Blueprint           @relation(fields: [blueprintId], references: [id])
+  assessmentDelivery AssessmentDelivery? @relation(fields: [assessmentDeliveryId], references: [id])
+  papers             Paper[]
+  answerSheets       AnswerSheet[]
+  scoreRecords       ScoreRecord[]
 
   @@index([instituteId, status])
   @@index([batchId])
   @@index([instituteId, batchId, createdAt(sort: Desc)])
+  @@index([instituteId, createdAt(sort: Desc)])
   @@map("exams")
 }
 
@@ -2005,6 +2056,10 @@ model AssessmentDelivery {
   evaluationPolicy EvaluationPolicy @relation(fields: [evaluationPolicyId], references: [id])
   attempts         Attempt[]
   documentBundles  DocumentBundle[]
+  exam             Exam?
+  copyCheckerAssignments CopyCheckerAssignment[]
+  bookletPrintRuns       BookletPrintRun[]
+  booklets               Booklet[]
 
   @@index([status])
   @@index([assessmentId])
@@ -2015,6 +2070,7 @@ model Attempt {
   id                   String       @id @default(cuid())
   assessmentDeliveryId String
   studentProfileId     String
+  rollNumberSnapshot   String?      // Preserves historical roll number at the exact time of assessment
   status               AttemptStatus @default(IN_PROGRESS)
   isActiveAttempt      Boolean      @default(true)
   submittedAt          DateTime?
@@ -2069,6 +2125,7 @@ model Document {
   expectedPageCount Int?
   layoutType        DocumentLayoutType @default(TEMPLATE_KNOWN)
   status            DocumentStatus     @default(UPLOADED)
+  bookletSerial     String?            // Resolved physical booklet serial if scanned from serialized cover
   // Set when the booklet arrived as a PDF: the storage key of the ORIGINAL
   // upload, kept alongside the page images rendered from it so a re-render is
   // possible without asking the teacher to upload again. Null for image uploads.
@@ -2382,6 +2439,7 @@ model AIRecommendation {
   @@index([responseId, createdAt])
   @@index([aiModelVersionId])
   @@index([promptVersionId])
+  @@index([questionVersionId, rubricVersionId])
   @@map("ai_recommendations")
 }
 
@@ -2442,4 +2500,137 @@ model PromptVersion {
   aiRecommendations AIRecommendation[]
 
   @@map("prompt_versions")
+}
+
+// ---------------------------------------------------------------------------
+// V2: BATCH ENROLLMENT & HISTORICAL STUDENT ACADEMIC IDENTITY
+// ---------------------------------------------------------------------------
+
+model BatchEnrollment {
+  id               String           @id @default(cuid())
+  instituteId      String
+  batchId          String
+  studentProfileId String
+  rollNumber       String?
+  academicYear     String?
+  status           EnrollmentStatus @default(ACTIVE)
+  enrolledAt       DateTime         @default(now())
+  transferredAt    DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  institute      Institute      @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  batch          Batch          @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  studentProfile StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+
+  @@unique([batchId, studentProfileId])
+  @@unique([batchId, rollNumber])
+  @@index([instituteId, status])
+  @@index([studentProfileId])
+  @@map("batch_enrollments")
+}
+
+// ---------------------------------------------------------------------------
+// V2: COPY CHECKER ASSIGNMENTS & EVALUATION AUTHORIZATION ENGINE
+// ---------------------------------------------------------------------------
+
+model CopyCheckerAssignment {
+  id                   String          @id @default(cuid())
+  instituteId          String
+  assessmentDeliveryId String
+  teacherProfileId     String
+  scope                AssignmentScope @default(BATCH)
+  isLeadEvaluator      Boolean         @default(false)
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  institute          Institute          @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  assessmentDelivery AssessmentDelivery @relation(fields: [assessmentDeliveryId], references: [id], onDelete: Cascade)
+  teacherProfile     TeacherProfile     @relation(fields: [teacherProfileId], references: [id], onDelete: Cascade)
+  studentAllocations CopyCheckerStudentAllocation[]
+  questionAllocations CopyCheckerQuestionAllocation[]
+
+  @@unique([assessmentDeliveryId, teacherProfileId])
+  @@unique([id, assessmentDeliveryId])
+  @@index([instituteId])
+  @@index([teacherProfileId])
+  @@map("copy_checker_assignments")
+}
+
+model CopyCheckerStudentAllocation {
+  id                      String                @id @default(cuid())
+  copyCheckerAssignmentId String
+  assessmentDeliveryId    String
+  studentProfileId        String
+  createdAt               DateTime              @default(now())
+
+  assignment     CopyCheckerAssignment @relation(fields: [copyCheckerAssignmentId, assessmentDeliveryId], references: [id, assessmentDeliveryId], onDelete: Cascade)
+  studentProfile StudentProfile        @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+
+  @@unique([assessmentDeliveryId, studentProfileId])
+  @@index([copyCheckerAssignmentId])
+  @@map("copy_checker_student_allocations")
+}
+
+model CopyCheckerQuestionAllocation {
+  id                      String                @id @default(cuid())
+  copyCheckerAssignmentId String
+  assessmentDeliveryId    String
+  questionId              String
+  createdAt               DateTime              @default(now())
+
+  assignment CopyCheckerAssignment @relation(fields: [copyCheckerAssignmentId, assessmentDeliveryId], references: [id, assessmentDeliveryId], onDelete: Cascade)
+  question   Question              @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([assessmentDeliveryId, questionId])
+  @@index([copyCheckerAssignmentId])
+  @@map("copy_checker_question_allocations")
+}
+
+// ---------------------------------------------------------------------------
+// V2: PHYSICAL BOOKLET & PRINT-RUN LIFECYCLE
+// ---------------------------------------------------------------------------
+
+model BookletPrintRun {
+  id                   String         @id @default(cuid())
+  instituteId          String
+  assessmentDeliveryId String
+  count                Int
+  startSerial          Int
+  endSerial            Int
+  status               PrintRunStatus @default(PENDING)
+  pdfStorageKey        String?
+  signingKeyId         String
+  generatedByUserId    String
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  institute          Institute          @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  assessmentDelivery AssessmentDelivery @relation(fields: [assessmentDeliveryId], references: [id], onDelete: Cascade)
+  booklets           Booklet[]
+
+  @@index([instituteId, assessmentDeliveryId])
+  @@map("booklet_print_runs")
+}
+
+model Booklet {
+  id                   String        @id @default(cuid())
+  instituteId          String
+  assessmentDeliveryId String
+  printRunId           String
+  bookletSerial        String
+  numericSerial        Int
+  status               BookletStatus @default(GENERATED)
+  voidReason           String?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  institute          Institute          @relation(fields: [instituteId], references: [id], onDelete: Cascade)
+  printRun           BookletPrintRun    @relation(fields: [printRunId], references: [id], onDelete: Cascade)
+  assessmentDelivery AssessmentDelivery @relation(fields: [assessmentDeliveryId], references: [id], onDelete: Cascade)
+
+  @@unique([assessmentDeliveryId, bookletSerial])
+  @@unique([assessmentDeliveryId, numericSerial])
+  @@index([instituteId, assessmentDeliveryId])
+  @@map("booklets")
 }

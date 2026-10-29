@@ -58,6 +58,21 @@ jobs:
       - run: pnpm --filter @aios/web test
       - run: pnpm --filter @aios/web build
 
+  e2e:
+    name: End-to-End Browser Regression (Puppeteer)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - run: pnpm test:e2e
+      - run: pnpm backup:test
+
   security:
     # 07-SECURITY-SPECIFICATION.md §15 / 14-DEPLOYMENT-ARCHITECTURE.md §5 step 5:
     # dependency-vulnerability scanning on every PR. High/critical only (not

@@ -93,16 +93,12 @@ export class AiEvaluationService {
    * WHY THE SAFETY BOUNDS (C-3 fix): the previous while(hasMore) loop had no
    * maximum iteration count or elapsed-time guard. A Python-side bug returning
    * `hasMore: true` indefinitely would hold a BullMQ worker slot forever,
-   * draining concurrency for every other pending evaluation job. At QUEUE_POLICY
-   * .aiEvaluation.concurrency=4, four such stuck jobs would silently freeze the
-   * entire AI evaluation pipeline with no 5xx anywhere.
+   * draining concurrency for every other pending evaluation job.
    *
-   * MAX_BATCH_CHUNKS: a 60-page exam with 10 subjective questions / 5 per chunk =
-   * 2 chunks per exam. 200 is orders of magnitude more than any legitimate batch
+   * MAX_BATCH_CHUNKS: 200 chunks is orders of magnitude more than any legitimate batch
    * and tight enough to catch a runaway loop within one BullMQ job.
    *
-   * MAX_ELAPSED_MS: belt-and-suspenders. Even if chunk count is somehow bypassed,
-   * the job cannot consume a worker slot for more than 8 minutes total.
+   * If safety limit is reached and more responses remain, re-enqueues continuation.
    */
   async requestBatchEvaluation(job: Extract<AiEvaluationJobData, { type: 'batch' }>): Promise<void> {
     const baseUrl = this.config.get<string>('PYTHON_SERVICE_URL');
@@ -132,10 +128,6 @@ export class AiEvaluationService {
       }
 
       if (hasMore) {
-        // Safety limit reached — not necessarily an error (the job was marked complete
-        // as far as BullMQ is concerned, and the next evaluation trigger will resume
-        // from where Python left off since it tracks PENDING responses). Log at warn
-        // so it is visible in production dashboards without failing the job itself.
         this.logger.warn(
           `AI batch evaluation for delivery ${job.assessmentDeliveryId} reached safety limit ` +
             `after ${chunks} chunks / ${Date.now() - startedAt}ms — some responses may still be PENDING`,

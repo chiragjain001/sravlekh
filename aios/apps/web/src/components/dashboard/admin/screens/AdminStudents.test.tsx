@@ -37,6 +37,10 @@ vi.mock('@/features/students/hooks/useStudents', () => ({
   useUpdateStudent: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteStudent: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useBulkDeleteStudents: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useDownloadBulkStudentTemplate: () => ({ mutate: vi.fn(), isPending: false }),
+  useValidateBulkStudents: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useCommitBulkStudents: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useDownloadBulkErrorReport: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 vi.mock('@/hooks/useApi', () => ({
@@ -50,10 +54,12 @@ describe('AdminStudents screen UI enhancements', () => {
     // Header title
     expect(screen.getByText('Students Directory')).toBeInTheDocument();
 
-    // Export button and Enroll Student button
+    // Export button, Bulk Import button, and Enroll Student button
     const exportBtn = screen.getByRole('button', { name: /export/i });
+    const bulkImportBtn = screen.getByRole('button', { name: /bulk import/i });
     const enrollBtn = screen.getByRole('button', { name: /enroll student/i });
     expect(exportBtn).toBeInTheDocument();
+    expect(bulkImportBtn).toBeInTheDocument();
     expect(enrollBtn).toBeInTheDocument();
 
     // Segmented tab list with role="tablist"
@@ -72,4 +78,15 @@ describe('AdminStudents screen UI enhancements', () => {
     expect(analyticsTab).toHaveAttribute('aria-selected', 'true');
     expect(listTab).toHaveAttribute('aria-selected', 'false');
   });
+
+  it('opens Bulk Enrollment Dialog when clicking Bulk Import', () => {
+    render(<AdminStudents />);
+
+    const bulkImportBtn = screen.getByRole('button', { name: /bulk import/i });
+    fireEvent.click(bulkImportBtn);
+
+    expect(screen.getByText('Bulk Student Enrollment')).toBeInTheDocument();
+    expect(screen.getByText(/Download Smart Excel Template/i)).toBeInTheDocument();
+  });
 });
+

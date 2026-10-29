@@ -44,6 +44,14 @@ class GenerateRequest:
 
 
 @dataclass(frozen=True)
+class UsageMetadata:
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    cached_tokens: int | None = None
+
+
+@dataclass(frozen=True)
 class GenerateResult:
     text: str
     # True when the provider stopped because it hit max_tokens rather than because
@@ -61,3 +69,5 @@ class GenerateResult:
     # Defaults to False so a provider that cannot report it degrades to today's
     # behaviour rather than blocking every call.
     truncated: bool = False
+    usage: UsageMetadata | None = None
+    latency_ms: float | None = None

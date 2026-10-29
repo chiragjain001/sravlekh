@@ -5,6 +5,7 @@ import { FounderController } from './founder.controller';
 import { AuditModule } from '../audit/audit.module';
 import { UsersModule } from '../users/users.module';
 import { SupportTicketsModule } from '../support-tickets/support-tickets.module';
+import { AuthModule } from '../auth/auth.module';
 import { MASTERY_RECALC_QUEUE } from '../analytics/mastery-recalc.constants';
 import { AI_EVALUATION_QUEUE } from '../ai-evaluation/ai-evaluation.constants';
 import { SCORE_AGGREGATION_QUEUE } from '../evaluations/score-aggregation.constants';
@@ -17,6 +18,7 @@ import { REPORT_GENERATION_QUEUE } from '../reports/report-generation.constants'
     AuditModule,
     UsersModule,
     SupportTicketsModule,
+    AuthModule,
     // Founder Console Phase 6 — read-only access to every queue's job counts
     // (waiting/active/failed/delayed) for GET /founder/health/queues. Each
     // BullModule.registerQueue call here reuses the same named Bull queue the

@@ -180,3 +180,103 @@ export function useBulkDeleteStudents() {
     },
   });
 }
+
+export function useDownloadBulkStudentTemplate() {
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async () => {
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/students/bulk-template`, {
+        responseType: 'blob',
+      });
+      const blob = new Blob([res.data], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'AIOS_Student_Enrollment_Template.xlsx');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      return true;
+    },
+    onSuccess: () => {
+      toast.success('Official Excel template downloaded');
+    },
+    onError: () => {
+      toast.error('Failed to download template. Please check connection.');
+    },
+  });
+}
+
+export function useValidateBulkStudents() {
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async (file: File) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await apiClient.post(
+        `/institutes/${user?.instituteId}/students/bulk-validate`,
+        formData,
+        { headers: { 'Content-Type': 'multipart/form-data' } },
+      );
+      return res.data;
+    },
+  });
+}
+
+export function useCommitBulkStudents() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (students: any[]) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/students/bulk-import`, {
+        students,
+      });
+      return res.data;
+    },
+    onSuccess: (data) => {
+      toast.success(`Successfully enrolled ${data.enrolledCount} student(s)!`);
+      queryClient.invalidateQueries({ queryKey: ['students', user?.instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['students-stats', user?.instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['batches', user?.instituteId] });
+    },
+    onError: (error: any) => {
+      const msg = error.response?.data?.message || 'Failed to complete bulk enrollment';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useDownloadBulkErrorReport() {
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async (failedRows: any[]) => {
+      const res = await apiClient.post(
+        `/institutes/${user?.instituteId}/students/bulk-error-report`,
+        { failedRows },
+        { responseType: 'blob' },
+      );
+      const blob = new Blob([res.data], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'AIOS_Failed_Students_Remediation.xlsx');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      return true;
+    },
+    onSuccess: () => {
+      toast.success('Error remediation workbook downloaded');
+    },
+    onError: () => {
+      toast.error('Failed to download error workbook');
+    },
+  });
+}
+

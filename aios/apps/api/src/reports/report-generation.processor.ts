@@ -3,7 +3,9 @@ import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../infrastructure/storage/storage.service';
+import { ConfigService } from '@nestjs/config';
 import { ReportStatus } from '@prisma/client';
+import axios from 'axios';
 import { REPORT_GENERATION_QUEUE, ReportGenerationJobData } from './report-generation.constants';
 import { reportDeadLetter } from '../shared/logging/dead-letter';
 import { QUEUE_POLICY, workerOptions } from '../infrastructure/queue/queue-policy';
@@ -19,8 +21,8 @@ interface ReportScope {
 
 /**
  * Generates the report's underlying data from real DB records, tenant- and
- * batch-scoped, and renders it to a real, styled, printable HTML document or
- * genuine CSV spreadsheet data.
+ * batch-scoped, and renders it to a real vector PDF, genuine XLSX workbook,
+ * CSV spreadsheet data, or printable HTML document.
  */
 @Processor(REPORT_GENERATION_QUEUE, workerOptions(QUEUE_POLICY.reportGeneration))
 export class ReportGenerationProcessor extends WorkerHost {
@@ -29,6 +31,7 @@ export class ReportGenerationProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    private readonly config: ConfigService,
   ) {
     super();
   }
@@ -54,6 +57,10 @@ export class ReportGenerationProcessor extends WorkerHost {
         fileBuffer = Buffer.from(csv, 'utf-8');
         contentType = 'text/csv';
         fileExt = 'csv';
+      } else if (report.format === 'PDF') {
+        fileBuffer = await this.renderReportPdf(report.type, payload, report.id);
+        contentType = 'application/pdf';
+        fileExt = 'pdf';
       } else {
         const html = renderReportHtml(report.type, payload, report.id);
         fileBuffer = Buffer.from(html, 'utf-8');
@@ -73,6 +80,31 @@ export class ReportGenerationProcessor extends WorkerHost {
       await this.prisma.report.update({ where: { id: report.id }, data: { status: ReportStatus.FAILED } });
       throw err; // rethrow so BullMQ's own retry/backoff still applies
     }
+  }
+
+  private async renderReportPdf(reportType: string, payload: any, reportId: string): Promise<Buffer> {
+    const baseUrl = this.config.get<string>('PYTHON_SERVICE_URL');
+    const internalToken = this.config.get<string>('INTERNAL_SERVICE_TOKEN');
+
+    if (!baseUrl) {
+      throw new Error('PYTHON_SERVICE_URL is not configured for PDF report generation');
+    }
+
+    const response = await axios.post(
+      `${baseUrl}/reports/render-pdf`,
+      { report_type: reportType, payload, report_id: reportId },
+      {
+        headers: internalToken ? { 'X-Internal-Token': internalToken } : undefined,
+        responseType: 'arraybuffer',
+        timeout: 15000,
+      },
+    );
+
+    const buf = Buffer.from(response.data);
+    if (!buf.slice(0, 5).toString('latin1').startsWith('%PDF-')) {
+      throw new Error(`Renderer returned non-PDF content for report ${reportId}`);
+    }
+    return buf;
   }
 
   @OnWorkerEvent('failed')
@@ -128,21 +160,71 @@ export class ReportGenerationProcessor extends WorkerHost {
         orderBy: { createdAt: 'desc' },
       });
 
-      // Mistake-type aggregation from graded responses
+      // Mistake-type aggregation across both v1 (AnswerSheet) and v2 (Attempt)
       const responses = await this.prisma.response.findMany({
         where: {
-          answerSheet: { studentProfileId: scope.studentId },
-          mistakeTags: { isEmpty: false },
+          OR: [
+            { answerSheet: { studentProfileId: scope.studentId } },
+            { attempt: { studentProfileId: scope.studentId } },
+          ],
           ...(dateFilter ? { createdAt: dateFilter } : {}),
         },
-        select: { mistakeTags: true },
+        include: {
+          question: { select: { topic: { select: { name: true } } } },
+          evaluation: { include: { currentVersion: true } },
+        },
       });
+
       const mistakeCounts: Record<string, number> = {};
+      const marksLostByTag: Record<string, number> = {};
+      const byTopic: Record<string, { count: number; marksLost: number }> = {};
+
       for (const r of responses) {
-        for (const tag of r.mistakeTags) {
+        // Enforce AI governance: only authoritative (human teacher/reviewer or capture-time objective)
+        const currentVersion = r.evaluation?.currentVersion;
+        const isAuthoritative = r.evaluation
+          ? currentVersion && (currentVersion.source === 'TEACHER' || currentVersion.source === 'REVIEWER')
+          : true;
+
+        if (!isAuthoritative) continue;
+
+        const awarded = currentVersion ? currentVersion.marksAwarded : r.marksAwarded;
+        const available = r.marksAvailable;
+        const lost = Math.max(0, available - awarded);
+        const topicName = r.question?.topic?.name ?? 'General';
+
+        // Extract tags from v1 (mistakeTags array) or v2 (mistakeTagType)
+        const tags: string[] = [];
+        if (r.mistakeTags && r.mistakeTags.length > 0) {
+          tags.push(...r.mistakeTags);
+        } else if (currentVersion?.mistakeTagType) {
+          tags.push(currentVersion.mistakeTagType);
+        } else if (lost > 0) {
+          tags.push('UNTAGGED');
+        }
+
+        for (const tag of tags) {
           mistakeCounts[tag] = (mistakeCounts[tag] || 0) + 1;
+          marksLostByTag[tag] = Math.round(((marksLostByTag[tag] || 0) + lost) * 100) / 100;
+
+          if (!byTopic[topicName]) {
+            byTopic[topicName] = { count: 0, marksLost: 0 };
+          }
+          byTopic[topicName]!.count += 1;
+          byTopic[topicName]!.marksLost = Math.round((byTopic[topicName]!.marksLost + lost) * 100) / 100;
         }
       }
+
+      const totalMistakes = Object.values(mistakeCounts).reduce((a, b) => a + b, 0);
+      const mistakeSummary = totalMistakes > 0
+        ? {
+            ...mistakeCounts,
+            byTag: mistakeCounts,
+            marksLostByTag,
+            byTopic,
+            totalMistakes,
+          }
+        : undefined;
 
       return {
         type, scope,
@@ -166,7 +248,7 @@ export class ReportGenerationProcessor extends WorkerHost {
           gradedMarks: a.gradedMarks,
           dueDate: a.dueDate.toISOString(),
         })),
-        mistakeSummary: Object.keys(mistakeCounts).length > 0 ? mistakeCounts : undefined,
+        mistakeSummary,
         ...(scores.length === 0 ? { note: 'no data in range' } : {}),
       };
     }
@@ -251,6 +333,7 @@ export class ReportGenerationProcessor extends WorkerHost {
           totalAssignments,
           roster,
         },
+        roster,
         ...(roster.every((r) => r.examCount === 0) ? { note: 'no data in range' } : {}),
       };
     }

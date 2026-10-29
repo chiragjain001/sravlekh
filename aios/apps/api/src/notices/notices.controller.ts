@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Patch, Delete, Body, Param, Query } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { NoticesService } from './notices.service';
+import { NoticeDispatchService } from './notice-dispatch.service';
 import { CreateNoticeDto, QueryNoticesDto } from './dto/notice.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -11,7 +12,10 @@ import { UserRole } from '@prisma/client';
 @ApiBearerAuth()
 @Controller('institutes/:instituteId/notices')
 export class NoticesController {
-  constructor(private readonly noticesService: NoticesService) {}
+  constructor(
+    private readonly noticesService: NoticesService,
+    private readonly dispatchService: NoticeDispatchService,
+  ) {}
 
   @Post()
   @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
@@ -33,6 +37,17 @@ export class NoticesController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.noticesService.findAll(instituteId, query, user);
+  }
+
+  @Get('channels/status')
+  @Roles(UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Status of configured communication delivery adapters and health' })
+  getChannelStatus(
+    @Param('instituteId') instituteId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    this.noticesService.assertInstituteAccess(user, instituteId);
+    return this.dispatchService.getChannelStatuses();
   }
 
   // Self-service inbox — any authenticated role, since every role can be a

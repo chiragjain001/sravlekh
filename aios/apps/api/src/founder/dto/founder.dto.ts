@@ -1,4 +1,4 @@
-import { IsEnum, IsOptional, IsString, IsBoolean, IsNotEmpty, IsInt, Min } from 'class-validator';
+import { IsEnum, IsOptional, IsString, IsBoolean, IsNotEmpty, IsInt, Min, IsNumber, IsObject } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { InstitutePlan } from '@prisma/client';
 
@@ -82,3 +82,93 @@ export class UpdatePlatformSettingsDto {
   @IsNotEmpty()
   patch!: Record<string, boolean>;
 }
+
+export class UpdateInstituteModulesDto {
+  @ApiPropertyOptional({ example: 'EXAM_OMR' })
+  @IsOptional()
+  @IsString()
+  preset?: string;
+
+  @ApiProperty({ description: 'Map of module keys to enabled boolean' })
+  @IsObject()
+  @IsNotEmpty()
+  modules!: Record<string, boolean>;
+}
+
+export class CreateInvoiceDto {
+  @ApiProperty({ description: 'Target institute ID' })
+  @IsString()
+  @IsNotEmpty()
+  instituteId!: string;
+
+  @ApiProperty({ example: 150000 })
+  @IsNumber()
+  amount!: number;
+
+  @ApiPropertyOptional({ default: 'INR' })
+  @IsOptional()
+  @IsString()
+  currency?: string;
+
+  @ApiPropertyOptional({ default: 'ANNUAL' })
+  @IsOptional()
+  @IsString()
+  billingCycle?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  dueDate?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  notes?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  packagePreset?: string;
+}
+
+export class RecordPaymentDto {
+  @ApiProperty({ example: 'UPI' })
+  @IsString()
+  @IsNotEmpty()
+  paymentMethod!: string;
+
+  @ApiPropertyOptional({ example: 'UPI-REF-987213645' })
+  @IsOptional()
+  @IsString()
+  transactionRef?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  paidAt?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
+export class RetryQueueJobsDto {
+  @ApiPropertyOptional({ example: 'ai-evaluation' })
+  @IsOptional()
+  @IsString()
+  queueName?: string;
+}
+
+export class FlushCacheDto {
+  @ApiPropertyOptional({ description: 'Optional institute ID to flush' })
+  @IsOptional()
+  @IsString()
+  instituteId?: string;
+
+  @ApiPropertyOptional({ description: 'True to flush global application cache' })
+  @IsOptional()
+  @IsBoolean()
+  global?: boolean;
+}
+

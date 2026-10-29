@@ -9,12 +9,24 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { CacheService } from '../infrastructure/cache/cache.service';
-import { AuditAction, UserRole, ExamStatus, PaperStatus, Prisma, DeliveryStatus, NoticeChannel } from '@prisma/client';
+import {
+  AuditAction,
+  UserRole,
+  ExamStatus,
+  PaperStatus,
+  Prisma,
+  DeliveryStatus,
+  NoticeChannel,
+  AssessmentKind,
+  StakesLevel,
+  CaptureProviderType,
+  EvaluationPolicyMode,
+} from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { EXAM_STATUS_TRANSITIONS as NEXT_STATUS } from '../shared/exam-status-transitions';
 import { withVersionGuard } from '../shared/version-guard';
 import { getTeacherBatchIds } from '../shared/teacher-scope';
-import { assertAllAnswerSheetsVerified } from '../shared/evaluation-lock-gate';
+import { assertAllAnswerSheetsVerified, assertNoUnevaluatedSubjectiveResponses } from '../shared/evaluation-lock-gate';
 import {
   CreateExamDto,
   GradeAnswerSheetDto,
@@ -34,7 +46,7 @@ export class ExamsService {
     private readonly prisma: PrismaService,
     private readonly analyticsService: AnalyticsService,
     private readonly cache: CacheService,
-  ) {}
+  ) { }
 
   // ── D-01: Create Exam ────────────────────────────────────────────────────
 
@@ -50,15 +62,16 @@ export class ExamsService {
     let format = 'OMR';
     let duration = dto.durationMinutes ?? 120;
 
+    let blueprint: any = null;
     if (blueprintId) {
-      const blueprint = await this.prisma.blueprint.findUnique({ where: { id: blueprintId } });
+      blueprint = await this.prisma.blueprint.findUnique({ where: { id: blueprintId } });
       if (!blueprint || blueprint.instituteId !== instituteId) {
         throw new NotFoundException('Blueprint not found');
       }
       format = (blueprint.format as string) || 'OMR';
       duration = dto.durationMinutes ?? blueprint.duration;
     } else {
-      let blueprint = await this.prisma.blueprint.findFirst({
+      blueprint = await this.prisma.blueprint.findFirst({
         where: { instituteId, ...(dto.subjectId ? { subjectId: dto.subjectId } : {}) },
         orderBy: { createdAt: 'desc' },
       });
@@ -101,21 +114,85 @@ export class ExamsService {
       }
     }
 
-    const exam = await this.prisma.exam.create({
-      data: {
-        instituteId,
-        batchId: dto.batchId,
-        blueprintId,
-        title: dto.title,
-        type: dto.type,
-        format: format as any,
-        status: dto.status || ExamStatus.DRAFT,
-        captureMode: dto.captureMode,
-        scheduledDate: dto.scheduledDate ? new Date(dto.scheduledDate) : null,
-        durationMinutes: duration,
-        venue: dto.venue,
-        createdByUserId: actor.id,
-      },
+    // Canonical Bridge: ensure capture provider & evaluation policy exist for v2 pipeline
+    let captureProvider = await this.prisma.captureProvider.findFirst({
+      where: { instituteId },
+    });
+    if (!captureProvider) {
+      captureProvider = await this.prisma.captureProvider.create({
+        data: {
+          instituteId,
+          type: CaptureProviderType.PHOTO_CAPTURE_SUBJECTIVE,
+          config: { autoProcess: false },
+        },
+      });
+    }
+
+    let evaluationPolicy = await this.prisma.evaluationPolicy.findFirst({
+      where: { instituteId },
+    });
+    if (!evaluationPolicy) {
+      evaluationPolicy = await this.prisma.evaluationPolicy.create({
+        data: {
+          instituteId,
+          name: 'Default Policy — Mandatory Human Review',
+          mode: EvaluationPolicyMode.AI_ASSIST_MANDATORY_REVIEW,
+          requiresHumanReview: true,
+        },
+      });
+    }
+
+    const scheduledStart = dto.scheduledDate ? new Date(dto.scheduledDate) : null;
+    const scheduledEnd = scheduledStart ? new Date(scheduledStart.getTime() + duration * 60000) : null;
+
+    const exam = await this.prisma.$transaction(async (tx) => {
+      // 1. Create canonical v2 Assessment
+      const assessment = await tx.assessment.create({
+        data: {
+          instituteId,
+          title: dto.title,
+          assessmentKind: AssessmentKind.COACHING_TEST,
+          stakesLevel: StakesLevel.GRADED,
+          subjectIds: blueprint?.subjectId ? [blueprint.subjectId] : [],
+          totalMarks: Number(blueprint?.totalMarks ?? dto.totalMarks ?? 100),
+          createdByUserId: actor.id,
+        },
+      });
+
+      // 2. Create canonical v2 AssessmentDelivery
+      const delivery = await tx.assessmentDelivery.create({
+        data: {
+          assessmentId: assessment.id,
+          batchId: dto.batchId,
+          status: dto.status || ExamStatus.DRAFT,
+          scheduledStart,
+          scheduledEnd,
+          captureProviderId: captureProvider.id,
+          evaluationPolicyId: evaluationPolicy.id,
+          createdByUserId: actor.id,
+        },
+      });
+
+      // 3. Create v1 Exam mapped to the canonical AssessmentDelivery
+      const createdExam = await tx.exam.create({
+        data: {
+          instituteId,
+          batchId: dto.batchId,
+          blueprintId: (blueprint?.id ?? blueprintId) as string,
+          title: dto.title,
+          type: dto.type,
+          format: format as any,
+          status: dto.status || ExamStatus.DRAFT,
+          captureMode: dto.captureMode,
+          scheduledDate: scheduledStart,
+          durationMinutes: duration,
+          venue: dto.venue,
+          createdByUserId: actor.id,
+          assessmentDeliveryId: delivery.id,
+        },
+      });
+
+      return createdExam;
     });
 
     await this.writeAudit(instituteId, actor.id, AuditAction.CREATE, 'exams', exam.id, null, { title: exam.title });
@@ -137,6 +214,13 @@ export class ExamsService {
     // repeated requests within 60s re-use the teacher's batch ID list from Redis
     // instead of issuing 2 extra DB queries on every call.
     const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor, this.cache);
+
+    const scope = teacherBatchIds ? teacherBatchIds.slice().sort().join(',') : (actor.role === UserRole.STUDENT ? actor.id : 'all');
+    const cacheKey = "exams:list:" + instituteId + ":" + scope + ":" + page + ":" + limit + ":" + (query.status ?? 'all') + ":" + (query.batchId ?? 'all');
+    if (this.cache) {
+      const cached = await this.cache.get<any>(cacheKey);
+      if (cached) return cached;
+    }
 
     // Students only ever see exams for their own batch, and only once they're
     // actually scheduled — DRAFT/REVIEW/APPROVED are pre-publication working
@@ -214,10 +298,14 @@ export class ExamsService {
       }
     }
 
-    return {
+    const result = {
       data,
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
+    if (this.cache) {
+      await this.cache.set(cacheKey, result, 30);
+    }
+    return result;
   }
 
   async findById(instituteId: string, examId: string, actor: AuthenticatedUser) {
@@ -291,6 +379,11 @@ export class ExamsService {
     // A real-database probe confirms this correctly allows LOCK once every
     // answer sheet is graded, and blocks it while any remain unverified.
     if (dto.status === ExamStatus.LOCKED) {
+      if (exam.assessmentDeliveryId) {
+        await assertNoUnevaluatedSubjectiveResponses(this.prisma, {
+          attempt: { assessmentDeliveryId: exam.assessmentDeliveryId },
+        });
+      }
       await assertAllAnswerSheetsVerified(this.prisma, examId);
     }
 
@@ -309,9 +402,9 @@ export class ExamsService {
 
     const auditAction: AuditAction =
       dto.status === ExamStatus.APPROVED ? AuditAction.APPROVE
-      : dto.status === ExamStatus.PUBLISHED ? AuditAction.PUBLISH
-      : dto.status === ExamStatus.LOCKED ? AuditAction.LOCK
-      : AuditAction.UPDATE;
+        : dto.status === ExamStatus.PUBLISHED ? AuditAction.PUBLISH
+          : dto.status === ExamStatus.LOCKED ? AuditAction.LOCK
+            : AuditAction.UPDATE;
 
     // 03-FEATURE-SPECIFICATIONS.md's Audit & Governance module requires LOCK to be
     // atomic with its audit entry (same transaction) — an audit-write failure must
@@ -320,6 +413,14 @@ export class ExamsService {
     if (auditAction === AuditAction.LOCK) {
       const [updated] = await withVersionGuard(
         this.prisma.$transaction([
+          ...(exam.assessmentDeliveryId
+            ? [
+              this.prisma.assessmentDelivery.update({
+                where: { id: exam.assessmentDeliveryId },
+                data: { status: ExamStatus.LOCKED, version: { increment: 1 } },
+              }),
+            ]
+            : []),
           this.prisma.exam.update({ where: { id: examId, version: exam.version }, data }),
           this.prisma.auditLog.create({
             data: {
@@ -344,13 +445,23 @@ export class ExamsService {
   /** LOCKED -> EVALUATING only. Admin-only, reason required (18-EDGE-CASES.md: "unlock
    * without reason -> 400"; enforced by UnlockExamDto's @MinLength(10) at the DTO layer). */
   async unlock(instituteId: string, examId: string, dto: UnlockExamDto, actor: AuthenticatedUser) {
-    if (actor.role !== UserRole.ADMIN && actor.role !== UserRole.FOUNDER) {
-      throw new ForbiddenException('Only admins can unlock a locked exam.');
-    }
     this.assertInstituteAccess(actor, instituteId);
 
     const exam = await this.prisma.exam.findUnique({ where: { id: examId } });
     if (!exam || exam.instituteId !== instituteId) throw new NotFoundException('Exam not found.');
+
+    if (actor.role !== UserRole.ADMIN && actor.role !== UserRole.FOUNDER) {
+      const hasUnlock = await this.prisma.userPermissionGrant.findFirst({
+        where: {
+          userId: actor.id,
+          permission: 'exam:unlock',
+          OR: [{ batchId: null }, { batchId: exam.batchId }],
+        },
+      });
+      if (!hasUnlock) {
+        throw new ForbiddenException('Only admins or users with the exam:unlock permission can unlock a locked exam.');
+      }
+    }
 
     if (exam.version !== dto.version) {
       throw new ConflictException({
@@ -878,10 +989,10 @@ export class ExamsService {
     // Enrolled students in the batch — tracks participation, absence vs non-conduct
     const enrolledStudents = this.prisma.studentProfile
       ? await this.prisma.studentProfile.findMany({
-          where: { batchId: exam.batchId },
-          include: { user: { select: { name: true } } },
-          orderBy: { rollNumber: 'asc' },
-        })
+        where: { batchId: exam.batchId },
+        include: { user: { select: { name: true } } },
+        orderBy: { rollNumber: 'asc' },
+      })
       : [];
 
     const scoreMap = new Map(scoreRecords.map((s) => [s.studentProfileId, s]));
@@ -1049,6 +1160,9 @@ export class ExamsService {
       await this.prisma.auditLog.create({
         data: { instituteId, actorId, action, entity, entityId, oldValue: oldValue as any, newValue: newValue as any },
       });
+      if (this.cache && (entity === 'exams' || entity === 'papers')) {
+        await this.cache.delByPrefix("exams:list:" + instituteId + ":");
+      }
     } catch (err) {
       // Audit-log failures must never block the underlying mutation (08-ERROR-HANDLING.md);
       // still log so a persistent failure is visible rather than silently disappearing.

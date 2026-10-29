@@ -128,42 +128,100 @@ export class AnalyticsService {
       topicName: string | null;
       tag: string;
       cnt: bigint | number;
+      marksLost?: bigint | number;
     };
 
     const rows = await this.prisma.$queryRaw<RawRow[]>`
-      SELECT
-        q."topicId"                       AS "topicId",
-        t."name"                          AS "topicName",
-        tag.value::text                   AS tag,
-        COUNT(*)::bigint                  AS cnt
-      FROM responses r
-      CROSS JOIN LATERAL unnest(r."mistakeTags") AS tag(value)
-      JOIN questions q ON q.id = r."questionId"
-      LEFT JOIN topics t ON t.id = q."topicId"
-      WHERE
-        cardinality(r."mistakeTags") > 0
-        AND (
-          r."answerSheetId" IN (
-            SELECT ash.id FROM answer_sheets ash
-            JOIN student_profiles sp ON sp.id = ash."studentProfileId"
-            WHERE sp."batchId" = ${batchId}
-          )
-          OR r."attemptId" IN (
-            SELECT att.id FROM attempts att
-            WHERE att."studentProfileId" IN (
-              SELECT sp2.id FROM student_profiles sp2 WHERE sp2."batchId" = ${batchId}
+      WITH batch_responses AS (
+        SELECT
+          r.id,
+          r."marksAwarded" AS r_awarded,
+          r."marksAvailable" AS r_available,
+          r."mistakeTags" AS r_tags,
+          r."attemptId" AS r_attempt_id,
+          q."topicId" AS topic_id,
+          t."name" AS topic_name,
+          ev."marksAwarded" AS ev_awarded,
+          ev."mistakeTagType"::text AS ev_tag
+        FROM responses r
+        JOIN questions q ON q.id = r."questionId"
+        LEFT JOIN topics t ON t.id = q."topicId"
+        LEFT JOIN evaluations e ON e."responseId" = r.id
+        LEFT JOIN evaluation_versions ev ON ev.id = e."currentEvaluationVersionId"
+        WHERE
+          (
+            r."answerSheetId" IN (
+              SELECT ash.id FROM answer_sheets ash
+              JOIN student_profiles sp ON sp.id = ash."studentProfileId"
+              WHERE sp."batchId" = ${batchId}
+            )
+            OR r."attemptId" IN (
+              SELECT att.id FROM attempts att
+              WHERE att."studentProfileId" IN (
+                SELECT sp2.id FROM student_profiles sp2 WHERE sp2."batchId" = ${batchId}
+              )
             )
           )
-        )
-      GROUP BY q."topicId", t."name", tag.value
+          AND (
+            -- v1 response: human teacher graded in place
+            (r."attemptId" IS NULL)
+            -- v2 response: only count if approved by human teacher/reviewer, or objective scored at capture
+            OR (r."attemptId" IS NOT NULL AND (ev.id IS NOT NULL AND ev.source IN ('TEACHER', 'REVIEWER') OR e.id IS NULL))
+          )
+      ),
+      tagged_items AS (
+        -- Unnest v1 mistakeTags array
+        SELECT
+          br.topic_id AS "topicId",
+          br.topic_name AS "topicName",
+          tag.value::text AS tag,
+          GREATEST(0, br.r_available - br.r_awarded) AS marks_lost
+        FROM batch_responses br
+        CROSS JOIN LATERAL unnest(br.r_tags) AS tag(value)
+        WHERE cardinality(br.r_tags) > 0
+
+        UNION ALL
+
+        -- v2 evaluation version mistakeTagType
+        SELECT
+          br.topic_id AS "topicId",
+          br.topic_name AS "topicName",
+          br.ev_tag AS tag,
+          GREATEST(0, br.r_available - COALESCE(br.ev_awarded, br.r_awarded)) AS marks_lost
+        FROM batch_responses br
+        WHERE br.ev_tag IS NOT NULL
+
+        UNION ALL
+
+        -- Untagged answers where marks were lost (neither v1 tags nor v2 tag present)
+        SELECT
+          br.topic_id AS "topicId",
+          br.topic_name AS "topicName",
+          'UNTAGGED' AS tag,
+          GREATEST(0, br.r_available - COALESCE(br.ev_awarded, br.r_awarded)) AS marks_lost
+        FROM batch_responses br
+        WHERE
+          (cardinality(br.r_tags) = 0 OR br.r_tags IS NULL)
+          AND br.ev_tag IS NULL
+          AND COALESCE(br.ev_awarded, br.r_awarded) < br.r_available
+      )
+      SELECT
+        "topicId",
+        "topicName",
+        tag,
+        COUNT(*)::bigint AS cnt,
+        ROUND(SUM(marks_lost)::numeric, 2) AS "marksLost"
+      FROM tagged_items
+      GROUP BY "topicId", "topicName", tag
       ORDER BY COUNT(*) DESC
       LIMIT 2000
     `;
 
-    // Reconstruct the same response shape as before, now from pre-aggregated DB rows.
+    // Reconstruct the response shape from pre-aggregated DB rows.
     const overallTags: Record<string, number> = {};
-    const topicMap = new Map<string, { topicId: string; topicName: string; totalMistakes: number; byTag: Record<string, number> }>();
+    const topicMap = new Map<string, { topicId: string; topicName: string; totalMistakes: number; totalMarksLost?: number; byTag: Record<string, number> }>();
     let totalMistakes = 0;
+    let totalMarksLost: number | undefined = undefined;
 
     for (const row of rows) {
       const count = Number(row.cnt); // bigint → number
@@ -179,21 +237,27 @@ export class AnalyticsService {
       const topicEntry = topicMap.get(topicId)!;
       topicEntry.totalMistakes += count;
       topicEntry.byTag[row.tag] = (topicEntry.byTag[row.tag] ?? 0) + count;
+
+      if (row.marksLost !== undefined && row.marksLost !== null) {
+        const lost = Number(row.marksLost);
+        topicEntry.totalMarksLost = (topicEntry.totalMarksLost ?? 0) + lost;
+        totalMarksLost = (totalMarksLost ?? 0) + lost;
+      }
     }
 
     const byTopic = Array.from(topicMap.values()).sort((a, b) => b.totalMistakes - a.totalMistakes);
 
-    // totalResponsesEvaluated is no longer fetched (it would require a separate
-    // COUNT(*) query of the same expensive join). If callers need it, add a
-    // separate COUNT query — separated deliberately so the aggregation query
-    // stays bounded and fast.
-    return {
+    const result: any = {
       batchId: batch.id,
       batchName: batch.name,
       totalMistakes,
       byTag: overallTags,
       byTopic,
     };
+    if (totalMarksLost !== undefined) {
+      result.totalMarksLost = Math.round(totalMarksLost * 100) / 100;
+    }
+    return result;
   }
 
   private assertInstituteAccess(actor: AuthenticatedUser, instituteId: string) {

@@ -12,6 +12,7 @@ import { PermissionsService } from '../permissions/permissions.service';
 import { ReportsService } from '../reports/reports.service';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { AuthenticatedUser } from '../auth/auth.types';
+import { CopyCheckerAssignmentsService } from './copy-checker-assignments.service';
 
 describe('EvaluationsService', () => {
   let service: EvaluationsService;
@@ -20,6 +21,7 @@ describe('EvaluationsService', () => {
     evaluation: { create: jest.Mock; update: jest.Mock; findUnique: jest.Mock };
     evaluationVersion: { create: jest.Mock; findMany: jest.Mock };
     auditLog: { create: jest.Mock };
+    copyCheckerAssignment: { findMany: jest.Mock };
   };
   let queue: { add: jest.Mock };
   let cache: { get: jest.Mock; set: jest.Mock };
@@ -27,6 +29,7 @@ describe('EvaluationsService', () => {
   let permissionsService: { hasPermission: jest.Mock };
   let reportsService: { reissueForStudent: jest.Mock };
   let analyticsService: { enqueueMasteryRecalc: jest.Mock };
+  let copyCheckerAssignmentsService: { assertTeacherAuthorized: jest.Mock };
 
   const teacher: AuthenticatedUser = { id: 'teacher-1', email: 't@x.com', name: 'T', role: UserRole.TEACHER, instituteId: 'inst-1' };
   const otherTeacher: AuthenticatedUser = { ...teacher, id: 'teacher-2', instituteId: 'inst-2' };
@@ -39,6 +42,7 @@ describe('EvaluationsService', () => {
       evaluation: { create: jest.fn(), update: jest.fn().mockResolvedValue({}), findUnique: jest.fn() },
       evaluationVersion: { create: jest.fn(), findMany: jest.fn() },
       auditLog: { create: jest.fn().mockResolvedValue({}) },
+      copyCheckerAssignment: { findMany: jest.fn().mockResolvedValue([]) },
     };
     queue = { add: jest.fn().mockResolvedValue({}) };
     cache = { get: jest.fn().mockResolvedValue(undefined), set: jest.fn().mockResolvedValue(undefined) };
@@ -46,6 +50,7 @@ describe('EvaluationsService', () => {
     permissionsService = { hasPermission: jest.fn().mockResolvedValue(false) };
     reportsService = { reissueForStudent: jest.fn().mockResolvedValue(undefined) };
     analyticsService = { enqueueMasteryRecalc: jest.fn().mockResolvedValue(undefined) };
+    copyCheckerAssignmentsService = { assertTeacherAuthorized: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -56,6 +61,7 @@ describe('EvaluationsService', () => {
         { provide: PermissionsService, useValue: permissionsService },
         { provide: ReportsService, useValue: reportsService },
         { provide: AnalyticsService, useValue: analyticsService },
+        { provide: CopyCheckerAssignmentsService, useValue: copyCheckerAssignmentsService },
         { provide: getQueueToken(SCORE_AGGREGATION_QUEUE), useValue: queue },
       ],
     }).compile();
@@ -65,9 +71,14 @@ describe('EvaluationsService', () => {
   const baseResponse = {
     id: 'resp-1',
     attemptId: 'att-1',
+    questionId: 'q-1',
     marksAvailable: 5,
-    attempt: { studentProfileId: 'sp-1', assessmentDelivery: { batchId: 'batch-1', status: 'EVALUATING', assessment: { instituteId: 'inst-1' } } },
-    question: { type: QuestionType.SHORT_ANSWER, rubric: null, subjectId: 'sub-1', topicId: 'topic-1' },
+    attempt: {
+      assessmentDeliveryId: 'del-1',
+      studentProfileId: 'sp-1',
+      assessmentDelivery: { batchId: 'batch-1', status: 'EVALUATING', assessment: { instituteId: 'inst-1' } },
+    },
+    question: { id: 'q-1', type: QuestionType.SHORT_ANSWER, rubric: null, subjectId: 'sub-1', topicId: 'topic-1' },
     evaluation: null,
   };
 
@@ -97,6 +108,22 @@ describe('EvaluationsService', () => {
       await expect(
         service.decide('inst-1', 'resp-1', { decision: EvaluationDecision.ADJUST, marksAwarded: 3 }, teacher),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects teacher when not authorized for copy-checking the delivery', async () => {
+      prisma.response.findUnique.mockResolvedValueOnce(baseResponse);
+      copyCheckerAssignmentsService.assertTeacherAuthorized.mockRejectedValueOnce(
+        new ForbiddenException('You are not assigned to evaluate this assessment delivery.'),
+      );
+      await expect(
+        service.decide('inst-1', 'resp-1', { decision: EvaluationDecision.ADJUST, marksAwarded: 3 }, teacher),
+      ).rejects.toThrow(ForbiddenException);
+      expect(copyCheckerAssignmentsService.assertTeacherAuthorized).toHaveBeenCalledWith({
+        assessmentDeliveryId: 'del-1',
+        studentProfileId: 'sp-1',
+        questionId: 'q-1',
+        actor: teacher,
+      });
     });
   });
 

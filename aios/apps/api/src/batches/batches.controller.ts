@@ -1,12 +1,17 @@
 import {
   Controller, Get, Post, Patch, Delete, Body, Param, HttpCode, HttpStatus,
+  Res, UploadedFile, UseInterceptors, BadRequestException,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { Response } from 'express';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiConsumes } from '@nestjs/swagger';
 import { BatchesService } from './batches.service';
+import { BatchBulkImportService } from './batch-bulk-import.service';
 import {
   CreateBatchDto, UpdateBatchDto,
   CreateSubjectDto, CreateChapterDto, CreateTopicDto,
   UpdateSubjectDto, UpdateChapterDto, UpdateTopicDto,
+  BulkCommitBatchesDto,
 } from './dto/batch.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -17,7 +22,79 @@ import { UserRole } from '@prisma/client';
 @ApiBearerAuth()
 @Controller('institutes/:instituteId')
 export class BatchesController {
-  constructor(private readonly batchesService: BatchesService) {}
+  constructor(
+    private readonly batchesService: BatchesService,
+    private readonly bulkImportService: BatchBulkImportService,
+  ) {}
+
+  // ── Bulk Batch Setup Endpoints ──────────────────────────────────────────
+
+  @Get('batches/bulk-template')
+  @Roles(UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Admin: Download dynamic Excel batch template with live branch & class dropdowns' })
+  async downloadBulkTemplate(
+    @Param('instituteId') instituteId: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Res() res: Response,
+  ) {
+    const { buffer, filename } = await this.bulkImportService.generateTemplate(instituteId, user);
+    res.set({
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Content-Length': buffer.length,
+    });
+    res.end(buffer);
+  }
+
+  @Post('batches/bulk-validate')
+  @Roles(UserRole.ADMIN, UserRole.FOUNDER)
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Admin: Validate uploaded batch Excel workbook before commit' })
+  async validateBulkUpload(
+    @Param('instituteId') instituteId: string,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    if (!file || !file.buffer) {
+      throw new BadRequestException('Please provide a valid Excel file to validate.');
+    }
+    return this.bulkImportService.validateUpload(instituteId, file.buffer, user);
+  }
+
+  @Post('batches/bulk-import')
+  @Roles(UserRole.ADMIN, UserRole.FOUNDER)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Admin: Commit verified batch records into database' })
+  async commitBulkBatches(
+    @Param('instituteId') instituteId: string,
+    @Body() dto: BulkCommitBatchesDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.bulkImportService.commitBulkBatches(instituteId, dto.batches, user);
+  }
+
+  @Post('batches/bulk-error-report')
+  @Roles(UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Admin: Generate downloadable remediation sheet for failed batches' })
+  async downloadErrorReport(
+    @Param('instituteId') instituteId: string,
+    @Body('failedRows') failedRows: any[],
+    @CurrentUser() user: AuthenticatedUser,
+    @Res() res: Response,
+  ) {
+    const { buffer, filename } = await this.bulkImportService.generateErrorReportWorkbook(
+      instituteId,
+      failedRows || [],
+      user,
+    );
+    res.set({
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Content-Length': buffer.length,
+    });
+    res.end(buffer);
+  }
 
   // ── Batches ───────────────────────────────────────────────────────────────
   @Post('batches')

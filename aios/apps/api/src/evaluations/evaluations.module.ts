@@ -12,10 +12,13 @@ import { PermissionsModule } from '../permissions/permissions.module';
 import { ReportsModule } from '../reports/reports.module';
 import { AnalyticsModule } from '../analytics/analytics.module';
 
+import { CopyCheckerAssignmentsController } from './copy-checker-assignments.controller';
+import { CopyCheckerAssignmentsService } from './copy-checker-assignments.service';
+
 @Module({
   imports: [BullModule.registerQueue({ name: SCORE_AGGREGATION_QUEUE }), AiEvaluationModule, PermissionsModule, ReportsModule, AnalyticsModule],
-  controllers: [EvaluationsController, CheckedCopyController],
-  providers: [EvaluationsService, CheckedCopyService, ScoreAggregationService, ScoreAggregationProcessor],
-  exports: [EvaluationsService],
+  controllers: [EvaluationsController, CheckedCopyController, CopyCheckerAssignmentsController],
+  providers: [EvaluationsService, CheckedCopyService, ScoreAggregationService, ScoreAggregationProcessor, CopyCheckerAssignmentsService],
+  exports: [EvaluationsService, CopyCheckerAssignmentsService],
 })
 export class EvaluationsModule {}

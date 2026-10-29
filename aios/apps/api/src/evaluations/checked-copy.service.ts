@@ -11,6 +11,7 @@ import { AnalyticsService } from '../analytics/analytics.service';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { EvaluationsService, RUBRIC_ADDITIVE_MODES } from './evaluations.service';
 import { ScoreAggregationService } from './score-aggregation.service';
+import { CopyCheckerAssignmentsService } from './copy-checker-assignments.service';
 import { needsHumanEvaluation, isHumanApproved } from './evaluation-status.util';
 import { CheckedCopyItemDto, SubmitCheckedCopyDto, Verdict } from './dto/checked-copy.dto';
 import { ensureDiagnosableMessage } from '../shared/logging/error-message';
@@ -69,12 +70,18 @@ export class CheckedCopyService {
     private readonly analyticsService: AnalyticsService,
     private readonly evaluationsService: EvaluationsService,
     private readonly scoreAggregation: ScoreAggregationService,
+    private readonly copyCheckerService: CopyCheckerAssignmentsService,
   ) {}
 
   // ── Read ────────────────────────────────────────────────────────────────
 
   async get(instituteId: string, attemptId: string, actor: AuthenticatedUser) {
     const attempt = await this.getAttemptForInstitute(instituteId, attemptId, actor);
+    await this.copyCheckerService.assertTeacherAuthorized({
+      assessmentDeliveryId: attempt.assessmentDelivery.id,
+      studentProfileId: attempt.studentProfile.id,
+      actor,
+    });
     return this.buildView(attempt);
   }
 
@@ -83,6 +90,11 @@ export class CheckedCopyService {
   /** Queues an AI check for every answer that is ready for one. Answers already suggested or reviewed are left alone. */
   async runAiCheck(instituteId: string, attemptId: string, actor: AuthenticatedUser) {
     const attempt = await this.getAttemptForInstitute(instituteId, attemptId, actor);
+    await this.copyCheckerService.assertTeacherAuthorized({
+      assessmentDeliveryId: attempt.assessmentDelivery.id,
+      studentProfileId: attempt.studentProfile.id,
+      actor,
+    });
     this.assertNotLocked(attempt);
 
     const ready = attempt.responses.filter((r) => this.isSubjective(r) && this.stateOf(r) === 'READY_FOR_AI');
@@ -101,6 +113,12 @@ export class CheckedCopyService {
 
   async submit(instituteId: string, attemptId: string, dto: SubmitCheckedCopyDto, actor: AuthenticatedUser) {
     const attempt = await this.getAttemptForInstitute(instituteId, attemptId, actor);
+    await this.copyCheckerService.assertTeacherAuthorized({
+      assessmentDeliveryId: attempt.assessmentDelivery.id,
+      studentProfileId: attempt.studentProfile.id,
+      actor,
+      requireWholeSheetAccess: true,
+    });
     this.assertNotLocked(attempt);
 
     const subjective = attempt.responses.filter((r) => this.isSubjective(r));
@@ -217,7 +235,12 @@ export class CheckedCopyService {
   // ── PDF ─────────────────────────────────────────────────────────────────
 
   async getPdf(instituteId: string, attemptId: string, actor: AuthenticatedUser) {
-    await this.getAttemptForInstitute(instituteId, attemptId, actor);
+    const attempt = await this.getAttemptForInstitute(instituteId, attemptId, actor);
+    await this.copyCheckerService.assertTeacherAuthorized({
+      assessmentDeliveryId: attempt.assessmentDelivery.id,
+      studentProfileId: attempt.studentProfile.id,
+      actor,
+    });
     return this.renderAndStorePdf(instituteId, attemptId);
   }
 

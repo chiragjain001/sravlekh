@@ -35,7 +35,9 @@ import {
   Sparkles,
   Lock,
   Globe,
+  AlertTriangle,
 } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { AppleDropdown, AppleDropdownOption } from '@/components/ui/AppleDropdown';
 import { useAuth } from '@/contexts/auth.context';
 import {
@@ -51,10 +53,13 @@ import {
   useRejectCandidatePaper,
   useRequestPaperChanges,
   usePaper,
+  useExamResults,
 } from '@/hooks/useApi';
 import { SkeletonTable, EmptyState } from '@/components/ui/foundation';
 import { DatePicker } from '@/components/ui/DatePicker';
 import { PrintableQuestionPaper } from '@/components/dashboard/teacher/shared/PrintableQuestionPaper';
+import { AssignEvaluatorsModal } from './AssignEvaluatorsModal';
+import { PrintBookletsModal } from './PrintBookletsModal';
 
 type ExamStatus = 'DRAFT' | 'REVIEW' | 'APPROVED' | 'PUBLISHED' | 'ONGOING' | 'EVALUATING' | 'LOCKED';
 
@@ -173,6 +178,7 @@ interface ExamRow {
   scheduledDate?: string | null;
   durationMinutes?: number | null;
   venue?: string | null;
+  assessmentDeliveryId?: string | null;
   batch?: { id: string; name: string; classYear?: string; section?: string };
   blueprint?: { id: string; name: string; totalMarks: number; subject?: { id: string; name: string } };
   papers?: CandidatePaper[];
@@ -190,8 +196,11 @@ export function AdminExams() {
   // Modals & Drawers
   const [createOpen, setCreateOpen] = useState(false);
   const [unlockTarget, setUnlockTarget] = useState<ExamRow | null>(null);
+  const [lockTarget, setLockTarget] = useState<ExamRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ExamRow | null>(null);
   const [reviewExamTarget, setReviewExamTarget] = useState<ExamRow | null>(null);
+  const [assignEvaluatorsTarget, setAssignEvaluatorsTarget] = useState<ExamRow | null>(null);
+  const [printBookletsTarget, setPrintBookletsTarget] = useState<ExamRow | null>(null);
   const [previewPaperId, setPreviewPaperId] = useState<string | null>(null);
   const [printPaperTarget, setPrintPaperTarget] = useState<{ exam: ExamRow; paperId: string } | null>(null);
 
@@ -269,6 +278,10 @@ export function AdminExams() {
   ], [metrics]);
 
   function handleAdvance(exam: ExamRow) {
+    if (exam.status === 'EVALUATING') {
+      setLockTarget(exam);
+      return;
+    }
     const next = NEXT_STATUS[exam.status];
     if (!next) return;
     updateStatus.mutate({ examId: exam.id, status: next, version: exam.version });
@@ -560,12 +573,19 @@ export function AdminExams() {
 
                         {/* Status Badge */}
                         <td className="px-4 py-3.5">
-                          <span
-                            className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${STATUS_STYLE[exam.status].bg} ${STATUS_STYLE[exam.status].text}`}
-                          >
-                            <span className={`w-1.5 h-1.5 rounded-full ${STATUS_STYLE[exam.status].dot}`} />
-                            {STATUS_STYLE[exam.status].label}
-                          </span>
+                          <div className="flex flex-col gap-1 items-start">
+                            <span
+                              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${STATUS_STYLE[exam.status].bg} ${STATUS_STYLE[exam.status].text}`}
+                            >
+                              <span className={`w-1.5 h-1.5 rounded-full ${STATUS_STYLE[exam.status].dot}`} />
+                              {STATUS_STYLE[exam.status].label}
+                            </span>
+                            {exam.status === 'EVALUATING' && (
+                              <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200/80">
+                                Evaluation in Progress
+                              </span>
+                            )}
+                          </div>
                         </td>
 
                         {/* Actions */}
@@ -601,6 +621,30 @@ export function AdminExams() {
                                 </button>
                               );
                             })()}
+
+                            {/* Evaluator Assignment */}
+                            {canApprove && ['APPROVED', 'PUBLISHED', 'ONGOING', 'EVALUATING'].includes(exam.status) && (
+                              <button
+                                onClick={() => setAssignEvaluatorsTarget(exam)}
+                                title="Assign Copy Checkers & Evaluators"
+                                className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-bold text-purple-700 bg-purple-50 hover:bg-purple-100 rounded-lg transition-colors cursor-pointer"
+                              >
+                                <Users className="w-3.5 h-3.5" />
+                                <span>Evaluators</span>
+                              </button>
+                            )}
+
+                            {/* Print Booklets */}
+                            {canApprove && ['APPROVED', 'PUBLISHED', 'ONGOING', 'EVALUATING'].includes(exam.status) && (
+                              <button
+                                onClick={() => setPrintBookletsTarget(exam)}
+                                title="Generate & Print Serialized Answer Booklets"
+                                className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors cursor-pointer"
+                              >
+                                <Printer className="w-3.5 h-3.5" />
+                                <span>Booklets</span>
+                              </button>
+                            )}
 
                             {/* Unlock */}
                             {exam.status === 'LOCKED' && canApprove && (
@@ -770,6 +814,28 @@ export function AdminExams() {
                       </button>
                     )}
 
+                    {canApprove && ['APPROVED', 'PUBLISHED', 'ONGOING', 'EVALUATING'].includes(exam.status) && (
+                      <button
+                        onClick={() => setAssignEvaluatorsTarget(exam)}
+                        className="py-2 px-3 text-[12px] font-bold text-purple-700 bg-purple-50 hover:bg-purple-100 rounded-xl transition-colors cursor-pointer flex items-center justify-center gap-1.5 min-h-[42px]"
+                        title="Assign Evaluators"
+                      >
+                        <Users className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Evaluators</span>
+                      </button>
+                    )}
+
+                    {canApprove && ['APPROVED', 'PUBLISHED', 'ONGOING', 'EVALUATING'].includes(exam.status) && (
+                      <button
+                        onClick={() => setPrintBookletsTarget(exam)}
+                        className="py-2 px-3 text-[12px] font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-xl transition-colors cursor-pointer flex items-center justify-center gap-1.5 min-h-[42px]"
+                        title="Print Booklets"
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Booklets</span>
+                      </button>
+                    )}
+
                     {exam.status === 'LOCKED' && canApprove && (
                       <button
                         onClick={() => setUnlockTarget(exam)}
@@ -799,6 +865,19 @@ export function AdminExams() {
       {/* ── Dialogs & Drawers ── */}
       <CreateExamModal isOpen={createOpen} onClose={() => setCreateOpen(false)} />
       <UnlockExamModal exam={unlockTarget} onClose={() => setUnlockTarget(null)} />
+      <LockExamModal exam={lockTarget} onClose={() => setLockTarget(null)} />
+      {assignEvaluatorsTarget && (
+        <AssignEvaluatorsModal
+          exam={assignEvaluatorsTarget}
+          onClose={() => setAssignEvaluatorsTarget(null)}
+        />
+      )}
+      {printBookletsTarget && (
+        <PrintBookletsModal
+          exam={printBookletsTarget}
+          onClose={() => setPrintBookletsTarget(null)}
+        />
+      )}
 
       {/* Candidate Papers Review Drawer / Modal */}
       {reviewExamTarget && (
@@ -1712,6 +1791,209 @@ function UnlockExamModal({ exam, onClose }: { exam: ExamRow | null; onClose: () 
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+// ─── Lock Exam Modal (Safe Result Locking with Incomplete Evaluation Blocker) ──
+
+function LockExamModal({ exam, onClose }: { exam: ExamRow | null; onClose: () => void }) {
+  const [confirmedChecked, setConfirmedChecked] = useState(false);
+  const updateStatus = useUpdateExamStatus();
+  const { data: resultsData, isLoading: loadingResults } = useExamResults(exam?.id || null);
+
+  if (!exam) return null;
+
+  const rawStudents: any[] = resultsData?.students ?? (Array.isArray(resultsData) ? resultsData : []);
+  const totalCount = rawStudents.length > 0 ? rawStudents.length : 60;
+  const finalizedStudents = rawStudents.filter((s: any) => s.isFinalized);
+  const pendingStudents = rawStudents.filter((s: any) => !s.isFinalized);
+
+  // If no students in DB yet, treat as incomplete with pending copies
+  const hasIncomplete = rawStudents.length === 0 || pendingStudents.length > 0;
+  const finalizedCount = rawStudents.length > 0 ? finalizedStudents.length : 0;
+  const pendingCount = rawStudents.length > 0 ? pendingStudents.length : totalCount;
+
+  function handleLock(e: React.FormEvent) {
+    e.preventDefault();
+    if (hasIncomplete || !confirmedChecked || updateStatus.isPending) return;
+
+    updateStatus.mutate(
+      { examId: exam!.id, status: 'LOCKED', version: exam!.version },
+      {
+        onSuccess: () => {
+          toast.success(`Exam "${exam!.title}" results finalized and locked.`);
+          setConfirmedChecked(false);
+          onClose();
+        },
+        onError: (err: any) => {
+          const msg = err?.response?.data?.message || err?.message || 'Locking rejected';
+          toast.error(`Cannot lock exam: ${msg}`);
+        },
+      }
+    );
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md animate-fadein"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="lock-modal-title"
+    >
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-5 sm:p-6 space-y-4 border border-slate-200 max-h-[90vh] overflow-y-auto custom-scrollbar">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div className="flex items-center gap-3">
+            <div className={`w-10 h-10 rounded-2xl flex items-center justify-center ${
+              hasIncomplete ? 'bg-amber-50 text-amber-600 border border-amber-200' : 'bg-slate-900 text-white'
+            }`}>
+              {hasIncomplete ? <AlertTriangle className="w-5 h-5" /> : <Lock className="w-5 h-5" />}
+            </div>
+            <div>
+              <h3 id="lock-modal-title" className="text-[16px] font-bold text-slate-900">
+                {hasIncomplete ? 'Result Locking Blocked' : 'Finalize & Lock Results'}
+              </h3>
+              <p className="text-xs text-slate-500">
+                {exam.title} {exam.batch?.name ? `• ${exam.batch.name}` : ''}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="Close lock dialog"
+            className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {loadingResults ? (
+          <div className="p-8 text-center text-slate-400">
+            <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-indigo-600" />
+            <p className="text-xs">Checking evaluation completion status...</p>
+          </div>
+        ) : hasIncomplete ? (
+          /* Incomplete Blocker */
+          <div className="space-y-3.5">
+            <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 text-xs space-y-1.5">
+              <div className="flex items-center justify-between font-bold">
+                <span className="flex items-center gap-1.5 text-rose-800">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  Incomplete Evaluation Detected
+                </span>
+                <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-rose-100 text-rose-700">
+                  SCHOOL_EXAM_LOCK_BLOCKED_UNEVALUATED
+                </span>
+              </div>
+              <p className="text-[11.5px] text-rose-800 leading-relaxed">
+                Per AI Governance Policy (§2) &amp; Security Specification (§7), an examination cannot be locked while candidate responses remain unevaluated or pending human teacher sign-off. AI suggestions cannot serve as terminal marks.
+              </p>
+            </div>
+
+            {/* Status Breakdown */}
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+                <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider block">Verified &amp; Finalized</span>
+                <span className="text-[18px] font-black text-emerald-600 mt-0.5 block">{finalizedCount} / {totalCount}</span>
+              </div>
+              <div className="p-3 rounded-xl bg-rose-50/70 border border-rose-200">
+                <span className="text-[10.5px] font-bold text-rose-500 uppercase tracking-wider block">Pending Evaluation</span>
+                <span className="text-[18px] font-black text-rose-700 mt-0.5 block">{pendingCount} Booklets</span>
+              </div>
+            </div>
+
+            {/* Pending Students list preview */}
+            <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5">
+              <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block">
+                Pending Booklets ({pendingCount}):
+              </span>
+              <div className="max-h-28 overflow-y-auto divide-y divide-slate-100 text-xs pr-1">
+                {pendingStudents.length > 0 ? (
+                  pendingStudents.slice(0, 5).map((st: any, i: number) => (
+                    <div key={st.studentProfileId || i} className="py-1 flex items-center justify-between text-slate-700">
+                      <span className="font-medium">{st.name || `Student ${i + 1}`}</span>
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">
+                        Pending Teacher Review
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-slate-500 text-[11px] py-1">
+                    Booklet evaluation is currently in progress. Complete all grading in the Evaluation Desk before locking.
+                  </p>
+                )}
+                {pendingStudents.length > 5 && (
+                  <p className="text-[10.5px] text-slate-400 pt-1 text-center">
+                    + {pendingStudents.length - 5} more pending student answer sheets
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+              >
+                Dismiss &amp; Return to Grading
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* Ready to Lock Form */
+          <form onSubmit={handleLock} className="space-y-4">
+            <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs flex items-start gap-2.5">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold">Evaluation 100% Complete</p>
+                <p className="text-[11.5px] text-emerald-800 mt-0.5">
+                  All {totalCount} student answer sheets have been evaluated and verified by teachers.
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Locking this exam makes all student marks permanent and triggers diagnostic report card computation. Once locked, marks cannot be modified without an administrative unlock reason recorded in the security audit log.
+            </p>
+
+            <label className="flex items-start gap-2.5 p-3 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer hover:bg-slate-100/70 transition-colors">
+              <input
+                type="checkbox"
+                checked={confirmedChecked}
+                onChange={(e) => setConfirmedChecked(e.target.checked)}
+                className="mt-0.5 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+              />
+              <span className="text-xs font-semibold text-slate-700 leading-tight">
+                I verify that all candidate answer sheets have been completely graded and reviewed according to institutional guidelines.
+              </span>
+            </label>
+
+            <div className="flex gap-2.5 pt-1">
+              <button
+                type="submit"
+                disabled={!confirmedChecked || updateStatus.isPending}
+                className="flex-1 py-2.5 bg-slate-900 hover:bg-black text-white text-xs font-bold rounded-xl transition-colors cursor-pointer disabled:opacity-40 flex items-center justify-center gap-1.5"
+              >
+                {updateStatus.isPending ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Lock className="w-3.5 h-3.5" />
+                )}
+                <span>{updateStatus.isPending ? 'Locking Results...' : 'Finalize & Lock Results'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2.5 border border-slate-200 text-slate-600 text-xs font-bold rounded-xl hover:bg-slate-50 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        )}
       </div>
     </div>
   );

@@ -92,12 +92,26 @@ async def _recalculate_one_topic(student_profile_id: str, topic_id: str) -> tupl
     if not responses:
         return None
 
+    # Deduplicate responses: prevent duplicate exam ingestion or repeated attempts
+    # from artificially compounding or distorting the sequence.
+    deduped_responses = []
+    seen_response_keys = set()
+    for resp in responses:
+        attempt_or_sheet = getattr(resp, "attemptId", None) or getattr(resp, "answerSheetId", None)
+        qid = getattr(resp, "questionId", None) or (resp.question.id if getattr(resp, "question", None) and hasattr(resp.question, "id") else None)
+        if attempt_or_sheet and qid:
+            dedupe_key = (attempt_or_sheet, qid)
+            if dedupe_key in seen_response_keys:
+                continue
+            seen_response_keys.add(dedupe_key)
+        deduped_responses.append(resp)
+
     # A subjective response counts only once a human has approved its current
     # version (32 §3). Excluded from the sequence rather than scored 0: "nobody has
     # graded this yet" is not the same data point as "the student scored zero," and
     # a phantom 0 would crash the student's mastery for an ungraded answer.
     # Objective/v1 evidence is scored at capture and is unaffected.
-    counted = [response for response in responses if is_authoritative_response(response)]
+    counted = [response for response in deduped_responses if is_authoritative_response(response)]
     if not counted:
         return None
 
@@ -107,29 +121,33 @@ async def _recalculate_one_topic(student_profile_id: str, topic_id: str) -> tupl
     previous_mastery = BASELINE_MASTERY
 
     for index, response in enumerate(counted):
-        current_version = response.evaluation.currentVersion if response.evaluation else None
-        marks_awarded = current_version.marksAwarded if current_version is not None else response.marksAwarded
+        current_version = response.evaluation.currentVersion if getattr(response, "evaluation", None) else None
+        marks_awarded = current_version.marksAwarded if current_version is not None else getattr(response, "marksAwarded", 0.0)
+        marks_available = getattr(response, "marksAvailable", 0.0)
 
-        score = (
-            marks_awarded / response.marksAvailable
-            if response.marksAvailable > 0
-            else 0
-        )
+        # Protect against division by zero, missing denominators, or negative marks
+        if marks_available is None or marks_available <= 0:
+            score = 0.0
+        else:
+            clamped_awarded = max(0.0, min(float(marks_awarded), float(marks_available)))
+            score = clamped_awarded / float(marks_available)
 
+        difficulty = getattr(response.question, "difficulty", None) if getattr(response, "question", None) else None
         difficulty_weight = 1.0
-        if response.question.difficulty == "HARD":
+        if difficulty == "HARD":
             difficulty_weight = 1.2
-        elif response.question.difficulty == "EASY":
+        elif difficulty == "EASY":
             difficulty_weight = 0.8
 
-        adjusted_score = min(1.0, score * difficulty_weight)
+        adjusted_score = max(0.0, min(1.0, score * difficulty_weight))
 
         if index == 0:
             current_mastery = adjusted_score
         else:
             previous_mastery = current_mastery
-            current_mastery = (adjusted_score * ALPHA) + (current_mastery * (1 - ALPHA))
+            current_mastery = (adjusted_score * ALPHA) + (current_mastery * (1.0 - ALPHA))
 
+    current_mastery = max(0.0, min(1.0, current_mastery))
     trend = current_mastery - previous_mastery
 
     # Recovery above threshold clears any in-flight intervention claim for

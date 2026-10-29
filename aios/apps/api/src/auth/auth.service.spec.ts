@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, UnauthorizedException, ConflictException } from '@nestjs/common';
 import { AuditAction, UserRole, UserStatus, InstituteStatus } from '@prisma/client';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -46,18 +46,18 @@ describe('AuthService.loginWithGoogle (06-AUTH-AUTHORIZATION.md / 13-TESTING-STR
   const refreshTokens = { issue: jest.fn().mockResolvedValue({ token: 'refresh-token', expiresAt: new Date(Date.now() + 86_400_000), familyId: 'fam-test' }) };
   let prisma: {
     allowListEntry: { findFirst: jest.Mock };
-    user: { upsert: jest.Mock; update: jest.Mock; findUnique: jest.Mock };
+    user: { upsert: jest.Mock; update: jest.Mock; findUnique: jest.Mock; findFirst: jest.Mock };
     auditLog: { create: jest.Mock };
   };
   let jwt: { sign: jest.Mock };
 
-  const googlePayload = { email: 'teacher@school.com', sub: 'google-sub-1', name: 'Teacher', picture: undefined };
+  const googlePayload = { email: 'teacher@school.com', sub: 'google-sub-1', name: 'Teacher', picture: undefined, email_verified: true };
 
   beforeEach(async () => {
     cache = createCacheDouble();
     prisma = {
       allowListEntry: { findFirst: jest.fn() },
-      user: { upsert: jest.fn(), update: jest.fn(), findUnique: jest.fn() },
+      user: { upsert: jest.fn(), update: jest.fn(), findUnique: jest.fn(), findFirst: jest.fn().mockResolvedValue(null) },
       auditLog: { create: jest.fn() },
     };
     jwt = { sign: jest.fn().mockReturnValue('signed.jwt.token') };
@@ -190,6 +190,88 @@ describe('AuthService.loginWithGoogle (06-AUTH-AUTHORIZATION.md / 13-TESTING-STR
     expect(prisma.auditLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ instituteId: 'inst-1', actorId: 'user-1', action: AuditAction.LOGIN }),
     });
+  });
+
+  it('rejects a Google token whose email_verified is false', async () => {
+    mockVerifyIdToken.mockResolvedValueOnce({
+      getPayload: () => ({ ...googlePayload, email_verified: false }),
+    });
+
+    await expect(service.loginWithGoogle('id-token')).rejects.toThrow(UnauthorizedException);
+    expect(jwt.sign).not.toHaveBeenCalled();
+  });
+
+  it('rejects a Google token whose email_verified claim is missing (undefined)', async () => {
+    const payloadWithoutVerified = { ...googlePayload };
+    delete (payloadWithoutVerified as any).email_verified;
+    mockVerifyIdToken.mockResolvedValueOnce({
+      getPayload: () => payloadWithoutVerified,
+    });
+
+    await expect(service.loginWithGoogle('id-token')).rejects.toThrow(UnauthorizedException);
+    expect(jwt.sign).not.toHaveBeenCalled();
+  });
+
+  it('links an invited user whose googleSub is a local_ placeholder without P2002 error', async () => {
+    prisma.allowListEntry.findFirst.mockResolvedValueOnce({
+      role: UserRole.TEACHER,
+      institute: { id: 'inst-1', status: InstituteStatus.ACTIVE },
+    });
+    // Existing invited user has a placeholder googleSub
+    prisma.user.findFirst.mockResolvedValueOnce({
+      id: 'invited-user-id',
+      email: googlePayload.email,
+      googleSub: 'local_1728590123_abc99',
+      name: 'Invited Teacher',
+      role: UserRole.TEACHER,
+      instituteId: 'inst-1',
+      status: UserStatus.ACTIVE,
+      avatarUrl: null,
+    });
+    prisma.user.update.mockResolvedValueOnce({
+      id: 'invited-user-id',
+      email: googlePayload.email,
+      googleSub: googlePayload.sub,
+      name: 'Teacher',
+      role: UserRole.TEACHER,
+      instituteId: 'inst-1',
+      status: UserStatus.ACTIVE,
+      avatarUrl: null,
+    });
+
+    const res = await service.loginWithGoogle('id-token');
+
+    expect(prisma.user.update).toHaveBeenCalledWith({
+      where: { id: 'invited-user-id' },
+      data: expect.objectContaining({
+        googleSub: googlePayload.sub,
+      }),
+    });
+    expect(prisma.user.upsert).not.toHaveBeenCalled();
+    expect(res.user.id).toBe('invited-user-id');
+    expect(jwt.sign).toHaveBeenCalled();
+  });
+
+  it('rejects login when email is already linked to a different real googleSub (account hijacking protection)', async () => {
+    prisma.allowListEntry.findFirst.mockResolvedValueOnce({
+      role: UserRole.TEACHER,
+      institute: { id: 'inst-1', status: InstituteStatus.ACTIVE },
+    });
+    // Existing user has an established real Google identity
+    prisma.user.findFirst.mockResolvedValueOnce({
+      id: 'original-user-id',
+      email: googlePayload.email,
+      googleSub: 'existing-different-google-sub',
+      name: 'Real User',
+      role: UserRole.TEACHER,
+      instituteId: 'inst-1',
+      status: UserStatus.ACTIVE,
+      avatarUrl: null,
+    });
+
+    await expect(service.loginWithGoogle('id-token')).rejects.toThrow(ConflictException);
+    expect(prisma.user.update).not.toHaveBeenCalled();
+    expect(jwt.sign).not.toHaveBeenCalled();
   });
 
   describe('login lockout (07-SECURITY-SPECIFICATION.md §7: "repeated 403s -> temporary lockout")', () => {

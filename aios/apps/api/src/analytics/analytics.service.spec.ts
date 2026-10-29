@@ -205,5 +205,20 @@ describe('AnalyticsService.getBatchMistakeSummary', () => {
       byTag: { CARELESS: 1 },
     });
   });
+
+  it('correctly aggregates UNTAGGED errors and tracks marksLost when present', async () => {
+    (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce([
+      { topicId: 'top-1', topicName: 'Kinematics', tag: 'CONCEPT_ERROR', cnt: 2n, marksLost: 4.5 },
+      { topicId: 'top-1', topicName: 'Kinematics', tag: 'UNTAGGED', cnt: 1n, marksLost: 2.0 },
+      { topicId: 'top-2', topicName: 'Dynamics', tag: 'CALCULATION_ERROR', cnt: 1n, marksLost: 1.0 },
+    ]);
+
+    const result = await service.getBatchMistakeSummary('inst-1', 'batch-1', actor(UserRole.TEACHER, 'inst-1'));
+
+    expect(result.totalMistakes).toBe(4);
+    expect(result.totalMarksLost).toBe(7.5);
+    expect(result.byTag.UNTAGGED).toBe(1);
+    expect(result.byTopic[0].totalMarksLost).toBe(6.5);
+  });
 });
 

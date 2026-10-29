@@ -8,6 +8,7 @@ vendor-import sweep). This stage only adds the adapter — no call site is
 migrated yet, so those three imports are still present and correct.
 """
 
+import time
 import openai
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
@@ -19,7 +20,7 @@ from src.providers.errors import (
     AdapterProviderError,
     AdapterRateLimitError,
 )
-from src.providers.types import ContentPart, GenerateRequest, GenerateResult, ImagePart, TextPart
+from src.providers.types import ContentPart, GenerateRequest, GenerateResult, ImagePart, TextPart, UsageMetadata
 
 
 class OpenAIAdapter(ModelProviderAdapter):
@@ -55,6 +56,7 @@ class OpenAIAdapter(ModelProviderAdapter):
 
         message = HumanMessage(content=self._to_message_content(request.content))
 
+        start_time = time.perf_counter()
         try:
             response = await llm.ainvoke([message])
         except openai.AuthenticationError as e:
@@ -65,10 +67,36 @@ class OpenAIAdapter(ModelProviderAdapter):
             raise AdapterInvalidRequestError(str(e)) from e
         except openai.OpenAIError as e:
             raise AdapterProviderError(str(e)) from e
+        latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
-        # langchain surfaces the raw provider finish_reason here; "length" is
-        # OpenAI's "I stopped because max_tokens ran out". Read defensively —
-        # response_metadata is provider-populated and not guaranteed present —
-        # so a missing key degrades to "not truncated" rather than raising.
+        # Extract structured usage metadata if available
+        usage_dict = getattr(response, "usage_metadata", None) or {}
+        prompt_tokens = usage_dict.get("input_tokens")
+        completion_tokens = usage_dict.get("output_tokens")
+        total_tokens = usage_dict.get("total_tokens")
+        cached_tokens = (usage_dict.get("input_token_details") or {}).get("cache_read")
+
+        if prompt_tokens is None:
+            token_usage = (getattr(response, "response_metadata", None) or {}).get("token_usage", {})
+            prompt_tokens = token_usage.get("prompt_tokens")
+            completion_tokens = token_usage.get("completion_tokens")
+            total_tokens = token_usage.get("total_tokens")
+
+        usage = (
+            UsageMetadata(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+                cached_tokens=cached_tokens,
+            )
+            if prompt_tokens is not None
+            else None
+        )
+
         finish_reason = (getattr(response, "response_metadata", None) or {}).get("finish_reason")
-        return GenerateResult(text=response.content, truncated=finish_reason == "length")
+        return GenerateResult(
+            text=response.content,
+            truncated=finish_reason == "length",
+            usage=usage,
+            latency_ms=latency_ms,
+        )

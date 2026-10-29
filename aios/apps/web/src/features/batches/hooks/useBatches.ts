@@ -146,3 +146,103 @@ export function useBulkDeleteBatches() {
     },
   });
 }
+
+// ── Bulk Batch Import Hooks ───────────────────────────────────────────────
+
+export function useDownloadBulkBatchTemplate() {
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async () => {
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/batches/bulk-template`, {
+        responseType: 'blob',
+      });
+      const blob = new Blob([res.data], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'AIOS_Batches_Setup_Template.xlsx');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      return true;
+    },
+    onSuccess: () => {
+      toast.success('Official Batch Excel template downloaded');
+    },
+    onError: () => {
+      toast.error('Failed to download batch template. Please check connection.');
+    },
+  });
+}
+
+export function useValidateBulkBatches() {
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async (file: File) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await apiClient.post(
+        `/institutes/${user?.instituteId}/batches/bulk-validate`,
+        formData,
+        { headers: { 'Content-Type': 'multipart/form-data' } },
+      );
+      return res.data;
+    },
+  });
+}
+
+export function useCommitBulkBatches() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (batches: any[]) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/batches/bulk-import`, {
+        batches,
+      });
+      return res.data;
+    },
+    onSuccess: (data) => {
+      toast.success(`Successfully created ${data.enrolledCount} batch(es)!`);
+      queryClient.invalidateQueries({ queryKey: ['batches', user?.instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['batches-stats', user?.instituteId] });
+    },
+    onError: (error: any) => {
+      const msg = error.response?.data?.message || 'Failed to complete bulk batch creation';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useDownloadBulkBatchErrorReport() {
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async (failedRows: any[]) => {
+      const res = await apiClient.post(
+        `/institutes/${user?.instituteId}/batches/bulk-error-report`,
+        { failedRows },
+        { responseType: 'blob' },
+      );
+      const blob = new Blob([res.data], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'AIOS_Failed_Batches_Remediation.xlsx');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      return true;
+    },
+    onSuccess: () => {
+      toast.success('Error remediation workbook downloaded');
+    },
+    onError: () => {
+      toast.error('Failed to download error workbook');
+    },
+  });
+}

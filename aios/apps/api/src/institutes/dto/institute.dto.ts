@@ -18,6 +18,11 @@ export class CreateInstituteDto {
   @MinLength(2)
   name!: string;
 
+  @ApiPropertyOptional({ example: 'SCI', description: 'Short unique uppercase code for booklet barcodes and roll codes (auto-generated if omitted)' })
+  @IsOptional()
+  @IsString()
+  shortCode?: string;
+
   @ApiProperty({
     description: 'Approved email domains or exact emails for the allow-list',
     example: ['@sunrisecoaching.com', 'admin@gmail.com'],
@@ -49,6 +54,11 @@ export class UpdateInstituteDto {
   @IsString()
   @MinLength(2)
   name?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  shortCode?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

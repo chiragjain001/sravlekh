@@ -565,22 +565,40 @@ export function PermissionEditorView() {
                                   )}
                                 </span>
 
-                                <span
-                                  className={`px-1.5 py-0.2 rounded text-[9px] font-bold uppercase tracking-wider ${
-                                    perm.risk === 'critical'
-                                      ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                                      : perm.risk === 'sensitive'
-                                      ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                                      : 'bg-slate-100 text-slate-600'
-                                  }`}
-                                >
-                                  {perm.risk}
-                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  <span
+                                    className={`px-1.5 py-0.2 rounded text-[9px] font-bold uppercase tracking-wider ${
+                                      perm.key === 'exam:unlock' || perm.key === 'REVIEW_EVALUATION'
+                                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                        : 'bg-slate-100 text-slate-500 border border-slate-200/60'
+                                    }`}
+                                  >
+                                    {perm.key === 'exam:unlock' || perm.key === 'REVIEW_EVALUATION' ? 'Runtime Guard' : 'Role RBAC'}
+                                  </span>
+                                  <span
+                                    className={`px-1.5 py-0.2 rounded text-[9px] font-bold uppercase tracking-wider ${
+                                      perm.risk === 'critical'
+                                        ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                        : perm.risk === 'sensitive'
+                                        ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                        : 'bg-slate-100 text-slate-600'
+                                    }`}
+                                  >
+                                    {perm.risk}
+                                  </span>
+                                </div>
                               </div>
 
                               <p className="text-[11px] text-slate-500 leading-relaxed">
                                 {perm.description}
                               </p>
+
+                              {perm.key === 'exam:unlock' && (
+                                <p className="text-[10px] text-indigo-700 font-semibold flex items-center gap-1 mt-0.5">
+                                  <Shield className="w-3 h-3 text-indigo-500" />
+                                  Dynamic gate: enables emergency exam unlocking with mandatory audit log
+                                </p>
+                              )}
 
                               {perm.key === 'REVIEW_EVALUATION' && (
                                 <p className="text-[10px] text-amber-700 font-semibold flex items-center gap-1 mt-0.5">

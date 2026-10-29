@@ -15,6 +15,8 @@ import {
   BarChart3,
   Check,
   Filter,
+  Info,
+  ShieldCheck,
 } from 'lucide-react';
 import { useMyStudentProfile } from '@/hooks/useApi';
 import { useDashboardStore } from '@/store/dashboard-store';
@@ -64,6 +66,7 @@ export function StudentWeakTopics() {
   const [selectedTopic, setSelectedTopic] = useState<MasteryScore | null>(null);
   const [selectedSubject, setSelectedSubject] = useState<string>('ALL');
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const { data: profile, isPending } = useMyStudentProfile();
@@ -306,7 +309,65 @@ export function StudentWeakTopics() {
           )}
         </div>
 
+        {/* Diagnostic Guide & Evaluation Guarantee Callout */}
+        <div className="mb-6 bg-slate-50 border border-slate-200/80 rounded-2xl p-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center flex-shrink-0 border border-emerald-200/60 shadow-2xs">
+                <ShieldCheck className="w-4 h-4" />
+              </div>
+              <div>
+                <p className="text-[12.5px] font-bold text-slate-800">
+                  Teacher-Verified Diagnostic Mastery
+                </p>
+                <p className="text-[11.5px] text-slate-500">
+                  Scores are calculated exclusively from teacher-evaluated assessments. Unreviewed AI suggestions never affect your academic standing.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowGuide((prev) => !prev)}
+              className="text-[11.5px] font-bold text-slate-600 hover:text-slate-900 bg-white border border-slate-200 px-3 py-1.5 rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs self-start sm:self-auto flex-shrink-0"
+              aria-expanded={showGuide}
+            >
+              <Info className="w-3.5 h-3.5 text-slate-500" />
+              <span>{showGuide ? 'Hide Guide' : 'Mastery Guide'}</span>
+            </button>
+          </div>
 
+          {showGuide && (
+            <div className="mt-3.5 pt-3.5 border-t border-slate-200/70 grid grid-cols-1 sm:grid-cols-3 gap-3 animate-fadein">
+              <div className="bg-white rounded-xl p-3 border border-rose-100">
+                <div className="flex items-center gap-1.5 mb-1 text-rose-700 font-bold text-[11.5px]">
+                  <span className="w-2 h-2 rounded-full bg-rose-500" />
+                  <span>High Priority (&lt;40%)</span>
+                </div>
+                <p className="text-[11px] text-slate-600 leading-relaxed">
+                  Critical conceptual gaps requiring immediate revision and teacher guidance. Remedial practice coursework is recommended.
+                </p>
+              </div>
+              <div className="bg-white rounded-xl p-3 border border-amber-100">
+                <div className="flex items-center gap-1.5 mb-1 text-amber-700 font-bold text-[11.5px]">
+                  <span className="w-2 h-2 rounded-full bg-amber-500" />
+                  <span>Moderate (40% – 69%)</span>
+                </div>
+                <p className="text-[11px] text-slate-600 leading-relaxed">
+                  Foundational understanding present, but frequent mistakes in complex exam questions. Targeted problem sets suggested.
+                </p>
+              </div>
+              <div className="bg-white rounded-xl p-3 border border-emerald-100">
+                <div className="flex items-center gap-1.5 mb-1 text-emerald-700 font-bold text-[11.5px]">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  <span>Good Standing (&ge;70%)</span>
+                </div>
+                <p className="text-[11px] text-slate-600 leading-relaxed">
+                  Strong concept mastery demonstrated across past exams. Ready for higher-order reasoning problems.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Content Body */}
         {isPending ? (

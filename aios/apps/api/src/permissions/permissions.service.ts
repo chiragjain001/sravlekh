@@ -554,7 +554,7 @@ export class PermissionsService {
   async simulateAccess(instituteId: string, dto: SimulateAccessDto, actor: AuthenticatedUser) {
     this.assertAdminOrFounder(actor, instituteId);
 
-    let effectivePermissions = new Set<string>();
+    const effectivePermissions = new Set<string>();
     let targetUser: any = null;
 
     if (dto.userId) {

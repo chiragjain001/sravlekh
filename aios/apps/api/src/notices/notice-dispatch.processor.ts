@@ -1,37 +1,33 @@
 import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
-import { PrismaService } from '../prisma/prisma.service';
-import { DeliveryStatus, NoticeChannel } from '@prisma/client';
 import { NOTICE_DISPATCH_QUEUE, NoticeDispatchJobData } from './notice-dispatch.constants';
 import { reportDeadLetter } from '../shared/logging/dead-letter';
 import { QUEUE_POLICY, workerOptions } from '../infrastructure/queue/queue-policy';
+import { NoticeDispatchService } from './notice-dispatch.service';
 
 /**
- * Picks up a notice's QUEUED EMAIL/SMS/WHATSAPP deliveries. No real
- * email/SMS/WhatsApp provider is configured in this environment (see
- * 17-THIRD-PARTY-INTEGRATIONS.md) — rather than fake a SENT status, this marks
- * them FAILED with an honest reason so nothing downstream mistakes it for a
- * real delivery. IN_APP deliveries never reach this queue — they're marked
- * SENT synchronously in NoticesService since they need no external provider.
+ * Background consumer for the NOTICE_DISPATCH_QUEUE.
+ *
+ * Dispatches queued EMAIL, SMS, and WHATSAPP notice deliveries using official
+ * provider adapters (SendGrid, Meta WhatsApp Cloud API, and DLT SMS Gateway).
+ *
+ * If credentials are not configured in the active environment, deliveries are
+ * marked FAILED with `failureReason: 'provider_not_configured'` honestly without
+ * pretending deliveries succeeded or blocking other working channels.
  */
 @Processor(NOTICE_DISPATCH_QUEUE, workerOptions(QUEUE_POLICY.noticeDispatch))
 export class NoticeDispatchProcessor extends WorkerHost {
   private readonly logger = new Logger(NoticeDispatchProcessor.name);
 
-  constructor(private readonly prisma: PrismaService) {
+  constructor(private readonly dispatchService: NoticeDispatchService) {
     super();
   }
 
   async process(job: Job<NoticeDispatchJobData>): Promise<void> {
-    await this.prisma.noticeDelivery.updateMany({
-      where: {
-        noticeId: job.data.noticeId,
-        status: DeliveryStatus.QUEUED,
-        channel: { in: [NoticeChannel.EMAIL, NoticeChannel.SMS, NoticeChannel.WHATSAPP] },
-      },
-      data: { status: DeliveryStatus.FAILED, failureReason: 'provider_not_configured' },
-    });
+    const noticeId = job.data.noticeId;
+    this.logger.log(`Processing notice dispatch for noticeId: ${noticeId}`);
+    await this.dispatchService.dispatchNotice(noticeId);
   }
 
   @OnWorkerEvent('failed')

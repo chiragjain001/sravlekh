@@ -10,6 +10,8 @@ import { ConfigService } from '@nestjs/config';
 import { getQueueToken } from '@nestjs/bullmq';
 import axios from 'axios';
 import { PDF_SPLIT_QUEUE } from './documents.constants';
+import { IdentityResolutionService } from '../identity-resolution/identity-resolution.service';
+import { AuthenticatedUser } from '../auth/auth.types';
 
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
@@ -18,10 +20,10 @@ const mockedAxios = axios as jest.Mocked<typeof axios>;
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const PDF = Buffer.from('%PDF-1.7\n% test', 'latin1');
-import { AuthenticatedUser } from '../auth/auth.types';
 
 describe('DocumentsService', () => {
   let service: DocumentsService;
+  let identityResolutionService: { resolveFromQrAndOmr: jest.Mock };
   let docCreate: jest.Mock;
   let pageCreate: jest.Mock;
   let pageImageCreate: jest.Mock;
@@ -30,9 +32,9 @@ describe('DocumentsService', () => {
   let prisma: {
     assessmentDelivery: { findUnique: jest.Mock };
     documentBundle: { create: jest.Mock; findUnique: jest.Mock };
-    document: { findUnique: jest.Mock; update: jest.Mock; findMany: jest.Mock };
-    page: { findUnique: jest.Mock; count: jest.Mock; findMany: jest.Mock };
-    pageImage: { findUnique: jest.Mock };
+    document: { findUnique: jest.Mock; update: jest.Mock; findMany: jest.Mock; create?: jest.Mock };
+    page: { findUnique: jest.Mock; count: jest.Mock; findMany: jest.Mock; create?: jest.Mock };
+    pageImage: { findUnique: jest.Mock; create?: jest.Mock };
     pageRegion: { create: jest.Mock; update: jest.Mock; findUnique: jest.Mock; findMany: jest.Mock; delete: jest.Mock };
     processingJob: { findMany: jest.Mock; update: jest.Mock; updateMany: jest.Mock };
     question: { findUnique: jest.Mock };
@@ -41,6 +43,7 @@ describe('DocumentsService', () => {
     studentProfile: { findUnique: jest.Mock };
     paperItem: { findMany: jest.Mock };
     auditLog: { create: jest.Mock };
+    identityResolution: { findUnique: jest.Mock; upsert: jest.Mock; create: jest.Mock };
     $transaction: jest.Mock;
   };
   let storage: {
@@ -67,8 +70,8 @@ describe('DocumentsService', () => {
       assessmentDelivery: { findUnique: jest.fn() },
       documentBundle: { create: jest.fn(), findUnique: jest.fn() },
       document: { findUnique: jest.fn(), update: jest.fn().mockResolvedValue({ id: 'doc-1' }), findMany: jest.fn() },
-      page: { findUnique: jest.fn(), count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]) },
-      pageImage: { findUnique: jest.fn() },
+      page: { create: pageCreate, findUnique: jest.fn(), count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]) },
+      pageImage: { create: pageImageCreate, findUnique: jest.fn() },
       pageRegion: { create: jest.fn().mockResolvedValue({ id: 'region-new' }), update: jest.fn(), findUnique: jest.fn(), findMany: jest.fn().mockResolvedValue([]), delete: jest.fn().mockResolvedValue({}) },
       processingJob: { findMany: jest.fn(), update: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
       question: { findUnique: jest.fn() },
@@ -77,6 +80,7 @@ describe('DocumentsService', () => {
       studentProfile: { findUnique: jest.fn() },
       paperItem: { findMany: jest.fn().mockResolvedValue([]) },
       auditLog: { create: jest.fn().mockResolvedValue({}) },
+      identityResolution: { findUnique: jest.fn(), upsert: jest.fn(), create: identityResolutionCreate },
       $transaction: jest.fn((arg: any) => {
         if (typeof arg === 'function') {
           return arg({
@@ -115,9 +119,11 @@ describe('DocumentsService', () => {
         { provide: FeatureFlagsService, useValue: featureFlags },
         { provide: ConfigService, useValue: { get: (k: string) => (k === 'PYTHON_SERVICE_URL' ? 'http://py' : undefined) } },
         { provide: getQueueToken(PDF_SPLIT_QUEUE), useValue: pdfSplitQueue },
+        { provide: IdentityResolutionService, useValue: { resolveFromQrAndOmr: jest.fn().mockResolvedValue({}) } },
       ],
     }).compile();
     service = module.get(DocumentsService);
+    identityResolutionService = module.get(IdentityResolutionService);
   });
 
   describe('createBundle', () => {
@@ -351,6 +357,84 @@ describe('DocumentsService', () => {
       mockedAxios.post.mockRejectedValueOnce({ isAxiosError: true, message: 'socket hang up' });
       await expect(service.splitPdfDocument(job)).rejects.toBeDefined();
       expect(prisma.document.update).not.toHaveBeenCalledWith(expect.objectContaining({ data: { status: 'FAILED' } }));
+    });
+
+    it('provisions separate Document records and resolves identities for multiple booklets in a single scan', async () => {
+      renderReturns(4); // Render 4 pages
+      // Mock second call for segment-bulk-booklets returning 2 booklets
+      mockedAxios.post.mockResolvedValueOnce({
+        data: {
+          data: {
+            totalPdfPages: 4,
+            booklets: [
+              { bookletSerial: 'BKL-001', detectedRollNumber: '101', confidence: 0.98, pageIndices: [1, 2] },
+              { bookletSerial: 'BKL-002', detectedRollNumber: '102', confidence: 0.97, pageIndices: [3, 4] },
+            ],
+            quarantinedPages: [],
+          },
+        },
+      });
+
+      const docCreateSpy = jest.fn().mockResolvedValue({ id: 'doc-booklet-2' });
+      (prisma.document as any).create = docCreateSpy;
+      (identityResolutionService as any).resolveFromQrAndOmr = jest.fn().mockResolvedValue({ status: 'AUTO_RESOLVED' });
+
+      await service.splitPdfDocument(job);
+
+      // Verify second booklet was created as a separate Document in the bundle
+      expect(docCreateSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            bookletSerial: 'BKL-002',
+            expectedPageCount: 2,
+          }),
+        }),
+      );
+
+      // Verify resolveFromQrAndOmr was invoked for both booklets
+      expect(identityResolutionService.resolveFromQrAndOmr).toHaveBeenCalledTimes(2);
+      expect(identityResolutionService.resolveFromQrAndOmr).toHaveBeenCalledWith(
+        expect.objectContaining({
+          documentId: 'doc-1',
+          bookletSerial: 'BKL-001',
+          detectedRollNumber: '101',
+        }),
+      );
+      expect(identityResolutionService.resolveFromQrAndOmr).toHaveBeenCalledWith(
+        expect.objectContaining({
+          documentId: 'doc-booklet-2',
+          bookletSerial: 'BKL-002',
+          detectedRollNumber: '102',
+        }),
+      );
+    });
+
+    it('routes quarantined coverless pages to UNRESOLVED review queue with diagnostic logs', async () => {
+      renderReturns(3);
+      mockedAxios.post.mockResolvedValueOnce({
+        data: {
+          data: {
+            totalPdfPages: 3,
+            booklets: [],
+            quarantinedPages: [1, 2, 3],
+          },
+        },
+      });
+
+      (prisma.identityResolution as any).findUnique = jest.fn().mockResolvedValueOnce(null);
+      const upsertSpy = jest.fn().mockResolvedValue({ id: 'res-quarantine' });
+      (prisma.identityResolution as any).upsert = upsertSpy;
+
+      await service.splitPdfDocument(job);
+
+      expect(upsertSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { documentId: 'doc-1' },
+          create: expect.objectContaining({
+            status: 'UNRESOLVED',
+          }),
+        }),
+      );
     });
   });
 
@@ -703,6 +787,47 @@ describe('DocumentsService', () => {
           teacher,
         ),
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('findById — IDOR protection', () => {
+    const docWithTenant = {
+      id: 'doc-1',
+      attemptId: 'att-1',
+      documentBundle: {
+        assessmentDelivery: {
+          assessment: { instituteId: 'inst-1' },
+        },
+      },
+    };
+
+    it('allows teacher access to any document in the institute', async () => {
+      prisma.document.findUnique
+        .mockResolvedValueOnce(docWithTenant) // for getDocumentWithTenantCheck
+        .mockResolvedValueOnce({ id: 'doc-1', pages: [] }); // for findById return
+
+      const result = await service.findById('inst-1', 'doc-1', teacher);
+      expect(result).toBeDefined();
+    });
+
+    it('allows student access to their own document', async () => {
+      prisma.document.findUnique
+        .mockResolvedValueOnce(docWithTenant)
+        .mockResolvedValueOnce({ id: 'doc-1', pages: [] });
+      prisma.studentProfile.findUnique.mockResolvedValueOnce({ id: 'student-prof-1' });
+      prisma.attempt.findUnique.mockResolvedValueOnce({ id: 'att-1', studentProfileId: 'student-prof-1' });
+
+      const result = await service.findById('inst-1', 'doc-1', student);
+      expect(result).toBeDefined();
+    });
+
+    it('rejects student access to another student document (IDOR)', async () => {
+      prisma.document.findUnique.mockResolvedValueOnce(docWithTenant);
+      prisma.studentProfile.findUnique.mockResolvedValueOnce({ id: 'student-prof-1' });
+      // Document attempt belongs to a different student profile
+      prisma.attempt.findUnique.mockResolvedValueOnce({ id: 'att-1', studentProfileId: 'student-prof-2' });
+
+      await expect(service.findById('inst-1', 'doc-1', student)).rejects.toThrow(ForbiddenException);
     });
   });
 });

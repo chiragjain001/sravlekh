@@ -23,6 +23,7 @@ Fetch failures are normalized to AdapterInvalidRequestError WITHOUT the URL in t
 message: OCR image URLs are pre-signed storage URLs and the signature is a secret.
 """
 
+import time
 from google.genai import Client
 from google.genai.errors import APIError, ClientError, ServerError
 from google.genai.types import GenerateContentConfig, Part
@@ -36,7 +37,7 @@ from src.providers.errors import (
     AdapterRateLimitError,
 )
 from src.providers.rate_limit import pace
-from src.providers.types import ContentPart, GenerateRequest, GenerateResult, ImagePart, TextPart
+from src.providers.types import ContentPart, GenerateRequest, GenerateResult, ImagePart, TextPart, UsageMetadata
 
 # HTTP statuses the Gemini API uses for auth/rate-limit failures within the
 # ClientError (4xx) family — everything else in that family is treated as a
@@ -84,6 +85,7 @@ class GeminiAdapter(ModelProviderAdapter):
 
         contents = await self._to_contents(request.content)
         await pace(f"gemini:{request.model}", self._max_rpm)
+        start_time = time.perf_counter()
         try:
             response = await self._client.aio.models.generate_content(
                 model=request.model,
@@ -103,18 +105,33 @@ class GeminiAdapter(ModelProviderAdapter):
             # Server- (e.g. UnknownApiResponseError) — still normalized, still
             # carries the original exception as __cause__.
             raise AdapterProviderError(str(e)) from e
+        latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
         if not response.text:
             raise AdapterProviderError("Gemini returned no text in its response.")
 
-        # Gemini's equivalent of OpenAI's finish_reason == "length". Compared by
-        # NAME rather than by importing the FinishReason enum: the google-genai
-        # SDK has moved this symbol between modules across versions, and an
-        # ImportError here would break every generation call to protect against a
-        # truncation that mostly does not happen. Every access is defensive for
-        # the same reason — an unreadable finish reason means "assume complete",
-        # which is exactly today's behaviour.
+        # Extract structured usage metadata from Gemini response
+        usage_meta = getattr(response, "usage_metadata", None)
+        usage = None
+        if usage_meta is not None:
+            p_tokens = getattr(usage_meta, "prompt_token_count", None)
+            c_tokens = getattr(usage_meta, "candidates_token_count", None)
+            t_tokens = getattr(usage_meta, "total_token_count", None)
+            cached_tokens = getattr(usage_meta, "cached_content_token_count", None)
+            usage = UsageMetadata(
+                prompt_tokens=p_tokens,
+                completion_tokens=c_tokens,
+                total_tokens=t_tokens,
+                cached_tokens=cached_tokens,
+            )
+
+        # Gemini's equivalent of OpenAI's finish_reason == "length".
         candidates = getattr(response, "candidates", None) or []
         finish_reason = getattr(candidates[0], "finish_reason", None) if candidates else None
         truncated = getattr(finish_reason, "name", str(finish_reason)) == "MAX_TOKENS"
-        return GenerateResult(text=response.text, truncated=truncated)
+        return GenerateResult(
+            text=response.text,
+            truncated=truncated,
+            usage=usage,
+            latency_ms=latency_ms,
+        )

@@ -8,11 +8,22 @@
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
     "strictPropertyInitialization": false,
+    "declaration": false,
+    "declarationMap": false,
     "paths": {
-      "@aios/db": ["../../packages/db/src/index.ts"],
-      "@aios/config": ["../../packages/config/index.ts"]
+      "@aios/db": [
+        "../../packages/db/src/index.ts"
+      ],
+      "@aios/config": [
+        "../../packages/config/index.ts"
+      ]
     }
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "**/*.spec.ts"]
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
 }

@@ -16,6 +16,7 @@ import {
   ListBlueprintsDto,
   ManualReplaceItemDto,
   ClonePaperDto,
+  CreatePaperSetsDto,
 } from './dto/paper.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -94,6 +95,18 @@ export class PapersController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.papersService.clonePaper(instituteId, paperId, dto, user);
+  }
+
+  @Post('papers/:paperId/sets')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Add anti-cheating paper sets (Set A, Set B, Set C, etc.) to a draft paper' })
+  createPaperSets(
+    @Param('instituteId') instituteId: string,
+    @Param('paperId') paperId: string,
+    @Body() dto: CreatePaperSetsDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.papersService.createPaperSets(instituteId, paperId, dto.setLabels, user);
   }
 
   @Post('papers/:paperId/items/:itemId/regenerate')

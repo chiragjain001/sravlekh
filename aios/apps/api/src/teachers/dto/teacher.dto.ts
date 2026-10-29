@@ -6,6 +6,7 @@ import {
   IsArray,
   IsEnum,
   MaxLength,
+  ValidateNested,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
@@ -143,3 +144,50 @@ export class QueryTeachersDto {
   @Max(100)
   limit?: number = 20;
 }
+
+export class BulkTeacherRowDto {
+  @ApiProperty({ example: 'Dr. Priya Mehta' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  name!: string;
+
+  @ApiProperty({ example: 'priya.mehta@school.edu' })
+  @IsEmail()
+  email!: string;
+
+  @ApiPropertyOptional({ example: 'M.Sc Physics, B.Ed' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  qualification?: string;
+
+  @ApiPropertyOptional({ example: 'Physics' })
+  @IsOptional()
+  @IsString()
+  subjectName?: string;
+
+  @ApiPropertyOptional({ example: 'subj-101' })
+  @IsOptional()
+  @IsString()
+  subjectId?: string;
+
+  @ApiPropertyOptional({ example: 'Class 10 - Section A' })
+  @IsOptional()
+  @IsString()
+  batchName?: string;
+
+  @ApiPropertyOptional({ example: 'batch-101' })
+  @IsOptional()
+  @IsString()
+  batchId?: string;
+}
+
+export class BulkCommitTeachersDto {
+  @ApiProperty({ type: [BulkTeacherRowDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => BulkTeacherRowDto)
+  teachers!: BulkTeacherRowDto[];
+}
+

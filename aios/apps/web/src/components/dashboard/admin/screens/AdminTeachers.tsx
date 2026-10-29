@@ -7,6 +7,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import {
   Plus, Search, Download, Trash2,
   Users, BarChart2, List, Filter, X, ChevronLeft, ChevronRight, ChevronDown, SlidersHorizontal, RefreshCw,
+  FileSpreadsheet,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -16,6 +17,7 @@ import { TeachersTable } from '@/features/teachers/components/TeachersTable';
 import { TeacherProfileDrawer } from '@/features/teachers/components/TeacherProfileDrawer';
 import { CreateTeacherDialog } from '@/features/teachers/components/CreateTeacherDialog';
 import { DeleteTeacherDialog } from '@/features/teachers/components/DeleteTeacherDialog';
+import { BulkEnrollTeachersDialog } from '@/features/teachers/components/BulkEnrollTeachersDialog';
 import { TeachersAnalyticsPanel } from '@/features/teachers/components/TeachersAnalyticsPanel';
 import { AppleDropdown } from '@/components/ui/AppleDropdown';
 import { TablePagination } from '@/components/ui/TablePagination';
@@ -63,6 +65,7 @@ export function AdminTeachers() {
   const [viewId, setViewId] = useState<string | null>(null);
   const [editTarget, setEditTarget] = useState<TeacherListItem | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<TeacherListItem[] | null>(null);
 
   const { data: subjectsData } = useSubjects();
@@ -168,11 +171,11 @@ export function AdminTeachers() {
               <p className="text-xs sm:text-[13px] text-slate-500 mt-1 ml-10.5 sm:ml-11.5">Manage teachers, subjects, and batch assignments</p>
             </div>
 
-            <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 sm:gap-2.5 w-full sm:w-auto">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-2.5 w-full sm:w-auto">
               <button
                 type="button"
                 onClick={handleExport}
-                className="inline-flex items-center justify-center gap-2 h-9 sm:h-9.5 px-3.5 sm:px-4 text-xs sm:text-[13px] font-semibold text-slate-700 bg-white hover:bg-slate-50 active:bg-slate-100/80 border border-slate-200/90 rounded-xl shadow-2xs active:scale-[0.98] transition-all duration-150 cursor-pointer"
+                className="inline-flex items-center justify-center gap-1.5 sm:gap-2 h-9 sm:h-9.5 px-3 sm:px-4 text-xs sm:text-[13px] font-semibold text-slate-700 bg-white hover:bg-slate-50 active:bg-slate-100/80 border border-slate-200/90 rounded-xl shadow-2xs active:scale-[0.98] transition-all duration-150 cursor-pointer"
               >
                 <Download className="w-3.5 h-3.5 text-slate-500" />
                 <span>Export</span>
@@ -184,8 +187,17 @@ export function AdminTeachers() {
               </button>
               <button
                 type="button"
+                onClick={() => setBulkImportOpen(true)}
+                className="inline-flex items-center justify-center gap-1.5 h-9 sm:h-9.5 px-3 sm:px-4 text-xs sm:text-[13px] font-semibold text-emerald-700 bg-emerald-50/80 hover:bg-emerald-100/80 active:bg-emerald-200/60 border border-emerald-200/70 rounded-xl shadow-2xs active:scale-[0.98] transition-all duration-150 cursor-pointer"
+                title="Bulk onboard faculty via dynamic Excel template"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-600" />
+                <span className="whitespace-nowrap">Bulk Import</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => { setEditTarget(null); setCreateOpen(true); }}
-                className="inline-flex items-center justify-center gap-1.5 h-9 sm:h-9.5 px-4 sm:px-4.5 text-xs sm:text-[13px] font-semibold text-white bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 rounded-xl shadow-xs shadow-emerald-600/20 active:scale-[0.98] transition-all duration-150 cursor-pointer"
+                className="inline-flex items-center justify-center gap-1.5 h-9 sm:h-9.5 px-3.5 sm:px-4.5 text-xs sm:text-[13px] font-semibold text-white bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 rounded-xl shadow-xs shadow-emerald-600/20 active:scale-[0.98] transition-all duration-150 cursor-pointer"
               >
                 <Plus className="w-4 h-4 text-white" />
                 <span className="whitespace-nowrap">Add Teacher</span>
@@ -362,6 +374,8 @@ export function AdminTeachers() {
       />
 
       <CreateTeacherDialog isOpen={createOpen} onClose={() => { setCreateOpen(false); setEditTarget(null); }} editTarget={editTarget} onSubmit={editTarget ? handleEdit : handleCreate} />
+
+      <BulkEnrollTeachersDialog isOpen={bulkImportOpen} onClose={() => setBulkImportOpen(false)} />
 
       <DeleteTeacherDialog isOpen={!!deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={handleDeleteConfirm} teacherNames={deleteTarget?.map((t) => t.name) ?? []} loading={deleteLoading} />
     </div>

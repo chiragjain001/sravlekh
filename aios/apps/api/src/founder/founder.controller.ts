@@ -13,7 +13,18 @@ import {
   AssignTicketDto,
   AddTicketMessageDto,
 } from '../support-tickets/dto/support-ticket.dto';
-import { UpdateInstitutePlanDto, UpdateFeatureFlagDto, QueryInstitutesDto, UpdatePlanDefinitionDto, UpdatePlatformSettingsDto } from './dto/founder.dto';
+import {
+  UpdateInstitutePlanDto,
+  UpdateFeatureFlagDto,
+  QueryInstitutesDto,
+  UpdatePlanDefinitionDto,
+  UpdatePlatformSettingsDto,
+  UpdateInstituteModulesDto,
+  CreateInvoiceDto,
+  RecordPaymentDto,
+  RetryQueueJobsDto,
+  FlushCacheDto,
+} from './dto/founder.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { AuthenticatedUser } from '../auth/auth.types';
@@ -76,6 +87,97 @@ export class FounderController {
   reactivateInstitute(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.founderService.reactivateInstitute(id, user);
   }
+
+  // ── Modular Packaging & Presets ─────────────────────────────────────────
+
+  @Get('institutes/:id/modules')
+  @ApiOperation({ summary: 'Get active modules and preset for an institute' })
+  getInstituteModules(@Param('id') id: string) {
+    return this.founderService.getInstituteModules(id);
+  }
+
+  @Patch('institutes/:id/modules')
+  @ApiOperation({ summary: 'Update active modules or package preset for an institute' })
+  updateInstituteModules(
+    @Param('id') id: string,
+    @Body() dto: UpdateInstituteModulesDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.founderService.updateInstituteModules(id, dto, user);
+  }
+
+  // ── Finance, Invoicing & Accountant ─────────────────────────────────────
+
+  @Get('finance/overview')
+  @ApiOperation({ summary: 'Platform financial overview: ARR, collections, receivables, AI unit economics' })
+  getFinanceOverview() {
+    return this.founderService.getFinanceOverview();
+  }
+
+  @Get('finance/invoices')
+  @ApiOperation({ summary: 'List platform invoices with status/search filtering' })
+  listInvoices(@Query('search') search?: string, @Query('status') status?: string) {
+    return this.founderService.listInvoices({ search, status });
+  }
+
+  @Post('finance/invoices')
+  @ApiOperation({ summary: 'Create a new invoice for an institute' })
+  createInvoice(@Body() dto: CreateInvoiceDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.founderService.createInvoice(dto, user);
+  }
+
+  @Patch('finance/invoices/:id/payment')
+  @ApiOperation({ summary: 'Record payment received for an invoice' })
+  recordPayment(
+    @Param('id') id: string,
+    @Body() dto: RecordPaymentDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.founderService.recordPayment(id, dto, user);
+  }
+
+  // ── Ops & Mission Control ───────────────────────────────────────────────
+
+  @Post('ops/retry-queues')
+  @ApiOperation({ summary: 'Retry failed jobs in background queues (BullMQ dead-letter retry)' })
+  retryQueueJobs(@Body() dto: RetryQueueJobsDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.founderService.retryQueueJobs(dto, user);
+  }
+
+  @Post('ops/clean-queues')
+  @ApiOperation({ summary: 'Clean failed dead-letter jobs' })
+  cleanQueueJobs(@Body() dto: RetryQueueJobsDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.founderService.cleanQueueJobs(dto, user);
+  }
+
+  @Post('ops/flush-cache')
+  @ApiOperation({ summary: 'Flush Redis cache for an institute or globally' })
+  flushCache(@Body() dto: FlushCacheDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.founderService.flushCache(dto, user);
+  }
+
+  @Get('ops/backups')
+  @ApiOperation({ summary: 'Get latest verified backup snapshot status' })
+  getBackupStatus() {
+    return this.founderService.getBackupStatus();
+  }
+
+  @Post('ops/backups/trigger')
+  @ApiOperation({ summary: 'Trigger an immediate verified database backup snapshot' })
+  triggerBackup(@CurrentUser() user: AuthenticatedUser) {
+    return this.founderService.triggerBackup(user);
+  }
+
+  @Post('ops/impersonate/:instituteId')
+  @ApiOperation({ summary: 'Impersonate an institute admin for live support (30m scoped token)' })
+  impersonate(
+    @Param('instituteId') instituteId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.founderService.impersonateInstituteAdmin(instituteId, user);
+  }
+
+  // ── Existing Endpoints ──────────────────────────────────────────────────
 
   @Get('plans')
   @ApiOperation({ summary: 'List plan definitions (limits, defaults) for all 4 plan tiers' })

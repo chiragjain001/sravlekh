@@ -38,15 +38,44 @@ def test_no_key_raises_naming_both():
         active_provider(settings(OPENAI_API_KEY="", GEMINI_API_KEY=""))
 
 
+def test_deterministic_gemini_fails_fast_without_gemini_key():
+    with pytest.raises(ValueError, match="AI_PROVIDER is set to 'gemini'.*GEMINI_API_KEY is not configured"):
+        active_provider(settings(AI_PROVIDER="gemini", GEMINI_API_KEY="", OPENAI_API_KEY="sk"))
+
+
+def test_deterministic_openai_fails_fast_without_openai_key():
+    with pytest.raises(ValueError, match="AI_PROVIDER is set to 'openai'.*OPENAI_API_KEY is not configured"):
+        active_provider(settings(AI_PROVIDER="openai", OPENAI_API_KEY="", GEMINI_API_KEY="g"))
+
+
+def test_unsupported_ai_provider_raises():
+    with pytest.raises(ValueError, match="Unsupported AI_PROVIDER: 'anthropic'"):
+        active_provider(settings(AI_PROVIDER="anthropic", OPENAI_API_KEY="sk", GEMINI_API_KEY="g"))
+
+
+def test_incompatible_model_and_provider_rejected():
+    with pytest.raises(ValueError, match="belongs to OpenAI, but active provider is Google Gemini"):
+        active_provider(settings(AI_PROVIDER="gemini", GEMINI_API_KEY="g", AI_EVALUATION_MODEL="gpt-4o"))
+
+    with pytest.raises(ValueError, match="belongs to Google Gemini, but active provider is OpenAI"):
+        active_provider(settings(AI_PROVIDER="openai", OPENAI_API_KEY="sk", AI_EVALUATION_MODEL="gemini-1.5-flash"))
+
+
+def test_purpose_specific_model_resolution():
+    s = settings(AI_PROVIDER="gemini", GEMINI_API_KEY="g", AI_OCR_MODEL="gemini-1.5-flash", AI_EVALUATION_MODEL="gemini-1.5-pro")
+    prov_ocr = active_provider(s, purpose="ocr")
+    assert prov_ocr.model_name == "gemini-1.5-flash"
+
+    prov_eval = active_provider(s, purpose="evaluation")
+    assert prov_eval.model_name == "gemini-1.5-pro"
+
+
 def test_each_provider_gets_its_own_adapter():
     assert isinstance(adapter_for(settings(OPENAI_API_KEY="sk"), OPENAI), OpenAIAdapter)
     assert isinstance(adapter_for(settings(GEMINI_API_KEY="g"), GEMINI), GeminiAdapter)
 
 
 def test_a_registry_resolved_label_is_used_as_given():
-    """The label comes from the ACTIVE provider's own registry rows, so the
-    factory must not substitute a model of its own — that is what used to make
-    an AIRecommendation claim gpt-4o while Gemini did the work."""
     adapter, model = select_adapter(settings(OPENAI_API_KEY="", GEMINI_API_KEY="g"), "gemini-3.6-flash")
     assert isinstance(adapter, GeminiAdapter) and model == "gemini-3.6-flash"
 

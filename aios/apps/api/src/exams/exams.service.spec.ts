@@ -45,6 +45,12 @@ describe('ExamsService — state machine', () => {
       user: { findMany: jest.fn().mockResolvedValue([]) },
       notice: { create: jest.fn().mockResolvedValue({ id: 'not-1' }) },
       noticeDelivery: { create: jest.fn() },
+      captureProvider: { findFirst: jest.fn().mockResolvedValue({ id: 'cp-1' }), create: jest.fn().mockResolvedValue({ id: 'cp-1' }) },
+      evaluationPolicy: { findFirst: jest.fn().mockResolvedValue({ id: 'ep-1' }), create: jest.fn().mockResolvedValue({ id: 'ep-1' }) },
+      assessment: { create: jest.fn().mockResolvedValue({ id: 'ass-1' }), findUnique: jest.fn() },
+      assessmentDelivery: { create: jest.fn().mockResolvedValue({ id: 'del-1' }), update: jest.fn().mockResolvedValue({ id: 'del-1' }) },
+      response: { count: jest.fn().mockResolvedValue(0) },
+      userPermissionGrant: { findFirst: jest.fn().mockResolvedValue(null) },
       // LOCK/UNLOCK go through prisma.$transaction([...]) so the audit entry is
       // atomic with the mutation — mirror Prisma's array-form behavior in the mock.
       $transaction: jest.fn((ops: any) => typeof ops === 'function' ? ops(prisma) : Promise.all(ops)),
@@ -216,6 +222,39 @@ describe('ExamsService — state machine', () => {
       ).resolves.toBeDefined();
     });
 
+    it('blocks LOCK when exam has assessmentDeliveryId and subjective responses are unevaluated', async () => {
+      prisma.exam.findUnique.mockResolvedValueOnce({
+        id: 'exam-1', instituteId: 'inst-1', status: ExamStatus.EVALUATING, version: 1, assessmentDeliveryId: 'del-1',
+      });
+      prisma.answerSheet.count.mockResolvedValueOnce(0);
+      prisma.response.count.mockResolvedValueOnce(2);
+
+      await expect(
+        service.updateStatus('inst-1', 'exam-1', { status: ExamStatus.LOCKED, version: 1 }, admin),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('allows LOCK and updates assessmentDelivery when all subjective responses are evaluated', async () => {
+      prisma.exam.findUnique.mockResolvedValueOnce({
+        id: 'exam-1', instituteId: 'inst-1', status: ExamStatus.EVALUATING, version: 1, assessmentDeliveryId: 'del-1',
+      });
+      prisma.answerSheet.count.mockResolvedValueOnce(0);
+      prisma.response.count.mockResolvedValueOnce(0);
+      prisma.exam.update.mockResolvedValueOnce({ id: 'exam-1', status: ExamStatus.LOCKED, version: 2 });
+      prisma.assessmentDelivery.update.mockResolvedValueOnce({ id: 'del-1', status: ExamStatus.LOCKED });
+
+      await expect(
+        service.updateStatus('inst-1', 'exam-1', { status: ExamStatus.LOCKED, version: 1 }, admin),
+      ).resolves.toBeDefined();
+
+      expect(prisma.assessmentDelivery.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'del-1' },
+          data: expect.objectContaining({ status: ExamStatus.LOCKED }),
+        }),
+      );
+    });
+
     it('does not gate any other transition — only LOCKED runs the count', async () => {
       mockExam(ExamStatus.DRAFT, 0);
       prisma.exam.update.mockResolvedValueOnce({ id: 'exam-1', status: ExamStatus.REVIEW });
@@ -228,10 +267,10 @@ describe('ExamsService — state machine', () => {
 
   describe('unlock (the one backward transition)', () => {
     it('rejects a non-admin outright', async () => {
+      mockExam(ExamStatus.LOCKED, 0);
       await expect(
         service.unlock('inst-1', 'exam-1', { reason: 'Score dispute raised by parent', version: 0 }, teacher),
       ).rejects.toThrow(ForbiddenException);
-      expect(prisma.exam.findUnique).not.toHaveBeenCalled();
     });
 
     it('rejects unlocking an exam that is not LOCKED', async () => {

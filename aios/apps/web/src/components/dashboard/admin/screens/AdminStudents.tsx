@@ -7,6 +7,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import {
   Plus, Search, Download, Trash2,
   Users, BarChart2, List, Filter, X, ChevronLeft, ChevronRight, ChevronDown, SlidersHorizontal, RefreshCw,
+  FileSpreadsheet,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -16,6 +17,7 @@ import { StudentsTable } from '@/features/students/components/StudentsTable';
 import { StudentProfileDrawer } from '@/features/students/components/StudentProfileDrawer';
 import { CreateStudentDialog } from '@/features/students/components/CreateStudentDialog';
 import { DeleteStudentDialog } from '@/features/students/components/DeleteStudentDialog';
+import { BulkEnrollStudentsDialog } from '@/features/students/components/BulkEnrollStudentsDialog';
 import { StudentsAnalyticsPanel } from '@/features/students/components/StudentsAnalyticsPanel';
 import { STUDENT_TAG_VALUES } from '@/features/students/types/student.types';
 import { AdminStudent360 } from '@/components/dashboard/admin/screens/AdminStudent360';
@@ -67,6 +69,7 @@ export function AdminStudents() {
   const [view360Id, setView360Id] = useState<string | null>(null);
   const [editTarget, setEditTarget] = useState<StudentListItem | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<StudentListItem[] | null>(null);
 
   const { data: batchesResp } = useBatches();
@@ -196,7 +199,7 @@ export function AdminStudents() {
               <p className="text-[11px] sm:text-[13px] text-slate-500 mt-0.5 ml-9 sm:ml-11.5">Manage enrollment, batches, and roster data</p>
             </div>
 
-            <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 sm:gap-2.5 w-full sm:w-auto">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-2.5 w-full sm:w-auto">
               <button
                 type="button"
                 onClick={handleExport}
@@ -209,6 +212,15 @@ export function AdminStudents() {
                     {selected.size}
                   </span>
                 )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setBulkImportOpen(true)}
+                className="inline-flex items-center justify-center gap-1.5 h-9 sm:h-9.5 px-3 sm:px-4 text-xs sm:text-[13px] font-semibold text-indigo-700 bg-indigo-50/80 hover:bg-indigo-100/80 active:bg-indigo-200/60 border border-indigo-200/70 rounded-xl shadow-2xs active:scale-[0.98] transition-all duration-150 cursor-pointer"
+                title="Bulk enroll students via dynamic Excel template"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-600" />
+                <span className="whitespace-nowrap">Bulk Import</span>
               </button>
               <button
                 type="button"
@@ -426,6 +438,13 @@ export function AdminStudents() {
         studentNames={deleteTarget?.map((s) => s.name) ?? []}
         loading={deleteLoading}
       />
+
+      {bulkImportOpen && (
+        <BulkEnrollStudentsDialog
+          isOpen={bulkImportOpen}
+          onClose={() => setBulkImportOpen(false)}
+        />
+      )}
 
     </div>
   );

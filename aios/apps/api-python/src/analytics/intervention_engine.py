@@ -21,7 +21,11 @@ have a real TOCTOU race under concurrent recalculation.
 import logging
 from datetime import UTC, datetime, timedelta
 
-from src.analytics.intervention_config import get_mastery_threshold, get_max_weak_topics
+from src.analytics.intervention_config import (
+    get_mastery_threshold,
+    get_max_weak_topics,
+    get_min_samples_for_intervention,
+)
 from src.database import db
 
 logger = logging.getLogger(__name__)
@@ -39,8 +43,16 @@ async def evaluate_interventions(
     changed, not one topic considered in isolation."""
     threshold = get_mastery_threshold()
     max_weak_topics = get_max_weak_topics()
+    min_samples = get_min_samples_for_intervention()
 
-    weak = [r for r in results if r[2] < threshold]
+    # Filter weak topics below threshold with sufficient evidence sample count
+    weak = []
+    for r in results:
+        m_val = r[2]
+        s_cnt = r[3] if len(r) > 3 else min_samples
+        if m_val < threshold and s_cnt >= min_samples:
+            weak.append(r)
+
     if not weak:
         return
 
@@ -144,11 +156,26 @@ async def _generate_one_intervention(
             f"Auto-generated: mastery in this topic dropped to {mastery_pct}%. "
             f"Suggested practice from the existing question bank:\n{question_lines}"
         )
+        notice_title = f"Weak topic alert: {topic_name}"
+        notice_body = (
+            f"A student's mastery in \"{topic_name}\" dropped to {mastery_pct}%. "
+            f"A practice assignment has been auto-created — review it and decide "
+            f"whether an extra class or other follow-up is needed."
+        )
+        needs_questions = False
     else:
         description = (
             f"Auto-generated: mastery in this topic dropped to {mastery_pct}%. "
-            "No approved question-bank questions are available for this topic yet."
+            "No approved question-bank questions are available for this topic yet. "
+            "[ACTION REQUIRED: Teacher review and question attachment needed]"
         )
+        notice_title = f"Weak topic alert (Questions needed): {topic_name}"
+        notice_body = (
+            f"A student's mastery in \"{topic_name}\" dropped to {mastery_pct}%. "
+            f"A practice assignment was initiated, but NO approved questions currently exist "
+            f"in the question bank for this topic. Please attach questions or schedule an extra class."
+        )
+        needs_questions = True
 
     assignment = await db.assignment.create(
         data={
@@ -162,13 +189,19 @@ async def _generate_one_intervention(
         }
     )
 
+    intervention_desc = (
+        f"Auto-generated assignment ({assignment.id}) after mastery dropped to {mastery_pct}%."
+        if not needs_questions
+        else f"Auto-generated assignment ({assignment.id}) after mastery dropped to {mastery_pct}%. Fallback status: Question bank had no approved questions; teacher question selection or extra class required."
+    )
+
     await db.intervention.create(
         data={
             "instituteId": institute_id,
             "studentProfileId": student_profile_id,
             "topicId": topic_id,
             "type": "ASSIGNMENT",
-            "description": f"Auto-generated assignment ({assignment.id}) after mastery dropped to {mastery_pct}%.",
+            "description": intervention_desc,
             "beforeMastery": mastery_value,
             "createdByUserId": teacher_user_id,
         }
@@ -180,23 +213,23 @@ async def _generate_one_intervention(
     # NoticesService's own precedent). targetAudience carries a distinct
     # 'type' marker (Notice has no dedicated type column) so these can be
     # identified/queried later without confusing them with broadcast notices.
+    target_audience: dict[str, object] = {
+        "type": "MASTERY_INTERVENTION",
+        "userIds": [teacher_user_id],
+        "studentProfileId": student_profile_id,
+        "topicId": topic_id,
+        "assignmentId": assignment.id,
+    }
+    if needs_questions:
+        target_audience["status"] = "NEEDS_QUESTIONS"
+
     notice = await db.notice.create(
         data={
             "instituteId": institute_id,
             "createdByUserId": teacher_user_id,
-            "title": f"Weak topic alert: {topic_name}",
-            "body": (
-                f"A student's mastery in \"{topic_name}\" dropped to {mastery_pct}%. "
-                f"A practice assignment has been auto-created — review it and decide "
-                f"whether an extra class or other follow-up is needed."
-            ),
-            "targetAudience": {
-                "type": "MASTERY_INTERVENTION",
-                "userIds": [teacher_user_id],
-                "studentProfileId": student_profile_id,
-                "topicId": topic_id,
-                "assignmentId": assignment.id,
-            },
+            "title": notice_title,
+            "body": notice_body,
+            "targetAudience": target_audience,
             "channels": ["IN_APP"],
             "sentAt": datetime.now(UTC),
         }

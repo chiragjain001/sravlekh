@@ -127,6 +127,8 @@ export function TopHeader({
             queryClient.invalidateQueries({ queryKey: ['batches'] }),
           ]);
         }
+      } else if (pathname.includes('/founder')) {
+        await queryClient.invalidateQueries({ queryKey: ['founder'] });
       } else {
         await queryClient.invalidateQueries();
       }

@@ -2080,6 +2080,120 @@ export function useExamResults(examId: string | null) {
   });
 }
 
+// ── Copy-Checker Evaluator Assignments ─────────────────────────────────────
+
+export function useCopyCheckerAssignments(deliveryId: string | null | undefined) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['copy-checkers', user?.instituteId, deliveryId],
+    queryFn: async () => {
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/deliveries/${deliveryId}/copy-checkers`);
+      return res.data;
+    },
+    enabled: !!user?.instituteId && !!deliveryId,
+  });
+}
+
+export function useAssignCopyChecker(deliveryId: string | null | undefined) {
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async (data: {
+      teacherProfileId: string;
+      scope?: 'BATCH' | 'STUDENT_LIST' | 'QUESTION_WISE';
+      isLeadEvaluator?: boolean;
+      studentProfileIds?: string[];
+      questionIds?: string[];
+    }) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/deliveries/${deliveryId}/copy-checkers`, data);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['copy-checkers', user?.instituteId, deliveryId] });
+      toast.success('Evaluator assignment updated.');
+    },
+    onError: (err: any) => {
+      toast.error(err?.response?.data?.message || 'Failed to update evaluator assignment.');
+    },
+  });
+}
+
+export function useRemoveCopyChecker(deliveryId: string | null | undefined) {
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async (teacherProfileId: string) => {
+      const res = await apiClient.delete(`/institutes/${user?.instituteId}/deliveries/${deliveryId}/copy-checkers/${teacherProfileId}`);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['copy-checkers', user?.instituteId, deliveryId] });
+      toast.success('Evaluator removed.');
+    },
+    onError: (err: any) => {
+      toast.error(err?.response?.data?.message || 'Failed to remove evaluator.');
+    },
+  });
+}
+
+// ── Physical Booklet Print Runs ────────────────────────────────────────────
+
+export function useBookletPrintRuns(deliveryId: string | null | undefined) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['booklet-print-runs', user?.instituteId, deliveryId],
+    queryFn: async () => {
+      const res = await apiClient.get(`/institutes/${user?.instituteId}/deliveries/${deliveryId}/print-runs`);
+      return res.data;
+    },
+    enabled: !!user?.instituteId && !!deliveryId,
+  });
+}
+
+export function useCreateBookletPrintRun(deliveryId: string | null | undefined) {
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async (data: { count: number; maxRollDigits?: number }) => {
+      const res = await apiClient.post(`/institutes/${user?.instituteId}/deliveries/${deliveryId}/print-runs`, data);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['booklet-print-runs', user?.instituteId, deliveryId] });
+      toast.success('Booklet print run created successfully.');
+    },
+    onError: (err: any) => {
+      toast.error(err?.response?.data?.message || 'Failed to create booklet print run.');
+    },
+  });
+}
+
+export async function downloadBookletPrintRunPdf(
+  instituteId: string,
+  deliveryId: string,
+  printRunId: string,
+  filename?: string,
+) {
+  try {
+    const res = await apiClient.get(
+      `/institutes/${instituteId}/deliveries/${deliveryId}/print-runs/${printRunId}/pdf`,
+      { responseType: 'blob' },
+    );
+    const blob = new Blob([res.data], { type: 'application/pdf' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename || `booklet-covers-${printRunId}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+    toast.success('Booklet covers PDF downloaded.');
+  } catch (err: any) {
+    toast.error(err?.response?.data?.message || 'Failed to download booklet covers PDF.');
+  }
+}
+
 // ── Curriculum (Subjects → Chapters → Topics) ──────────────────────────────
 
 export function useSubjects() {
@@ -2362,16 +2476,22 @@ export function useUpdateInstitute() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (data: { name?: string; address?: string; phone?: string; domainAllowlist?: string[] }) => {
-      const res = await apiClient.patch(`/institutes/${user?.instituteId}`, data);
+    mutationFn: async (data: { id?: string; name?: string; address?: string; phone?: string; domainAllowlist?: string[] }) => {
+      const instituteId = data.id || user?.instituteId;
+      if (!instituteId) throw new Error('Institute ID is required');
+      const { id, ...payload } = data;
+      const res = await apiClient.patch(`/institutes/${instituteId}`, payload);
       return res.data;
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       toast.success('Institute profile updated');
-      queryClient.invalidateQueries({ queryKey: ['institute', user?.instituteId] });
+      const instituteId = variables?.id || user?.instituteId;
+      queryClient.invalidateQueries({ queryKey: ['institute', instituteId] });
+      queryClient.invalidateQueries({ queryKey: ['founder', 'institutes'] });
+      queryClient.invalidateQueries({ queryKey: ['founder', 'institutes', instituteId, 'detail'] });
     },
     onError: (error) => {
-      const msg = axios.isAxiosError(error) ? error.response?.data?.message : 'Failed to update institute profile';
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to update institute profile';
       toast.error(msg);
     },
   });
@@ -3464,6 +3584,54 @@ export function useUpdateInstitutePlan() {
   });
 }
 
+export function useFounderUpdateInstitute() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      name,
+      address,
+      phone,
+      domainAllowlist,
+      plan,
+      currentPlan,
+    }: {
+      id: string;
+      name?: string;
+      address?: string;
+      phone?: string;
+      domainAllowlist?: string[];
+      plan?: string;
+      currentPlan?: string;
+    }) => {
+      const payload: { name?: string; address?: string; phone?: string; domainAllowlist?: string[] } = {};
+      if (name !== undefined) payload.name = name;
+      if (address !== undefined) payload.address = address;
+      if (phone !== undefined) payload.phone = phone;
+      if (domainAllowlist !== undefined) payload.domainAllowlist = domainAllowlist;
+
+      const res = await apiClient.patch(`/institutes/${id}`, payload);
+
+      if (plan && currentPlan && plan !== currentPlan) {
+        await apiClient.patch(`/founder/institutes/${id}/plan`, { plan });
+      }
+
+      return res.data;
+    },
+    onSuccess: (_data, variables) => {
+      toast.success('Institute updated successfully');
+      queryClient.invalidateQueries({ queryKey: ['founder', 'institutes'] });
+      queryClient.invalidateQueries({ queryKey: ['founder', 'institutes', variables.id] });
+      queryClient.invalidateQueries({ queryKey: ['founder', 'institutes', variables.id, 'detail'] });
+      queryClient.invalidateQueries({ queryKey: ['institute', variables.id] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to update institute';
+      toast.error(msg);
+    },
+  });
+}
+
 export function useArchiveInstitute() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -3678,6 +3846,182 @@ export function useFounderInstituteDetail(instituteId: string | null) {
     throwOnError: false,
   });
 }
+
+// ── Founder Modular Packaging, Finance & Ops Hooks ─────────────────────────
+
+export function useFounderModules(instituteId: string | null) {
+  return useQuery({
+    queryKey: ['founder', 'institutes', instituteId, 'modules'],
+    queryFn: async () => {
+      const res = await apiClient.get(`/founder/institutes/${instituteId}/modules`);
+      return res.data;
+    },
+    enabled: !!instituteId,
+    throwOnError: false,
+  });
+}
+
+export function useUpdateFounderModules() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ instituteId, preset, modules }: { instituteId: string; preset?: string; modules: Record<string, boolean> }) => {
+      const res = await apiClient.patch(`/founder/institutes/${instituteId}/modules`, { preset, modules });
+      return res.data;
+    },
+    onSuccess: (_data, variables) => {
+      toast.success('Module packaging updated successfully');
+      queryClient.invalidateQueries({ queryKey: ['founder', 'institutes', variables.instituteId, 'modules'] });
+      queryClient.invalidateQueries({ queryKey: ['founder', 'institutes'] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to update modules';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useFounderFinanceOverview() {
+  return useQuery({
+    queryKey: ['founder', 'finance', 'overview'],
+    queryFn: async () => {
+      const res = await apiClient.get('/founder/finance/overview');
+      return res.data;
+    },
+    throwOnError: false,
+  });
+}
+
+export function useFounderInvoices(params?: { search?: string; status?: string }) {
+  return useQuery({
+    queryKey: ['founder', 'finance', 'invoices', params],
+    queryFn: async () => {
+      const res = await apiClient.get('/founder/finance/invoices', { params });
+      return res.data;
+    },
+    throwOnError: false,
+  });
+}
+
+export function useCreateFounderInvoice() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (dto: { instituteId: string; amount: number; billingCycle?: string; dueDate?: string; notes?: string; packagePreset?: string }) => {
+      const res = await apiClient.post('/founder/finance/invoices', dto);
+      return res.data;
+    },
+    onSuccess: () => {
+      toast.success('Invoice generated successfully');
+      queryClient.invalidateQueries({ queryKey: ['founder', 'finance'] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to create invoice';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useRecordFounderPayment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ invoiceId, dto }: { invoiceId: string; dto: { paymentMethod: string; transactionRef?: string; paidAt?: string; notes?: string } }) => {
+      const res = await apiClient.patch(`/founder/finance/invoices/${invoiceId}/payment`, dto);
+      return res.data;
+    },
+    onSuccess: () => {
+      toast.success('Payment recorded successfully');
+      queryClient.invalidateQueries({ queryKey: ['founder', 'finance'] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to record payment';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useFounderOpsBackups() {
+  return useQuery({
+    queryKey: ['founder', 'ops', 'backups'],
+    queryFn: async () => {
+      const res = await apiClient.get('/founder/ops/backups');
+      return res.data;
+    },
+    throwOnError: false,
+  });
+}
+
+export function useTriggerFounderBackup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const res = await apiClient.post('/founder/ops/backups/trigger');
+      return res.data;
+    },
+    onSuccess: (data) => {
+      toast.success(data?.message ?? 'Verified backup triggered');
+      queryClient.invalidateQueries({ queryKey: ['founder', 'ops', 'backups'] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to trigger backup';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useRetryFounderQueues() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (queueName?: string) => {
+      const res = await apiClient.post('/founder/ops/retry-queues', { queueName });
+      return res.data;
+    },
+    onSuccess: (data) => {
+      toast.success(data?.message ?? 'Failed jobs requeued');
+      queryClient.invalidateQueries({ queryKey: ['founder', 'health'] });
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to retry queues';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useFlushFounderCache() {
+  return useMutation({
+    mutationFn: async (dto: { instituteId?: string; global?: boolean }) => {
+      const res = await apiClient.post('/founder/ops/flush-cache', dto);
+      return res.data;
+    },
+    onSuccess: (data) => {
+      toast.success(data?.message ?? 'Cache flushed');
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to flush cache';
+      toast.error(msg);
+    },
+  });
+}
+
+export function useFounderImpersonate() {
+  return useMutation({
+    mutationFn: async (instituteId: string) => {
+      const res = await apiClient.post(`/founder/ops/impersonate/${instituteId}`);
+      return res.data;
+    },
+    onSuccess: (data) => {
+      toast.success(`Logged in as Admin for ${data?.user?.instituteName ?? 'Institute'}`);
+      if (data?.accessToken) {
+        // Open Admin in a new tab or switch token
+        const url = `${window.location.origin}/dashboard/admin?impersonateToken=${encodeURIComponent(data.accessToken)}`;
+        window.open(url, '_blank');
+      }
+    },
+    onError: (error) => {
+      const msg = axios.isAxiosError(error) ? error.response?.data?.error?.message ?? error.response?.data?.message : 'Failed to impersonate admin';
+      toast.error(msg);
+    },
+  });
+}
+
 
 // ── Leaderboards (Rank Board & Growth Board) ─────────────────────────────
 

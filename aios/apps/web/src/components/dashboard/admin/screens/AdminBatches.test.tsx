@@ -37,6 +37,10 @@ vi.mock('@/features/batches/hooks/useBatches', () => ({
   useUpdateBatch: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteBatch: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useBulkDeleteBatches: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useDownloadBulkBatchTemplate: () => ({ mutate: vi.fn(), isPending: false }),
+  useValidateBulkBatches: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useCommitBulkBatches: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useDownloadBulkBatchErrorReport: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 vi.mock('@/hooks/useApi', () => ({
@@ -50,10 +54,12 @@ describe('AdminBatches screen UI enhancements', () => {
     // Header title
     expect(screen.getByText(/Batches & Cohorts/i)).toBeInTheDocument();
 
-    // Export button and Create Batch button
+    // Export button, Bulk Import button, and Create Batch button
     const exportBtn = screen.getByRole('button', { name: /export/i });
+    const bulkImportBtn = screen.getByRole('button', { name: /bulk import/i });
     const createBtn = screen.getByRole('button', { name: /create batch/i });
     expect(exportBtn).toBeInTheDocument();
+    expect(bulkImportBtn).toBeInTheDocument();
     expect(createBtn).toBeInTheDocument();
 
     // Segmented tab list with role="tablist"

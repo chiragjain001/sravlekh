@@ -14,13 +14,14 @@ import { AiEvaluationService } from '../ai-evaluation/ai-evaluation.service';
 import { PermissionsService } from '../permissions/permissions.service';
 import { ReportsService } from '../reports/reports.service';
 import { AnalyticsService } from '../analytics/analytics.service';
-import { AuditAction, UserRole, EvaluationSource, EvaluationStatus, RubricScoringMode, Prisma } from '@prisma/client';
+import { AuditAction, UserRole, EvaluationSource, EvaluationStatus, RubricScoringMode, Prisma, AssignmentScope } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { DecideEvaluationDto, EvaluationDecision, OverrideEvaluationDto, QueryEvaluationWorkItemsDto } from './dto/evaluation.dto';
 import { SCORE_AGGREGATION_QUEUE, ScoreAggregationJobData } from './score-aggregation.constants';
 import { NEEDS_HUMAN_EVALUATION_FILTER, needsHumanEvaluation, SUBJECTIVE_QUESTION_TYPES } from './evaluation-status.util';
 import { enqueueDeduped, jobKey } from '../infrastructure/queue/enqueue';
 import { QUEUE_POLICY } from '../infrastructure/queue/queue-policy';
+import { CopyCheckerAssignmentsService } from './copy-checker-assignments.service';
 
 const REPROCESS_IDEMPOTENCY_TTL_SECONDS = 60 * 60;
 
@@ -58,6 +59,7 @@ export class EvaluationsService {
     private readonly permissionsService: PermissionsService,
     private readonly reportsService: ReportsService,
     private readonly analyticsService: AnalyticsService,
+    private readonly copyCheckerAssignmentsService: CopyCheckerAssignmentsService,
     @InjectQueue(SCORE_AGGREGATION_QUEUE) private readonly scoreAggregationQueue: Queue<ScoreAggregationJobData>,
   ) {}
 
@@ -89,6 +91,15 @@ export class EvaluationsService {
     this.assertInstituteAccess(actor, instituteId);
 
     const response = await this.getEvaluableResponse(instituteId, responseId);
+    if (actor.role === UserRole.TEACHER && response.attempt) {
+      await this.copyCheckerAssignmentsService.assertTeacherAuthorized({
+        assessmentDeliveryId: response.attempt.assessmentDeliveryId,
+        studentProfileId: response.attempt.studentProfileId,
+        questionId: response.questionId,
+        actor,
+      });
+    }
+
     const previousVersion = response.evaluation?.currentVersion ?? null;
     const evaluation = response.evaluation ?? (await this.prisma.evaluation.create({ data: { responseId } }));
 
@@ -300,11 +311,46 @@ export class EvaluationsService {
       ? [{ evaluation: { status: EvaluationStatus.AI_SUGGESTED, currentVersion: { aiRecommendation: { flags: { has: query.aiFlag } } } } }]
       : [{ evaluation: null }, { evaluation: { status: { in: [EvaluationStatus.PENDING, EvaluationStatus.AI_SUGGESTED] } } }];
 
+    const andConditions: Prisma.ResponseWhereInput[] = [NEEDS_HUMAN_EVALUATION_FILTER, { OR: eligibility }];
+
+    if (actor.role === UserRole.TEACHER) {
+      const teacherAssignments = await this.prisma.copyCheckerAssignment.findMany({
+        where: {
+          teacherProfile: { userId: actor.id },
+          assessmentDelivery: { assessment: { instituteId } },
+        },
+        include: { studentAllocations: true, questionAllocations: true },
+      });
+
+      if (teacherAssignments.length > 0) {
+        const assignmentConditions: Prisma.ResponseWhereInput[] = teacherAssignments.map((assignment) => {
+          if (assignment.scope === AssignmentScope.BATCH) {
+            return {
+              attempt: { assessmentDeliveryId: assignment.assessmentDeliveryId },
+            };
+          } else if (assignment.scope === AssignmentScope.STUDENT_LIST) {
+            return {
+              attempt: {
+                assessmentDeliveryId: assignment.assessmentDeliveryId,
+                studentProfileId: { in: assignment.studentAllocations.map((s) => s.studentProfileId) },
+              },
+            };
+          } else {
+            return {
+              attempt: { assessmentDeliveryId: assignment.assessmentDeliveryId },
+              questionId: { in: assignment.questionAllocations.map((q) => q.questionId) },
+            };
+          }
+        });
+        andConditions.push({ OR: assignmentConditions });
+      }
+    }
+
     const where: Prisma.ResponseWhereInput = {
       attemptId: { not: null },
       // Subjective questions anywhere, plus anything handwritten on a page —
       // a numerical worked out in a booklet needs a human too.
-      AND: [NEEDS_HUMAN_EVALUATION_FILTER, { OR: eligibility }],
+      AND: andConditions,
       ...(query.subjectId && { question: { is: { subjectId: query.subjectId } } }),
       attempt: {
         assessmentDelivery: {

@@ -52,13 +52,33 @@ export class InstitutesController {
   }
 
   /**
+   * Operational readiness checklist and status for pilot onboarding.
+   */
+  @Get(':id/onboarding-status')
+  @Roles(UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Get pilot onboarding readiness checklist and operational status' })
+  getOnboardingStatus(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.institutesService.getOnboardingStatus(id, user);
+  }
+
+  /**
+   * Transition institute status from ONBOARDING to ACTIVE for live operations.
+   */
+  @Post(':id/activate')
+  @Roles(UserRole.ADMIN, UserRole.FOUNDER)
+  @ApiOperation({ summary: 'Activate an institute for live operations once onboarding prerequisites are met' })
+  activateInstitute(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.institutesService.activateInstitute(id, user);
+  }
+
+  /**
    * An institute's own plan, usage and remaining headroom.
-   *
-   * The same snapshot the Founder console reads, deliberately exposed to the
-   * institute's own ADMIN too: once plan limits actually block writes, the
-   * customer needs to see *why* a create was refused and how close they are to
-   * the next limit. Tenant-scoped through InstitutesService.findById's existing
-   * access check — an ADMIN can only ever read their own institute's usage.
    */
   @Get(':id/entitlements')
   @Roles(UserRole.ADMIN, UserRole.FOUNDER)
@@ -67,7 +87,6 @@ export class InstitutesController {
     @Param('id') id: string,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    // Reuse the existing tenant/role check rather than reimplementing it.
     await this.institutesService.findById(id, user);
     return this.entitlements.getSnapshot(id);
   }

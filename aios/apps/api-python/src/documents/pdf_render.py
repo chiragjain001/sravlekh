@@ -12,7 +12,7 @@ strict about its input: a PDF is an untrusted file from a teacher's device.
 import base64
 import io
 import logging
-
+import httpx
 import pypdfium2 as pdfium
 from pydantic import BaseModel, Field
 
@@ -32,14 +32,18 @@ class PdfRenderRequest(BaseModel):
     pdfUrl: str
     dpi: int = Field(default=DEFAULT_DPI, ge=72, le=300)
     maxPages: int = Field(default=MAX_PAGES, ge=1, le=MAX_PAGES)
+    startPage: int = Field(default=1, ge=1)
+    pageCountLimit: int | None = Field(default=None, ge=1)
+    uploadTargets: dict[int, str] | None = None
 
 
 class RenderedPage(BaseModel):
     pageNumber: int
     width: int
     height: int
-    imageBase64: str
+    imageBase64: str | None = None
     contentType: str = "image/jpeg"
+    uploaded: bool = False
 
 
 class PdfRenderResult(BaseModel):
@@ -51,13 +55,95 @@ class PdfRenderError(Exception):
     """The file is not a PDF this service can render — a 422 for the caller, never a 500."""
 
 
-def render_pdf_bytes(raw: bytes, dpi: int = DEFAULT_DPI, max_pages: int = MAX_PAGES) -> PdfRenderResult:
+async def render_pdf_bytes_async(
+    raw: bytes,
+    dpi: int = DEFAULT_DPI,
+    max_pages: int = MAX_PAGES,
+    start_page: int = 1,
+    page_count_limit: int | None = None,
+    upload_targets: dict[int, str] | None = None,
+) -> PdfRenderResult:
     if not raw.startswith(PDF_MAGIC):
         raise PdfRenderError("That file is not a PDF.")
     try:
         document = pdfium.PdfDocument(raw, autoclose=False)
     except pdfium.PdfiumError as e:
-        # Password-protected and corrupt files both land here.
+        raise PdfRenderError(f"This PDF could not be opened ({type(e).__name__}). If it is password-protected, remove the password and upload again.") from None
+
+    try:
+        total_pages = len(document)
+        if total_pages == 0:
+            raise PdfRenderError("This PDF has no pages.")
+        if total_pages > max_pages:
+            raise PdfRenderError(f"This PDF has {total_pages} pages; the limit is {max_pages}. Split it and upload the parts.")
+
+        start_idx = max(0, start_page - 1)
+        end_idx = total_pages
+        if page_count_limit is not None:
+            end_idx = min(total_pages, start_idx + page_count_limit)
+
+        pages: list[RenderedPage] = []
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            for index in range(start_idx, end_idx):
+                page_num = index + 1
+                page = document[index]
+                try:
+                    image = page.render(scale=dpi / 72).to_pil().convert("RGB")
+                except pdfium.PdfiumError as e:
+                    raise PdfRenderError(f"Page {page_num} of this PDF could not be rendered ({type(e).__name__}).") from None
+                image.thumbnail((MAX_PAGE_SIDE, MAX_PAGE_SIDE))
+                buf = io.BytesIO()
+                image.save(buf, "JPEG", quality=JPEG_QUALITY, optimize=True)
+                jpeg_bytes = buf.getvalue()
+
+                # Phase 4: Direct upload target handling to eliminate large base64 payloads
+                target_url = (upload_targets or {}).get(page_num)
+                if target_url:
+                    try:
+                        resp = await client.put(target_url, content=jpeg_bytes, headers={"Content-Type": "image/jpeg"})
+                        resp.raise_for_status()
+                        pages.append(
+                            RenderedPage(
+                                pageNumber=page_num,
+                                width=image.width,
+                                height=image.height,
+                                imageBase64=None,
+                                uploaded=True,
+                            )
+                        )
+                    except Exception as upload_err:
+                        logger.warning("Failed direct S3 upload for page %s: %s; falling back to base64", page_num, upload_err)
+                        pages.append(
+                            RenderedPage(
+                                pageNumber=page_num,
+                                width=image.width,
+                                height=image.height,
+                                imageBase64=base64.b64encode(jpeg_bytes).decode(),
+                                uploaded=False,
+                            )
+                        )
+                else:
+                    pages.append(
+                        RenderedPage(
+                            pageNumber=page_num,
+                            width=image.width,
+                            height=image.height,
+                            imageBase64=base64.b64encode(jpeg_bytes).decode(),
+                            uploaded=False,
+                        )
+                    )
+        return PdfRenderResult(pageCount=total_pages, pages=pages)
+    finally:
+        document.close()
+
+
+def render_pdf_bytes(raw: bytes, dpi: int = DEFAULT_DPI, max_pages: int = MAX_PAGES) -> PdfRenderResult:
+    """Synchronous baseline implementation for unit testing."""
+    if not raw.startswith(PDF_MAGIC):
+        raise PdfRenderError("That file is not a PDF.")
+    try:
+        document = pdfium.PdfDocument(raw, autoclose=False)
+    except pdfium.PdfiumError as e:
         raise PdfRenderError(f"This PDF could not be opened ({type(e).__name__}). If it is password-protected, remove the password and upload again.") from None
 
     try:
@@ -94,6 +180,13 @@ async def render_pdf(request: PdfRenderRequest) -> PdfRenderResult:
     try:
         raw = await fetch_bytes(request.pdfUrl, max_bytes=MAX_PDF_BYTES)
     except ImageFetchError as e:
-        # Never echo the URL: it is a pre-signed storage URL.
         raise PdfRenderError(str(e)) from None
-    return render_pdf_bytes(raw, dpi=request.dpi, max_pages=request.maxPages)
+
+    return await render_pdf_bytes_async(
+        raw,
+        dpi=request.dpi,
+        max_pages=request.maxPages,
+        start_page=request.startPage,
+        page_count_limit=request.pageCountLimit,
+        upload_targets=request.uploadTargets,
+    )

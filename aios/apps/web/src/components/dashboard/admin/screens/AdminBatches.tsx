@@ -8,6 +8,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Plus, Search, Download, Trash2, RefreshCw,
   Layers, BarChart2, List, Filter, X, SlidersHorizontal, BookOpen,
+  FileSpreadsheet,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -17,6 +18,7 @@ import { BatchesTable } from '@/features/batches/components/BatchesTable';
 import { BatchProfileDrawer } from '@/features/batches/components/BatchProfileDrawer';
 import { CreateBatchDialog } from '@/features/batches/components/CreateBatchDialog';
 import { DeleteBatchDialog } from '@/features/batches/components/DeleteBatchDialog';
+import { BulkImportBatchesDialog } from '@/features/batches/components/BulkImportBatchesDialog';
 import { BatchesAnalyticsPanel } from '@/features/batches/components/BatchesAnalyticsPanel';
 import { AdminSubjectsView } from '@/components/dashboard/admin/curriculum/AdminSubjectsView';
 import { AppleDropdown } from '@/components/ui/AppleDropdown';
@@ -58,6 +60,7 @@ export function AdminBatches() {
   const [viewId, setViewId] = useState<string | null>(null);
   const [editTarget, setEditTarget] = useState<BatchListItem | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<BatchListItem[] | null>(null);
 
   const params: GetBatchesParams = {
@@ -173,6 +176,16 @@ export function AdminBatches() {
                 >
                   <Download className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-500" />
                   <span>Export {selected.size > 0 ? `(${selected.size})` : ''}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setBulkImportOpen(true)}
+                  className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 h-9 sm:h-9.5 px-3 sm:px-4 text-xs sm:text-[13px] font-semibold text-indigo-700 bg-indigo-50/80 hover:bg-indigo-100/80 active:bg-indigo-200/60 border border-indigo-200/70 rounded-xl shadow-2xs active:scale-[0.98] transition-all duration-150 cursor-pointer"
+                  title="Bulk setup batches via dynamic Excel template"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-600" />
+                  <span className="whitespace-nowrap">Bulk Import</span>
                 </button>
 
                 <button
@@ -373,6 +386,11 @@ export function AdminBatches() {
         onClose={() => { setCreateOpen(false); setEditTarget(null); }}
         editTarget={editTarget}
         onSubmit={editTarget ? handleEdit : handleCreate}
+      />
+
+      <BulkImportBatchesDialog
+        isOpen={bulkImportOpen}
+        onClose={() => setBulkImportOpen(false)}
       />
 
       <DeleteBatchDialog
