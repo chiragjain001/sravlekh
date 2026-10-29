@@ -15,10 +15,11 @@
     "backup:restore": "node infra/backup/restore.js",
     "backup:drill": "node infra/backup/drill.js",
     "backup:test": "node --test infra/backup/retention.test.js",
-    "test:e2e": "node --test tests/e2e/exam-lifecycle.browser.test.js",
+    "test:e2e": "playwright test",
     "test:integrity": "node --test tests/integrity/db-constraints-and-concurrency.test.js",
     "test:profile": "node tests/performance/workload-profiler.js",
-    "profile": "node tests/performance/workload-profiler.js"
+    "profile": "node tests/performance/workload-profiler.js",
+    "test:e2e:puppeteer": "node --test tests/e2e/exam-lifecycle.browser.test.js"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",
