@@ -78,7 +78,11 @@ export class AllExceptionsFilter implements ExceptionFilter {
       errorCode: body.code,
     });
 
-    response.status(status).json({ success: false, error: body });
+    if (typeof (response as any).send === 'function') {
+      (response as any).status(status).send({ success: false, error: body });
+    } else {
+      (response as any).status(status).json({ success: false, error: body });
+    }
   }
 
   private resolve(exception: unknown, requestId: string): { status: number; body: ErrorBody } {

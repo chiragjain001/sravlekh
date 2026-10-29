@@ -21,6 +21,7 @@
     "@fastify/cors": "^11.3.1",
     "@fastify/helmet": "^13.2.0",
     "@fastify/multipart": "^10.1.6",
+    "@fastify/static": "^10.1.8",
     "@nestjs/bullmq": "^11.0.5",
     "@nestjs/common": "^11.2.1",
     "@nestjs/config": "^4.0.4",

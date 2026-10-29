@@ -71,6 +71,10 @@ export class LocalFilesController {
       buffer,
       type || (req.headers['content-type'] as string) || 'application/octet-stream',
     );
-    res.status(200).json({ success: true });
+    if (typeof (res as any).send === 'function') {
+      (res as any).status(200).send({ success: true });
+    } else {
+      (res as any).status(200).json({ success: true });
+    }
   }
 }
