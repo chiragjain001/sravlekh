@@ -310,18 +310,29 @@ export class ExamsService {
 
   async findById(instituteId: string, examId: string, actor: AuthenticatedUser) {
     this.assertInstituteAccess(actor, instituteId);
-    const exam = await this.prisma.exam.findUnique({
-      where: { id: examId },
-      include: {
-        institute: { select: { id: true, name: true } },
-        batch: { select: { id: true, name: true, classYear: true, section: true } },
-        // subject name included alongside the blueprint's own name — a printable
-        // question paper header needs "Subject: Physics", not the blueprint's
-        // internal title, and nothing else already exposes that link to a teacher.
-        blueprint: { select: { id: true, name: true, totalMarks: true, duration: true, instructions: true, subject: { select: { id: true, name: true } } } },
-        papers: { select: { id: true, title: true, status: true } },
-      },
-    });
+    const cacheKey = `exam:${instituteId}:${examId}`;
+    let exam: any = null;
+    if (this.cache) {
+      exam = await this.cache.get(cacheKey);
+    }
+    if (!exam) {
+      exam = await this.prisma.exam.findUnique({
+        where: { id: examId },
+        include: {
+          institute: { select: { id: true, name: true } },
+          batch: { select: { id: true, name: true, classYear: true, section: true } },
+          // subject name included alongside the blueprint's own name — a printable
+          // question paper header needs "Subject: Physics", not the blueprint's
+          // internal title, and nothing else already exposes that link to a teacher.
+          blueprint: { select: { id: true, name: true, totalMarks: true, duration: true, instructions: true, subject: { select: { id: true, name: true } } } },
+          papers: { select: { id: true, title: true, status: true } },
+        },
+      });
+      if (!exam || exam.instituteId !== instituteId) throw new NotFoundException('Exam not found.');
+      if (this.cache) {
+        await this.cache.set(cacheKey, exam, 60);
+      }
+    }
     if (!exam || exam.instituteId !== instituteId) throw new NotFoundException('Exam not found.');
 
     const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor, this.cache);
@@ -1162,6 +1173,7 @@ export class ExamsService {
       });
       if (this.cache && (entity === 'exams' || entity === 'papers')) {
         await this.cache.delByPrefix("exams:list:" + instituteId + ":");
+        await this.cache.del("exam:" + instituteId + ":" + entityId);
       }
     } catch (err) {
       // Audit-log failures must never block the underlying mutation (08-ERROR-HANDLING.md);

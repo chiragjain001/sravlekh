@@ -8,7 +8,12 @@ import {
   Optional,
 } from '@nestjs/common';
 import { CacheService } from '../infrastructure/cache/cache.service';
-import { attendancePolicyKey, instituteTimezoneKey } from '../shared/cache-keys';
+import {
+  attendancePolicyKey,
+  attendanceSummaryKey,
+  attendanceSummaryPrefix,
+  instituteTimezoneKey,
+} from '../shared/cache-keys';
 import { PrismaService } from '../prisma/prisma.service';
 import { PermissionsService } from '../permissions/permissions.service';
 import {
@@ -67,16 +72,11 @@ export class AttendanceService {
   ) {
     this.assertInstituteAccess(actor, instituteId);
 
-    const institute = await this.prisma.institute.findUnique({
-      where: { id: instituteId },
-      select: { featureFlags: true },
-    });
-    const flags = (institute?.featureFlags as Record<string, any>) || {};
-    const attendanceFlags = flags.attendance || {};
-    const timezone = await this.getInstituteTimezone(instituteId);
-    const openBeforeMinutes = attendanceFlags.openBeforeMinutes ?? 15;
-    const gracePeriodMinutes = attendanceFlags.gracePeriodMinutes ?? 30;
-    const cutoffHour = attendanceFlags.cutoffHour ?? 18;
+    const policy = await this.getAttendancePolicy(instituteId, actor);
+    const timezone = policy.timezone || (await this.getInstituteTimezone(instituteId));
+    const openBeforeMinutes = policy.openBeforeMinutes ?? 15;
+    const gracePeriodMinutes = policy.gracePeriodMinutes ?? 30;
+    const cutoffHour = policy.cutoffHour ?? 18;
 
     const targetDate = query.date || this.formatDateInTimezone(new Date(), timezone);
     const now = new Date();
@@ -783,6 +783,8 @@ export class AttendanceService {
       { action: 'FINALIZE', finalizedByUserId: actor.id, version: updatedVersion },
     );
 
+    await this.invalidateAttendanceSummary(instituteId);
+
     return {
       message: 'Attendance finalized and published successfully.',
       session: finalized,
@@ -899,6 +901,8 @@ export class AttendanceService {
       { status: oldStatus },
       { status: newStatus, reason: dto.reason, correctionLogId: result.correctionLog.id },
     );
+
+    await this.invalidateAttendanceSummary(instituteId);
 
     return result.updatedRecord;
   }
@@ -1067,6 +1071,8 @@ export class AttendanceService {
       { action: dto.action, previousVersion: session.version },
       { action: dto.action, reason: dto.reason, version: updated.version },
     );
+
+    await this.invalidateAttendanceSummary(instituteId);
 
     return updated;
   }
@@ -1482,6 +1488,8 @@ export class AttendanceService {
       count: results.length,
     });
 
+    await this.invalidateAttendanceSummary(instituteId);
+
     return { message: `Marked attendance for ${results.length} student(s).`, records: results };
   }
 
@@ -1522,6 +1530,8 @@ export class AttendanceService {
       { status: dto.status, reason: dto.reason },
     );
 
+    await this.invalidateAttendanceSummary(instituteId);
+
     return updated;
   }
 
@@ -1532,7 +1542,7 @@ export class AttendanceService {
     const limit = query.limit ?? 30;
     const skip = (page - 1) * limit;
 
-    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor);
+    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor, this.cache);
     const where: Record<string, unknown> = { batch: { instituteId } };
 
     if (teacherBatchIds !== null) {
@@ -1572,7 +1582,16 @@ export class AttendanceService {
   async getSummary(instituteId: string, query: QueryAttendanceSummaryDto, actor: AuthenticatedUser) {
     this.assertInstituteAccess(actor, instituteId);
 
-    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor);
+    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor, this.cache);
+    const scope = teacherBatchIds !== null ? `teacher:${actor.id}` : 'all';
+    const queryHash = `${query.batchId || 'all'}:${query.dateFrom || 'none'}:${query.dateTo || 'none'}`;
+    const cacheKey = attendanceSummaryKey(instituteId, scope, queryHash);
+
+    if (this.cache) {
+      const cached = await this.cache.get<any>(cacheKey);
+      if (cached) return cached;
+    }
+
     const where: Record<string, unknown> = { batch: { instituteId } };
 
     if (teacherBatchIds !== null) {
@@ -1597,7 +1616,9 @@ export class AttendanceService {
         batchId: true,
         studentProfileId: true,
         batch: { select: { name: true } },
-        studentProfile: { select: { rollNumber: true, user: { select: { name: true } } } },
+        ...(query.batchId && {
+          studentProfile: { select: { rollNumber: true, user: { select: { name: true } } } },
+        }),
       },
     });
 
@@ -1622,11 +1643,11 @@ export class AttendanceService {
 
     const byStudentMap = new Map<string, { name: string; rollNumber: string | null; records: typeof records }>();
     if (query.batchId) {
-      for (const r of records) {
+      for (const r of records as any[]) {
         const s = byStudentMap.get(r.studentProfileId) || {
-          name: r.studentProfile.user.name,
-          rollNumber: r.studentProfile.rollNumber,
-          records: [],
+          name: r.studentProfile?.user?.name ?? 'Unknown',
+          rollNumber: r.studentProfile?.rollNumber ?? null,
+          records: [] as typeof records,
         };
         s.records.push(r);
         byStudentMap.set(r.studentProfileId, s);
@@ -1644,12 +1665,18 @@ export class AttendanceService {
       };
     }).sort((a, b) => a.attendancePct - b.attendancePct);
 
-    return {
+    const result = {
       overallAttendancePct: overallMetrics.overallAttendancePct ?? 0,
       statusBreakdown: overallMetrics.statusBreakdown,
       byBatch,
       byStudent,
     };
+
+    if (this.cache) {
+      await this.cache.set(cacheKey, result, 60);
+    }
+
+    return result;
   }
 
   // ── Helper Domain Methods ──────────────────────────────────────────────────
@@ -1871,9 +1898,15 @@ export class AttendanceService {
 
   private async assertTeacherOwnsBatchIfTeacher(actor: AuthenticatedUser, batchId: string) {
     if (actor.role !== UserRole.TEACHER) return;
-    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor);
+    const teacherBatchIds = await getTeacherBatchIds(this.prisma, actor, this.cache);
     if (!teacherBatchIds?.includes(batchId)) {
       throw new ForbiddenException('You can only mark attendance for batches you are assigned to.');
+    }
+  }
+
+  private async invalidateAttendanceSummary(instituteId: string): Promise<void> {
+    if (this.cache) {
+      await this.cache.delByPrefix(attendanceSummaryPrefix(instituteId));
     }
   }
 

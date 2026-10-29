@@ -122,6 +122,14 @@ export function attendancePolicyKey(instituteId: string): string {
   return `attendance:${instituteId}:policy`;
 }
 
+export function attendanceSummaryKey(instituteId: string, scope: string, queryHash: string): string {
+  return `attendance:${instituteId}:summary:${scope}:${queryHash}`;
+}
+
+export function attendanceSummaryPrefix(instituteId: string): string {
+  return `attendance:${instituteId}:summary:`;
+}
+
 export function instituteTimezoneKey(instituteId: string): string {
   return `institute:${instituteId}:timezone`;
 }
