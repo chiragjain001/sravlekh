@@ -40,3 +40,5 @@ load-tests/k6-*/
 scripts/lh_*.json
 scripts/summary_*.json
 scripts/login_html.txt
+test-results/
+playwright-report/
