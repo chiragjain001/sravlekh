@@ -48,10 +48,15 @@ describe('envSchema — ENABLE_DEV_LOGIN safety gate', () => {
 
   it('allows production to boot normally when the flag is absent or false', () => {
     // A production boot now also requires INTERNAL_SERVICE_TOKEN (see the
-    // fail-closed suite below), so a valid production env must supply it. This
-    // test is about ENABLE_DEV_LOGIN, so it provides the token rather than
-    // asserting a production env that would legitimately be rejected.
-    const prod = { ...baseEnv, NODE_ENV: 'production', INTERNAL_SERVICE_TOKEN: 'i'.repeat(32) };
+    // fail-closed suite below) and BOOKLET_QR_SIGNING_KEY (07-SECURITY-SPECIFICATION.md),
+    // so a valid production env must supply them. This test is about ENABLE_DEV_LOGIN,
+    // so it provides required production credentials.
+    const prod = {
+      ...baseEnv,
+      NODE_ENV: 'production',
+      INTERNAL_SERVICE_TOKEN: 'i'.repeat(32),
+      BOOKLET_QR_SIGNING_KEY: 'b'.repeat(32),
+    };
     expect(() => envSchema.parse({ ...prod })).not.toThrow();
     expect(() => envSchema.parse({ ...prod, ENABLE_DEV_LOGIN: 'false' })).not.toThrow();
   });
@@ -68,7 +73,11 @@ describe('envSchema — INTERNAL_SERVICE_TOKEN fail-closed gate', () => {
   // verify_internal_token never ran and the Python AI endpoints would have
   // served any caller that could reach the port. These endpoints take no user
   // JWT by design, so this credential is the only thing guarding them.
-  const PROD = { ...baseEnv, NODE_ENV: 'production' };
+  const PROD = {
+    ...baseEnv,
+    NODE_ENV: 'production',
+    BOOKLET_QR_SIGNING_KEY: 'b'.repeat(32),
+  };
   const VALID = 'i'.repeat(32);
 
   it('REFUSES to boot in production when the token is missing', () => {
@@ -132,6 +141,37 @@ describe('envSchema — INTERNAL_SERVICE_TOKEN fail-closed gate', () => {
   });
 });
 
+describe('envSchema — BOOKLET_QR_SIGNING_KEY fail-closed gate', () => {
+  const PROD = { ...baseEnv, NODE_ENV: 'production', INTERNAL_SERVICE_TOKEN: 'i'.repeat(32) };
+  const STAGING_STACK = { ...baseEnv, AIOS_ENV: 'staging' };
+  const VALID_KEY = 'k'.repeat(32);
+
+  it('REFUSES to boot in production when BOOKLET_QR_SIGNING_KEY is missing', () => {
+    expect(() => envSchema.parse({ ...PROD })).toThrow(/BOOKLET_QR_SIGNING_KEY is required/);
+  });
+
+  it('REFUSES to boot in production when BOOKLET_QR_SIGNING_KEY is shorter than 32 characters', () => {
+    expect(() =>
+      envSchema.parse({ ...PROD, BOOKLET_QR_SIGNING_KEY: 'short-key' }),
+    ).toThrow(/at least 32 characters/);
+  });
+
+  it('REFUSES to boot in AIOS_ENV=staging when BOOKLET_QR_SIGNING_KEY is missing', () => {
+    expect(() => envSchema.parse({ ...STAGING_STACK })).toThrow(/BOOKLET_QR_SIGNING_KEY is required/);
+  });
+
+  it('boots in production when BOOKLET_QR_SIGNING_KEY is valid (>= 32 chars)', () => {
+    expect(() =>
+      envSchema.parse({ ...PROD, BOOKLET_QR_SIGNING_KEY: VALID_KEY }),
+    ).not.toThrow();
+  });
+
+  it('allows unconfigured BOOKLET_QR_SIGNING_KEY in development mode', () => {
+    const dev = envSchema.parse({ ...baseEnv, NODE_ENV: 'development' });
+    expect(dev.BOOKLET_QR_SIGNING_KEY).toBeUndefined();
+  });
+});
+
 describe('envSchema — AIOS_ENV=staging target guard', () => {
   /**
    * Staging isolation used to be a launch procedure you had to remember.
@@ -157,6 +197,7 @@ describe('envSchema — AIOS_ENV=staging target guard', () => {
     ...baseEnv,
     NODE_ENV: 'staging',
     AIOS_ENV: 'staging',
+    BOOKLET_QR_SIGNING_KEY: 'b'.repeat(32),
     DATABASE_URL: STAGING_DB,
     DIRECT_URL: STAGING_DB,
     REDIS_URL: STAGING_REDIS,
@@ -249,6 +290,7 @@ describe('envSchema — AIOS_ENV=staging target guard', () => {
           ...baseEnv,
           NODE_ENV: 'production',
           INTERNAL_SERVICE_TOKEN: 'i'.repeat(32),
+          BOOKLET_QR_SIGNING_KEY: 'b'.repeat(32),
           DATABASE_URL: SHARED_DB,
           DIRECT_URL: SHARED_DIRECT,
           REDIS_URL: DEV_REDIS,
