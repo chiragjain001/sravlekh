@@ -2,8 +2,8 @@ import {
   Controller, Get, Post, Patch, Delete, Body, Param, HttpCode, HttpStatus,
   Res, UploadedFile, UseInterceptors, BadRequestException,
 } from '@nestjs/common';
-import { Response } from 'express';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { sendBinaryDownload } from '../shared/http-response.helper';
+import { FastifyFileInterceptor } from '../shared/fastify-file.interceptor';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiConsumes } from '@nestjs/swagger';
 import { BatchesService } from './batches.service';
 import { BatchBulkImportService } from './batch-bulk-import.service';
@@ -35,25 +35,26 @@ export class BatchesController {
   async downloadBulkTemplate(
     @Param('instituteId') instituteId: string,
     @CurrentUser() user: AuthenticatedUser,
-    @Res() res: Response,
+    @Res() res: any,
   ) {
     const { buffer, filename } = await this.bulkImportService.generateTemplate(instituteId, user);
-    res.set({
+    sendBinaryDownload(res, buffer, filename, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    /* res.set({
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       'Content-Disposition': `attachment; filename="${filename}"`,
       'Content-Length': buffer.length,
     });
-    res.end(buffer);
+    res.end(buffer); */
   }
 
   @Post('batches/bulk-validate')
   @Roles(UserRole.ADMIN, UserRole.FOUNDER)
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
+  @UseInterceptors(new FastifyFileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Admin: Validate uploaded batch Excel workbook before commit' })
   async validateBulkUpload(
     @Param('instituteId') instituteId: string,
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFile() file: any,
     @CurrentUser() user: AuthenticatedUser,
   ) {
     if (!file || !file.buffer) {
@@ -81,19 +82,20 @@ export class BatchesController {
     @Param('instituteId') instituteId: string,
     @Body('failedRows') failedRows: any[],
     @CurrentUser() user: AuthenticatedUser,
-    @Res() res: Response,
+    @Res() res: any,
   ) {
     const { buffer, filename } = await this.bulkImportService.generateErrorReportWorkbook(
       instituteId,
       failedRows || [],
       user,
     );
-    res.set({
+    sendBinaryDownload(res, buffer, filename, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    /* res.set({
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       'Content-Disposition': `attachment; filename="${filename}"`,
       'Content-Length': buffer.length,
     });
-    res.end(buffer);
+    res.end(buffer); */
   }
 
   // ── Batches ───────────────────────────────────────────────────────────────

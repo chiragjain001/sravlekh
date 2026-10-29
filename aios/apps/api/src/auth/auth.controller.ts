@@ -43,7 +43,8 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   private setRefreshCookie(res: Response, token: string, isProduction: boolean) {
-    res.cookie(REFRESH_COOKIE, token, {
+    const cookieFn = typeof (res as any).setCookie === 'function' ? (res as any).setCookie.bind(res) : res.cookie.bind(res);
+    cookieFn(REFRESH_COOKIE, token, {
       httpOnly: true,
       // Only over TLS in production. Not unconditionally, or local http:// dev
       // would silently drop the cookie and every login would look broken.
@@ -60,7 +61,8 @@ export class AuthController {
   private clearRefreshCookie(res: Response, isProduction: boolean) {
     // Attributes must match the ones it was set with, or the browser treats it
     // as a different cookie and the old one survives the logout.
-    res.clearCookie(REFRESH_COOKIE, {
+    const clearFn = typeof (res as any).clearCookie === 'function' ? (res as any).clearCookie.bind(res) : () => {};
+    clearFn(REFRESH_COOKIE, {
       httpOnly: true,
       secure: isProduction,
       sameSite: 'strict',

@@ -1,5 +1,5 @@
 import { Controller, Get, Post, Patch, Body, Param, Query, Headers, UseInterceptors, UploadedFiles, HttpCode, HttpStatus, ParseBoolPipe, Optional, Delete } from '@nestjs/common';
-import { FilesInterceptor } from '@nestjs/platform-express';
+import { FastifyFilesInterceptor } from '../shared/fastify-file.interceptor';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiConsumes } from '@nestjs/swagger';
 import { DocumentsService } from './documents.service';
 import {
@@ -66,13 +66,13 @@ export class DocumentsController {
   @Post('document-bundles/:bundleId/documents')
   @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.FOUNDER)
   @HttpCode(HttpStatus.ACCEPTED)
-  @UseInterceptors(FilesInterceptor('files', MAX_FILES_PER_UPLOAD, { limits: { fileSize: MAX_UPLOAD_BYTES } }))
+  @UseInterceptors(new FastifyFilesInterceptor('files', MAX_FILES_PER_UPLOAD, { limits: { fileSize: MAX_UPLOAD_BYTES } }))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Upload one booklet: either its page images (one file per page) or a single PDF, which is rendered into pages' })
   uploadDocument(
     @Param('instituteId') instituteId: string,
     @Param('bundleId') bundleId: string,
-    @UploadedFiles() files: Express.Multer.File[],
+    @UploadedFiles() files: any[],
     @Headers('idempotency-key') idempotencyKey: string | undefined,
     @CurrentUser() user: AuthenticatedUser,
   ) {

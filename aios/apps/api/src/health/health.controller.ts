@@ -3,7 +3,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { Queue } from 'bullmq';
 import type { Redis } from 'ioredis';
-import { Response } from 'express';
+
 import { PrismaService } from '../prisma/prisma.service';
 import { Public } from '../auth/decorators/public.decorator';
 import { MASTERY_RECALC_QUEUE } from '../analytics/mastery-recalc.constants';
@@ -76,7 +76,7 @@ export class HealthController {
   @Public()
   @Get('ready')
   @ApiOperation({ summary: 'Readiness — safe to route traffic here. 503 while draining or if the DB is down.' })
-  async ready(@Res({ passthrough: true }) res: Response) {
+  async ready(@Res({ passthrough: true }) res: any) {
     if (isShuttingDown()) {
       res.status(HttpStatus.SERVICE_UNAVAILABLE);
       return { status: 'draining', db: 'unknown', redis: 'unknown' };
@@ -99,7 +99,7 @@ export class HealthController {
    */
   @Public()
   @Get()
-  async check(@Res({ passthrough: true }) res: Response) {
+  async check(@Res({ passthrough: true }) res: any) {
     const [dbUp, redisUp] = await Promise.all([this.checkDb(), this.checkRedis()]);
 
     if (!dbUp) res.status(HttpStatus.SERVICE_UNAVAILABLE);

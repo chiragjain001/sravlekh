@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { HttpStatus } from '@nestjs/common';
 import { getQueueToken } from '@nestjs/bullmq';
-import type { Response } from 'express';
+
 import { HealthController } from './health.controller';
 import { PrismaService } from '../prisma/prisma.service';
 import { MASTERY_RECALC_QUEUE } from '../analytics/mastery-recalc.constants';
@@ -33,7 +33,7 @@ describe('HealthController', () => {
   afterEach(() => resetShutdownStateForTests());
 
   function mockResponse() {
-    return { status: jest.fn() } as unknown as Response;
+    return { status: jest.fn() } as any;
   }
 
   it('reports healthy when the DB and Redis both respond', async () => {

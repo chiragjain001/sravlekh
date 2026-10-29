@@ -9,7 +9,7 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { Response } from 'express';
+import { sendBinaryDownload } from '../shared/http-response.helper';
 import { BookletsService } from './booklets.service';
 import { CreatePrintRunDto, VoidBookletDto, VerifyBookletQrDto } from './dto/booklet.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -52,7 +52,7 @@ export class BookletsController {
     @Param('deliveryId') deliveryId: string,
     @Param('printRunId') printRunId: string,
     @CurrentUser() actor: AuthenticatedUser,
-    @Res() res: Response,
+    @Res() res: any,
   ) {
     const { buffer, filename } = await this.bookletsService.renderPrintRunPdf(
       instituteId,
@@ -61,10 +61,11 @@ export class BookletsController {
       actor,
     );
 
-    res.setHeader('Content-Type', 'application/pdf');
+    sendBinaryDownload(res, buffer, filename, 'application/pdf');
+    /* res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-Length', buffer.length);
-    res.end(buffer);
+    res.end(buffer); */
   }
 
   @Post('booklets/verify-qr')

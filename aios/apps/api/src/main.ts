@@ -1,11 +1,11 @@
 import { NestFactory } from '@nestjs/core';
-// AIOS main entrypoint
+import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
-import helmet from 'helmet';
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const cookieParser = require('cookie-parser') as () => unknown;
+import fastifyCookie from '@fastify/cookie';
+import fastifyMultipart from '@fastify/multipart';
+import fastifyHelmet from '@fastify/helmet';
 import * as Sentry from '@sentry/node';
 import { AppModule } from './app.module';
 import { RUN_WORKERS } from './infrastructure/queue/queue-policy';
@@ -37,11 +37,29 @@ if (process.env['SENTRY_DSN']) {
 }
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const adapter = new FastifyAdapter({
+    bodyLimit: 35 * 1024 * 1024,
+  });
 
-  // Security headers
-  app.use(helmet());
-  app.use(cookieParser());
+  const app = await NestFactory.create<NestFastifyApplication>(
+    AppModule,
+    adapter,
+  );
+
+  // Security headers via @fastify/helmet
+  await app.register(fastifyHelmet as any, {
+    contentSecurityPolicy: false,
+  });
+
+  // Cookies via @fastify/cookie
+  await app.register(fastifyCookie as any);
+
+  // Multipart uploads via @fastify/multipart
+  await app.register(fastifyMultipart as any, {
+    limits: {
+      fileSize: 30 * 1024 * 1024,
+    },
+  });
 
   const configService = app.get(ConfigService);
   const nodeEnv = configService.get<string>('NODE_ENV', 'development');
@@ -90,32 +108,13 @@ async function bootstrap() {
     SwaggerModule.setup('api/docs', app, document);
   }
 
-  // Graceful shutdown. worker.ts has had this since it was written; the API
-  // process never did, which meant every rolling deploy, container restart and
-  // autoscaler scale-down killed this process outright on SIGTERM:
-  //
-  //  * in-flight HTTP requests died mid-response — the client sees a connection
-  //    reset rather than a status code it can interpret or safely retry;
-  //  * PrismaService.onModuleDestroy() (which calls $disconnect()) is only ever
-  //    invoked by Nest's shutdown hooks, so without this it NEVER RAN in the API
-  //    process — the pool was abandoned and Postgres was left to time out the
-  //    orphaned sessions;
-  //  * a request inside $transaction() died with no rollback issued, leaving the
-  //    transaction to be aborted by connection teardown instead of by us.
-  //
-  // It matters more, not less, when RUN_WORKERS is true: this process is then
-  // also holding BullMQ job locks that app.close() releases.
+  // Graceful shutdown.
   app.enableShutdownHooks();
 
-  await app.listen(port);
+  await app.listen(port, '0.0.0.0');
 
   const shutdown = async (signal: string) => {
-    // Flip readiness to 503 FIRST, then wait, then close. The load balancer needs
-    // to observe this instance as unready and stop routing to it before the
-    // server begins tearing down — otherwise requests keep arriving at a process
-    // that is already closing and fail. The pause is one readiness-probe interval
-    // plus a margin; without it the flag is technically set but nothing has had a
-    // chance to poll it, which drains nothing.
+    // Flip readiness to 503 FIRST, then wait, then close.
     console.log(`${signal} received — failing readiness, draining, then exiting.`);
     beginShutdown();
     await new Promise((resolve) => setTimeout(resolve, SHUTDOWN_DRAIN_MS));
@@ -126,14 +125,10 @@ async function bootstrap() {
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGINT', () => void shutdown('SIGINT'));
 
-  // Say plainly whether this process is also consuming jobs. Deploying a
-  // dedicated worker (npm run start:worker) while leaving RUN_WORKERS unset on
-  // the API means BOTH processes consume — which still works, but silently
-  // undoes the isolation the split exists for, and is invisible without this.
   const mode = RUN_WORKERS
     ? 'API + workers (single process — set RUN_WORKERS=false when a dedicated worker runs)'
     : 'API only (RUN_WORKERS=false — jobs are consumed by the worker process)';
-  console.log(`AIOS API running on port ${port} [${nodeEnv}] — ${mode}`);
+  console.log(`AIOS Fastify API running on port ${port} [${nodeEnv}] — ${mode}`);
 }
 
 void bootstrap();

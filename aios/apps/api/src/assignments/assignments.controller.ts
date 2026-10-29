@@ -10,7 +10,7 @@ import {
   UseInterceptors,
   UploadedFile,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FastifyFileInterceptor } from '../shared/fastify-file.interceptor';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiConsumes } from '@nestjs/swagger';
 import { AssignmentsService } from './assignments.service';
 import {
@@ -75,7 +75,7 @@ export class AssignmentsController {
 
   @Post(':assignmentId/submit')
   @Roles(UserRole.STUDENT)
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
+  @UseInterceptors(new FastifyFileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Submit an assignment (Students only) — upload a file, or pass a submissionUrl' })
   submitAssignment(
@@ -83,7 +83,7 @@ export class AssignmentsController {
     @Param('assignmentId') assignmentId: string,
     @Body() dto: SubmitAssignmentDto,
     @CurrentUser() user: AuthenticatedUser,
-    @UploadedFile() file?: Express.Multer.File,
+    @UploadedFile() file?: any,
   ) {
     return this.assignmentsService.submitAssignment(instituteId, assignmentId, dto, user, file);
   }

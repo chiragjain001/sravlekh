@@ -3,8 +3,8 @@ import {
   Body, Param, Query, HttpCode, HttpStatus,
   Res, UploadedFile, UseInterceptors, BadRequestException,
 } from '@nestjs/common';
-import { Response } from 'express';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { sendBinaryDownload } from '../shared/http-response.helper';
+import { FastifyFileInterceptor } from '../shared/fastify-file.interceptor';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiConsumes } from '@nestjs/swagger';
 import { TeachersService } from './teachers.service';
 import { TeacherBulkImportService } from './teacher-bulk-import.service';
@@ -34,25 +34,26 @@ export class TeachersController {
   async downloadBulkTemplate(
     @Param('instituteId') instituteId: string,
     @CurrentUser() user: AuthenticatedUser,
-    @Res() res: Response,
+    @Res() res: any,
   ) {
     const { buffer, filename } = await this.bulkImportService.generateTemplate(instituteId, user);
-    res.set({
+    sendBinaryDownload(res, buffer, filename, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    /* res.set({
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       'Content-Disposition': `attachment; filename="${filename}"`,
       'Content-Length': buffer.length,
     });
-    res.end(buffer);
+    res.end(buffer); */
   }
 
   @Post('bulk-validate')
   @Roles(UserRole.ADMIN, UserRole.FOUNDER)
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
+  @UseInterceptors(new FastifyFileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Admin: Validate uploaded teacher Excel workbook before commit' })
   async validateBulkUpload(
     @Param('instituteId') instituteId: string,
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFile() file: any,
     @CurrentUser() user: AuthenticatedUser,
   ) {
     if (!file || !file.buffer) {
@@ -79,15 +80,16 @@ export class TeachersController {
     @Param('instituteId') instituteId: string,
     @Body() payload: { failedRows: Array<{ rowNumber: number; data: any; errors: string[] }> },
     @CurrentUser() user: AuthenticatedUser,
-    @Res() res: Response,
+    @Res() res: any,
   ) {
     const buffer = await this.bulkImportService.generateErrorReportWorkbook(instituteId, payload.failedRows || []);
-    res.set({
+    sendBinaryDownload(res, buffer, 'AIOS_Failed_Teachers_Remediation.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    /* res.set({
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       'Content-Disposition': `attachment; filename="AIOS_Failed_Teachers_Remediation.xlsx"`,
       'Content-Length': buffer.length,
     });
-    res.end(buffer);
+    res.end(buffer); */
   }
 
   @Post()
