@@ -48,6 +48,11 @@ export const envSchema = z
     // problem the first time the API is scaled horizontally. Size it against
     // replica count and the database's max_connections.
     DATABASE_POOL_LIMIT: z.coerce.number().int().positive().optional(),
+    DATABASE_POOL_TIMEOUT: z.coerce.number().int().positive().default(20),
+
+    // Reverse proxy trust setting for Fastify (e.g. 'loopback', '127.0.0.1', '172.26.0.0/16').
+    // In production, wildcards ('true') are strictly forbidden to prevent X-Forwarded-For spoofing.
+    TRUST_PROXY: z.string().optional(),
 
     // Google OAuth
     GOOGLE_CLIENT_ID: z.string().min(1),
@@ -279,6 +284,15 @@ export const envSchema = z
             'run against shared infrastructure.',
         });
       }
+    }
+
+    if (env.NODE_ENV === 'production' && env.TRUST_PROXY === 'true') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['TRUST_PROXY'],
+        message:
+          'TRUST_PROXY="true" is unsafe in production because it blindly trusts X-Forwarded-For headers from any client. Specify explicit trusted proxy IP/CIDRs (e.g. "127.0.0.1" or "loopback").',
+      });
     }
   });
 

@@ -8,6 +8,7 @@ import {
   PutObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
@@ -173,6 +174,30 @@ export class StorageService {
       throw new ServiceUnavailableException('Invalid upload link.');
     }
     await this.upload(key, body, contentType);
+  }
+
+  /** Checks if an object exists in storage (S3 or local fallback). */
+  async exists(key: string): Promise<boolean> {
+    if (this.localRoot) {
+      try {
+        await fs.stat(this.localPathFor(key));
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    this.assertConfigured();
+    try {
+      const command = new HeadObjectCommand({ Bucket: this.bucket, Key: key });
+      await this.client.send(command);
+      return true;
+    } catch (err: any) {
+      if (err.name === 'NotFound' || err.$metadata?.httpStatusCode === 404) {
+        return false;
+      }
+      this.logger.warn(`Storage exists check error for key "${key}": ${err.message}`);
+      return false;
+    }
   }
 
   async delete(key: string): Promise<void> {

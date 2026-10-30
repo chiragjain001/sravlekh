@@ -32,7 +32,7 @@ describe('DocumentsService', () => {
   let prisma: {
     assessmentDelivery: { findUnique: jest.Mock };
     documentBundle: { create: jest.Mock; findUnique: jest.Mock };
-    document: { findUnique: jest.Mock; update: jest.Mock; findMany: jest.Mock; create?: jest.Mock };
+    document: { findUnique: jest.Mock; update: jest.Mock; findMany: jest.Mock; findFirst: jest.Mock; create?: jest.Mock };
     page: { findUnique: jest.Mock; count: jest.Mock; findMany: jest.Mock; create?: jest.Mock };
     pageImage: { findUnique: jest.Mock; create?: jest.Mock };
     pageRegion: { create: jest.Mock; update: jest.Mock; findUnique: jest.Mock; findMany: jest.Mock; delete: jest.Mock };
@@ -51,6 +51,7 @@ describe('DocumentsService', () => {
     upload: jest.Mock;
     getSignedDownloadUrl: jest.Mock;
     getSignedUploadUrl: jest.Mock;
+    exists?: jest.Mock;
   };
   let cache: { get: jest.Mock; set: jest.Mock };
   let featureFlags: { isEnabled: jest.Mock };
@@ -69,7 +70,7 @@ describe('DocumentsService', () => {
     prisma = {
       assessmentDelivery: { findUnique: jest.fn() },
       documentBundle: { create: jest.fn(), findUnique: jest.fn() },
-      document: { findUnique: jest.fn(), update: jest.fn().mockResolvedValue({ id: 'doc-1' }), findMany: jest.fn() },
+      document: { findUnique: jest.fn(), update: jest.fn().mockResolvedValue({ id: 'doc-1' }), findMany: jest.fn(), findFirst: jest.fn().mockResolvedValue(null) },
       page: { create: pageCreate, findUnique: jest.fn(), count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]) },
       pageImage: { create: pageImageCreate, findUnique: jest.fn() },
       pageRegion: { create: jest.fn().mockResolvedValue({ id: 'region-new' }), update: jest.fn(), findUnique: jest.fn(), findMany: jest.fn().mockResolvedValue([]), delete: jest.fn().mockResolvedValue({}) },
@@ -105,6 +106,7 @@ describe('DocumentsService', () => {
       upload: jest.fn().mockResolvedValue(undefined),
       getSignedDownloadUrl: jest.fn().mockResolvedValue('https://signed.example/file'),
       getSignedUploadUrl: jest.fn().mockResolvedValue('https://s3.example.com/presigned-upload'),
+      exists: jest.fn().mockResolvedValue(true),
     };
     cache = { get: jest.fn().mockResolvedValue(undefined), set: jest.fn().mockResolvedValue(undefined) };
     featureFlags = { isEnabled: jest.fn().mockResolvedValue(true) };

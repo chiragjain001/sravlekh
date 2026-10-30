@@ -4,6 +4,8 @@ import {
   Injectable,
   NestInterceptor,
   BadRequestException,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
 import { Observable } from 'rxjs';
 
@@ -14,6 +16,26 @@ export interface UploadedMultipartFile {
   mimetype: string;
   size: number;
   buffer: Buffer;
+}
+
+const MAX_CONCURRENT_MULTIPART_UPLOADS = Number(process.env['MAX_CONCURRENT_MULTIPART_UPLOADS'] ?? 3);
+let activeMultipartUploads = 0;
+
+function acquireUploadSlot(): void {
+  if (activeMultipartUploads >= MAX_CONCURRENT_MULTIPART_UPLOADS) {
+    throw new HttpException(
+      {
+        code: 'UPLOAD_CONCURRENCY_LIMIT',
+        message: 'Too many concurrent file uploads in progress. Please retry in a few moments or use direct storage upload.',
+      },
+      HttpStatus.TOO_MANY_REQUESTS,
+    );
+  }
+  activeMultipartUploads++;
+}
+
+function releaseUploadSlot(): void {
+  activeMultipartUploads = Math.max(0, activeMultipartUploads - 1);
 }
 
 @Injectable()
@@ -32,6 +54,7 @@ export class FastifyFileInterceptor implements NestInterceptor {
     }
 
     if (typeof req.isMultipart === 'function' && req.isMultipart()) {
+      acquireUploadSlot();
       try {
         const part = await req.file({
           limits: {
@@ -67,6 +90,8 @@ export class FastifyFileInterceptor implements NestInterceptor {
           );
         }
         throw err;
+      } finally {
+        releaseUploadSlot();
       }
     }
 
@@ -90,6 +115,7 @@ export class FastifyFilesInterceptor implements NestInterceptor {
     }
 
     if (typeof req.isMultipart === 'function' && req.isMultipart()) {
+      acquireUploadSlot();
       try {
         const parts = req.files({
           limits: {
@@ -118,6 +144,8 @@ export class FastifyFilesInterceptor implements NestInterceptor {
           );
         }
         throw err;
+      } finally {
+        releaseUploadSlot();
       }
     }
 

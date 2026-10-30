@@ -23,8 +23,10 @@ import { PrismaClient } from '@prisma/client';
 export function poolLimitOptions(
   url: string | undefined,
   limit: string | undefined,
+  timeout?: string | undefined,
 ): { datasources: { db: { url: string } } } | undefined {
-  if (!url || !limit) return undefined;
+  if (!url) return undefined;
+  if (!limit && !timeout) return undefined;
 
   const parsed = (() => {
     try {
@@ -37,10 +39,22 @@ export function poolLimitOptions(
   })();
   if (!parsed) return undefined;
 
-  // Never override an explicit setting: someone who wrote it in the URL meant it.
-  if (parsed.searchParams.has('connection_limit')) return undefined;
+  let modified = false;
 
-  parsed.searchParams.set('connection_limit', limit);
+  // Set connection_limit if provided and not explicitly present in the URL
+  if (limit && !parsed.searchParams.has('connection_limit')) {
+    parsed.searchParams.set('connection_limit', limit);
+    modified = true;
+  }
+
+  // Set pool_timeout if provided and not explicitly present in the URL
+  if (timeout && !parsed.searchParams.has('pool_timeout')) {
+    parsed.searchParams.set('pool_timeout', timeout);
+    modified = true;
+  }
+
+  if (!modified) return undefined;
+
   return { datasources: { db: { url: parsed.toString() } } };
 }
 
@@ -67,9 +81,14 @@ export class PrismaService
   ]);
 
   constructor() {
-    // undefined when DATABASE_POOL_LIMIT is unset, which is the same call Prisma
-    // received before this existed.
-    super(poolLimitOptions(process.env['DATABASE_URL'], process.env['DATABASE_POOL_LIMIT']));
+    // Sized for pooled production database connections (Supabase PgBouncer / RDS Proxy)
+    super(
+      poolLimitOptions(
+        process.env['DATABASE_URL'],
+        process.env['DATABASE_POOL_LIMIT'],
+        process.env['DATABASE_POOL_TIMEOUT'],
+      ),
+    );
 
     // Retry only reads, and only on connection-level failures. Writes are
     // deliberately excluded: a create that failed *after* reaching the database

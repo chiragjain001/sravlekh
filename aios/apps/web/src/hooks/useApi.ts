@@ -2715,6 +2715,32 @@ export function useUploadDocument() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ bundleId, files }: { bundleId: string; files: File[] }) => {
+      // Direct browser-to-storage upload: bypasses server memory for large PDF booklets
+      const file = files[0];
+      if (files.length === 1 && file && user?.instituteId) {
+        try {
+          const { data: presigned } = await apiClient.post(
+            `/institutes/${user.instituteId}/document-bundles/${bundleId}/upload-url`,
+            { filename: file.name, mimeType: file.type || 'application/pdf' },
+          );
+
+          if (presigned?.uploadUrl && presigned?.key) {
+            await axios.put(presigned.uploadUrl, file, {
+              headers: { 'Content-Type': file.type || 'application/pdf' },
+            });
+
+            const { data: confirmRes } = await apiClient.post(
+              `/institutes/${user.instituteId}/document-bundles/${bundleId}/confirm-upload`,
+              { key: presigned.key },
+            );
+            return confirmRes;
+          }
+        } catch (directUploadErr) {
+          console.warn('Direct storage upload failed, falling back to multipart upload:', directUploadErr);
+        }
+      }
+
+      // Fallback multipart upload
       const form = new FormData();
       files.forEach((f) => form.append('files', f));
       const res = await apiClient.post(`/institutes/${user?.instituteId}/document-bundles/${bundleId}/documents`, form, {

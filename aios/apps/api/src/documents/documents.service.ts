@@ -411,6 +411,26 @@ export class DocumentsService {
       throw new NotFoundException('Document bundle not found');
     }
 
+    // 1. Idempotency: prevent retries from creating duplicate documents or queue jobs
+    const existingDoc = await this.prisma.document.findFirst({
+      where: { documentBundleId: bundleId, sourceFileKey: dto.key },
+    });
+    if (existingDoc) {
+      return {
+        documentId: existingDoc.id,
+        status: existingDoc.status,
+        pageCount: existingDoc.expectedPageCount,
+      };
+    }
+
+    // 2. Prevent arbitrary key confirmation: verify file exists in object storage
+    const fileExists = await this.storage.exists(dto.key);
+    if (!fileExists) {
+      throw new BadRequestException(
+        'Uploaded file was not found in storage. Ensure direct browser upload completed before confirmation.',
+      );
+    }
+
     const document = await this.prisma.$transaction(async (tx) => {
       const doc = await tx.document.create({
         data: {

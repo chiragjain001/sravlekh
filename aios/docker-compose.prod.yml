@@ -1,0 +1,165 @@
+# AIOS / SARVLEKH — Production Docker Compose (Lightsail 4GB Profile)
+#
+# Optimized for a single 4GB / 2 vCPU VPS (AWS Lightsail Mumbai) hosting:
+# - Next.js 15 Web Frontend
+# - NestJS Fastify API
+# - Dedicated Background BullMQ Worker
+# - Python FastAPI Document / OCR Service
+# - Redis 7 (Cache & BullMQ Broker)
+#
+# Note: PostgreSQL is hosted externally on managed Supabase (ap-south-1).
+# Total memory limit ceiling across all containers: ~3.7 GB (leaving OS/swap headroom).
+
+services:
+  # ── 1. Redis Cache & Job Broker ─────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: aios-prod-redis
+    command: [
+      "redis-server",
+      "--appendonly", "yes",
+      "--appendfsync", "everysec",
+      "--maxmemory", "256mb",
+      "--maxmemory-policy", "volatile-lru",
+      "--protected-mode", "yes",
+      "--bind", "127.0.0.1"
+    ]
+    network_mode: "host"
+    volumes:
+      - redis_data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+        reservations:
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: always
+
+  # ── 2. Fastify NestJS API ──────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: infra/docker/api.Dockerfile
+    container_name: aios-prod-api
+    command: ["node", "dist/main.js"]
+    network_mode: "host"
+    env_file:
+      - .env.production
+    environment:
+      - NODE_ENV=production
+      - PORT=4000
+      - RUN_WORKERS=false
+      - NODE_OPTIONS=--max-old-space-size=768
+      - DATABASE_POOL_LIMIT=15
+      - DATABASE_POOL_TIMEOUT=20
+      - TRUST_PROXY=loopback
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+        reservations:
+          memory: 384M
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:4000/api/v1/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: always
+
+  # ── 3. Dedicated Background Queue Worker ───────────────────────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: infra/docker/api.Dockerfile
+    container_name: aios-prod-worker
+    command: ["node", "dist/worker.js"]
+    network_mode: "host"
+    env_file:
+      - .env.production
+    environment:
+      - NODE_ENV=production
+      - NODE_OPTIONS=--max-old-space-size=512
+      - DATABASE_POOL_LIMIT=10
+      - DATABASE_POOL_TIMEOUT=20
+      - QUEUE_CONCURRENCY_OCR=1
+      - QUEUE_CONCURRENCY_PDF_SPLIT=1
+      - QUEUE_CONCURRENCY_AI_EVALUATION=2
+      - QUEUE_CONCURRENCY_SCORE_AGGREGATION=3
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+        reservations:
+          memory: 256M
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: always
+
+  # ── 4. Python FastAPI Microservice (PDF & Vision) ──────────────────────────
+  api-python:
+    build:
+      context: .
+      dockerfile: infra/docker/python.Dockerfile
+    container_name: aios-prod-python
+    network_mode: "host"
+    env_file:
+      - .env.production
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PORT=8000
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+        reservations:
+          memory: 384M
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: always
+
+  # ── 5. Next.js Web Frontend ────────────────────────────────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: infra/docker/web.Dockerfile
+    container_name: aios-prod-web
+    network_mode: "host"
+    env_file:
+      - .env.production
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - NEXT_TELEMETRY_DISABLED=1
+      - NODE_OPTIONS=--max-old-space-size=384
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 192M
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 25s
+    restart: always
+
+volumes:
+  redis_data:
+    driver: local
+

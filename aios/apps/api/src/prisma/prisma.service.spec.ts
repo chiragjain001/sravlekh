@@ -35,6 +35,20 @@ describe('poolLimitOptions', () => {
     expect(poolLimitOptions(`${url}?connection_limit=3`, '99')).toBeUndefined();
   });
 
+  it('appends pool_timeout when configured alongside limit', () => {
+    const opts = poolLimitOptions(url, '15', '20');
+    const params = new URL(opts!.datasources.db.url).searchParams;
+    expect(params.get('connection_limit')).toBe('15');
+    expect(params.get('pool_timeout')).toBe('20');
+  });
+
+  it('preserves pool_timeout already written into the URL', () => {
+    const opts = poolLimitOptions(`${url}?pool_timeout=10`, '15', '20');
+    const params = new URL(opts!.datasources.db.url).searchParams;
+    expect(params.get('connection_limit')).toBe('15');
+    expect(params.get('pool_timeout')).toBe('10');
+  });
+
   it('leaves a malformed URL to env validation rather than mangling it', () => {
     expect(poolLimitOptions('not-a-url', '20')).toBeUndefined();
   });

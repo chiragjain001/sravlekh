@@ -1,6 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
-import { BadRequestException, ValidationPipe } from '@nestjs/common';
+import { BadRequestException, Logger, ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import fastifyCookie from '@fastify/cookie';
@@ -10,6 +10,7 @@ import * as Sentry from '@sentry/node';
 import { AppModule } from './app.module';
 import { RUN_WORKERS } from './infrastructure/queue/queue-policy';
 import { beginShutdown } from './shared/lifecycle';
+import { resolveTrustProxy } from './config/proxy-trust';
 
 /**
  * How long to keep serving after SIGTERM before closing, so the load balancer
@@ -37,13 +38,24 @@ if (process.env['SENTRY_DSN']) {
 }
 
 async function bootstrap() {
+  const trustProxy = resolveTrustProxy(
+    process.env['TRUST_PROXY'],
+    process.env['NODE_ENV'],
+  );
+
   const adapter = new FastifyAdapter({
     bodyLimit: 35 * 1024 * 1024,
+    trustProxy,
   });
 
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
     adapter,
+  );
+
+  Logger.log(
+    `Fastify reverse proxy trust initialized: ${JSON.stringify(trustProxy)}`,
+    'Bootstrap',
   );
 
   // Security headers via @fastify/helmet
