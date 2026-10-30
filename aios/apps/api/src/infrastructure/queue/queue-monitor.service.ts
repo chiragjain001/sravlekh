@@ -4,6 +4,7 @@ import { Queue } from 'bullmq';
 import {
   alertQueueBacklog,
   alertDeadLetterPresent,
+  alertRedisMemoryPressure,
   QUEUE_BACKLOG_THRESHOLDS,
 } from '../../shared/logging/alerts';
 import { AI_EVALUATION_QUEUE } from '../../ai-evaluation/ai-evaluation.constants';
@@ -112,6 +113,42 @@ export class QueueMonitorService implements OnModuleInit, OnModuleDestroy {
         // whole process down, meaning the monitor could kill the worker it exists
         // to watch.
         this.logger.warn(`Could not sample queue "${name}": ${(err as Error).message}`);
+      }
+    }
+
+    await this.sampleRedisMemory();
+  }
+
+  /**
+   * Samples Redis memory utilization via INFO memory.
+   * Raises alertRedisMemoryPressure when used_memory >= 80% of maxmemory.
+   */
+  async sampleRedisMemory(): Promise<void> {
+    try {
+      const first = this.queues[0]?.queue as any;
+      if (!first || typeof first.client === 'undefined') return;
+
+      const client = await first.client;
+      if (!client || typeof client.info !== 'function') return;
+
+      const memoryInfo: string = await client.info('memory');
+      this.evaluateMemoryInfo(memoryInfo);
+    } catch (err) {
+      this.logger.debug(`Could not sample Redis memory: ${(err as Error).message}`);
+    }
+  }
+
+  evaluateMemoryInfo(info: string): void {
+    const usedMatch = info.match(/^used_memory:(\d+)/m);
+    const maxMatch = info.match(/^maxmemory:(\d+)/m);
+    if (!usedMatch || !usedMatch[1]) return;
+
+    const usedBytes = parseInt(usedMatch[1], 10);
+    const maxBytes = maxMatch && maxMatch[1] ? parseInt(maxMatch[1], 10) : 0;
+    if (maxBytes > 0) {
+      const ratio = usedBytes / maxBytes;
+      if (ratio >= 0.8) {
+        alertRedisMemoryPressure(usedBytes, maxBytes, ratio, this.logger);
       }
     }
   }

@@ -356,10 +356,9 @@ export class DocumentsService {
     const ext = dto.filename.split('.').pop() ?? 'pdf';
     const cleanExt = ext.replace(/[^a-zA-Z0-9]/g, '');
     const uploadId = randomUUID();
-    const key = this.storage.buildKey(
+    const key = this.storage.buildPendingKey(
       instituteId,
       'documents',
-      'pending',
       bundleId,
       `${uploadId}.${cleanExt}`,
     );
@@ -390,8 +389,8 @@ export class DocumentsService {
   ) {
     this.assertInstituteAccess(actor, instituteId);
 
-    // Verify key belongs to this institute and bundle
-    const expectedPrefix = this.storage.buildKey(instituteId, 'documents', 'pending', bundleId);
+    // Verify key belongs to this institute and bundle under pending prefix
+    const expectedPrefix = this.storage.buildPendingKey(instituteId, 'documents', bundleId);
     if (!dto.key.startsWith(expectedPrefix)) {
       throw new BadRequestException('Invalid storage key for this bundle and institute.');
     }
@@ -411,9 +410,15 @@ export class DocumentsService {
       throw new NotFoundException('Document bundle not found');
     }
 
+    // Permanent destination key in permanent tenant tree (immune to 48h pending lifecycle expiration)
+    const permanentKey = dto.key.replace(/^pending\//, '');
+
     // 1. Idempotency: prevent retries from creating duplicate documents or queue jobs
     const existingDoc = await this.prisma.document.findFirst({
-      where: { documentBundleId: bundleId, sourceFileKey: dto.key },
+      where: {
+        documentBundleId: bundleId,
+        sourceFileKey: { in: [permanentKey, dto.key] },
+      },
     });
     if (existingDoc) {
       return {
@@ -431,13 +436,20 @@ export class DocumentsService {
       );
     }
 
+    // 3. Move/copy file to permanent storage key so 48-hour S3 pending lifecycle rule doesn't purge it
+    await this.storage.copy(dto.key, permanentKey).catch((err) => {
+      this.logger.warn(`Could not copy pending booklet to permanent key: ${err.message}`);
+    });
+    // Best-effort delete of temporary pending upload
+    await this.storage.delete(dto.key).catch(() => {});
+
     const document = await this.prisma.$transaction(async (tx) => {
       const doc = await tx.document.create({
         data: {
           documentBundleId: bundleId,
           layoutType: DocumentLayoutType.FREE_FORM,
           status: 'PAGE_PROCESSING',
-          sourceFileKey: dto.key,
+          sourceFileKey: permanentKey,
         },
       });
 

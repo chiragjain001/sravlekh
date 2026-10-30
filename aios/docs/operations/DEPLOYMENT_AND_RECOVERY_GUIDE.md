@@ -80,6 +80,33 @@ sudo nginx -t
 sudo systemctl restart nginx
 ```
 
+### 3.3 Configure AWS S3 Lifecycle Rule for Ephemeral Uploads
+> [!IMPORTANT]
+> AWS S3 Lifecycle configuration filters strictly evaluate prefix strings; **they do not support wildcards (`*`)**. Direct booklet uploads are staged under `pending/institutes/{instituteId}/...`. Configure an expiration rule targeting prefix `pending/` so abandoned uploads across all institutes are automatically purged after 48 hours without wildcards.
+
+Save the following lifecycle policy to `s3-lifecycle.json`:
+```json
+{
+  "Rules": [
+    {
+      "ID": "PurgeAbandonedPendingUploads48h",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "pending/"
+      },
+      "Expiration": {
+        "Days": 2
+      }
+    }
+  ]
+}
+```
+Apply to the S3 bucket:
+```bash
+aws s3api put-bucket-lifecycle-configuration --bucket "$S3_BUCKET" --lifecycle-configuration file://s3-lifecycle.json
+```
+*(When a booklet upload is confirmed, AIOS moves the file to the permanent key `institutes/{instituteId}/...`, protecting it from 48-hour expiration).*
+
 ---
 
 ## 4. Launching the Production Stack
@@ -113,7 +140,7 @@ curl http://127.0.0.1:8000/health
 | :--- | :--- | :--- | :--- |
 | **Supabase PostgreSQL** | Automated physical snapshots | Daily snapshot, 7-day retention | **NO** (Standard Pro tier). Note: 7-day PITR is an optional paid add-on ($100/mo) and is not active in the baseline pilot tier. |
 | **Logical DB Dumps** | `node infra/backup/backup.js` | Automated or manual `-Fc` custom format with sha256 checksum & `pg_restore --list` readback verification | Snapshot point only |
-| **Object Storage (S3/R2)** | S3 Object Versioning & Lifecycle rules | Versioning enabled for permanent documents; 48-hour expiration rule on `*/documents/pending/*` for abandoned uploads | S3 Version-level recovery |
+| **Object Storage (S3/R2)** | S3 Object Versioning & Lifecycle rules | Versioning enabled for permanent documents (`institutes/`); 48-hour expiration rule on prefix `pending/` (wildcards are not supported by S3 lifecycle filters) for abandoned uploads | S3 Version-level recovery |
 | **Host VM (Lightsail)** | Lightsail Automatic Snapshots | Daily at 03:00 UTC, 7-day retention (~$1.00/mo) | Complete VM image restore |
 
 ### 5.2 Logical Database Backup Execution

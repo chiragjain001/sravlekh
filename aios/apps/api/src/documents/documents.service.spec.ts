@@ -48,10 +48,13 @@ describe('DocumentsService', () => {
   };
   let storage: {
     buildKey: jest.Mock;
+    buildPendingKey: jest.Mock;
     upload: jest.Mock;
     getSignedDownloadUrl: jest.Mock;
     getSignedUploadUrl: jest.Mock;
     exists?: jest.Mock;
+    copy?: jest.Mock;
+    delete?: jest.Mock;
   };
   let cache: { get: jest.Mock; set: jest.Mock };
   let featureFlags: { isEnabled: jest.Mock };
@@ -103,10 +106,13 @@ describe('DocumentsService', () => {
     };
     storage = {
       buildKey: jest.fn((...segments: string[]) => segments.join('/')),
+      buildPendingKey: jest.fn((...segments: string[]) => ['pending', ...segments].join('/')),
       upload: jest.fn().mockResolvedValue(undefined),
       getSignedDownloadUrl: jest.fn().mockResolvedValue('https://signed.example/file'),
       getSignedUploadUrl: jest.fn().mockResolvedValue('https://s3.example.com/presigned-upload'),
       exists: jest.fn().mockResolvedValue(true),
+      copy: jest.fn().mockResolvedValue(undefined),
+      delete: jest.fn().mockResolvedValue(undefined),
     };
     cache = { get: jest.fn().mockResolvedValue(undefined), set: jest.fn().mockResolvedValue(undefined) };
     featureFlags = { isEnabled: jest.fn().mockResolvedValue(true) };
@@ -728,7 +734,7 @@ describe('DocumentsService', () => {
       );
 
       expect(result.uploadUrl).toBe('https://s3.example.com/presigned-upload');
-      expect(result.key).toContain('inst-1/documents/pending/bundle-1/');
+      expect(result.key).toContain('pending/inst-1/documents/bundle-1/');
       expect(result.key.endsWith('.pdf')).toBe(true);
       expect(result.expiresAt).toBeGreaterThan(Date.now());
       expect(storage.getSignedUploadUrl).toHaveBeenCalledWith(
@@ -755,7 +761,7 @@ describe('DocumentsService', () => {
     });
 
     it('confirms a direct upload, creates document record and enqueues pdf-split', async () => {
-      const pendingKey = 'inst-1/documents/pending/bundle-1/uuid.pdf';
+      const pendingKey = 'pending/inst-1/documents/bundle-1/uuid.pdf';
       prisma.documentBundle.findUnique.mockResolvedValueOnce({
         id: 'bundle-1',
         assessmentDelivery: {
@@ -785,7 +791,7 @@ describe('DocumentsService', () => {
         service.confirmUpload(
           'inst-1',
           'bundle-1',
-          { key: 'inst-other/documents/pending/bundle-other/uuid.pdf', mimeType: 'application/pdf' },
+          { key: 'pending/inst-other/documents/bundle-other/uuid.pdf', mimeType: 'application/pdf' },
           teacher,
         ),
       ).rejects.toThrow(BadRequestException);

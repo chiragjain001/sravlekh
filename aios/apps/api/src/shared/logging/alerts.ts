@@ -35,7 +35,9 @@ export type AlertName =
   /** A queue has failed jobs sitting in its dead-letter set. */
   | 'queue.dead_letter_present'
   /** A dependency the API cannot serve without is unreachable. */
-  | 'dependency.unavailable';
+  | 'dependency.unavailable'
+  /** Redis memory is approaching capacity (>80% of maxmemory under noeviction policy). */
+  | 'redis.memory_pressure';
 
 export type AlertSeverity = 'warning' | 'error' | 'fatal';
 
@@ -167,6 +169,31 @@ export function alertDependencyUnavailable(
     severity,
     `Dependency "${dependency}" is unavailable`,
     { dependency, detail },
+    logger,
+  );
+}
+
+/**
+ * Redis memory is approaching its configured maxmemory limit.
+ * Under 'noeviction', further writes (including BullMQ enqueue) will be rejected.
+ */
+export function alertRedisMemoryPressure(
+  usedBytes: number,
+  maxBytes: number,
+  ratio: number,
+  logger?: Logger,
+): void {
+  raiseAlert(
+    'redis.memory_pressure',
+    'warning',
+    `Redis memory pressure high: ${(ratio * 100).toFixed(1)}% of maxmemory consumed`,
+    {
+      usedBytes,
+      maxBytes,
+      usedMb: Math.round(usedBytes / 1024 / 1024),
+      maxMb: Math.round(maxBytes / 1024 / 1024),
+      ratio,
+    },
     logger,
   );
 }

@@ -170,4 +170,47 @@ describe('QueueMonitorService', () => {
     // getActiveResourcesInfo excludes unref'd timers.
     expect(timers.length).toBeLessThanOrEqual(1);
   });
+
+  describe('Redis memory pressure monitoring', () => {
+    it('raises a redis.memory_pressure alert when used memory is >= 80% of maxmemory', () => {
+      const highMemoryInfo = [
+        '# Memory',
+        'used_memory:110000000', // ~104.9 MB (82% of 128 MB)
+        'used_memory_human:104.90M',
+        'maxmemory:134217728', // 128 MB
+        'maxmemory_human:128.00M',
+      ].join('\r\n');
+
+      service.evaluateMemoryInfo(highMemoryInfo);
+
+      expect(alertsRaised()).toContain('redis.memory_pressure');
+      const call = captureMessage.mock.calls.find(
+        (c) => (c[1] as { tags: { alert: string } }).tags.alert === 'redis.memory_pressure',
+      )!;
+      expect((call[1] as { level: string }).level).toBe('warning');
+      expect((call[1] as { extra: Record<string, unknown> }).extra).toMatchObject({
+        usedMb: 105,
+        maxMb: 128,
+      });
+    });
+
+    it('raises no alert when memory utilization is healthy (< 80%)', () => {
+      const normalMemoryInfo = [
+        '# Memory',
+        'used_memory:41943040', // 40 MB (~31% of 128 MB)
+        'used_memory_human:40.00M',
+        'maxmemory:134217728', // 128 MB
+      ].join('\r\n');
+
+      service.evaluateMemoryInfo(normalMemoryInfo);
+
+      expect(alertsRaised()).not.toContain('redis.memory_pressure');
+    });
+
+    it('gracefully handles missing maxmemory or invalid string without throwing', () => {
+      expect(() => service.evaluateMemoryInfo('')).not.toThrow();
+      expect(() => service.evaluateMemoryInfo('used_memory:123\r\nmaxmemory:0')).not.toThrow();
+      expect(alertsRaised()).not.toContain('redis.memory_pressure');
+    });
+  });
 });

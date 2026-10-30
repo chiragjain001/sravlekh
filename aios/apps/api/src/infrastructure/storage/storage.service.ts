@@ -9,6 +9,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  CopyObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
@@ -108,6 +109,38 @@ export class StorageService {
   /** Builds a tenant-scoped key. Always route storage keys through this — never hand-build one. */
   buildKey(instituteId: string, ...segments: string[]): string {
     return ['institutes', instituteId, ...segments].join('/');
+  }
+
+  /** Builds a tenant-scoped pending key. Prefixed with 'pending/' so S3 Lifecycle rules purge abandoned uploads without wildcards. */
+  buildPendingKey(instituteId: string, ...segments: string[]): string {
+    return ['pending', 'institutes', instituteId, ...segments].join('/');
+  }
+
+  /**
+   * Copies an object within storage (S3 server-side CopyObject, or local fs copy).
+   * Used when finalizing a direct booklet upload from temporary 'pending/' into permanent storage.
+   */
+  async copy(sourceKey: string, destinationKey: string): Promise<void> {
+    if (this.localRoot) {
+      const src = this.localPathFor(sourceKey);
+      const dest = this.localPathFor(destinationKey);
+      await fs.mkdir(dirname(dest), { recursive: true });
+      await fs.copyFile(src, dest);
+      try {
+        await fs.copyFile(`${src}.meta`, `${dest}.meta`);
+      } catch {
+        // meta file optional
+      }
+      return;
+    }
+    this.assertConfigured();
+    await this.client.send(
+      new CopyObjectCommand({
+        Bucket: this.bucket,
+        CopySource: `${this.bucket}/${sourceKey}`,
+        Key: destinationKey,
+      }),
+    );
   }
 
   async upload(key: string, body: Buffer, contentType: string): Promise<void> {

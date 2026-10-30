@@ -36,10 +36,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.25"
+          cpus: "0.20"
           memory: 64M
         reservations:
           memory: 32M
+    cpu_shares: 1024
 
   # ── 2. Redis Cache & Job Broker ─────────────────────────────────────────────
   redis:
@@ -61,10 +62,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.25"
+          cpus: "0.20"
           memory: 192M
         reservations:
           memory: 64M
+    cpu_shares: 1024
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -99,10 +101,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.75"
+          cpus: "0.60"
           memory: 512M
         reservations:
           memory: 256M
+    cpu_shares: 1024
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:4000/api/v1/health || exit 1"]
       interval: 15s
@@ -142,10 +145,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.75"
+          cpus: "0.40"
           memory: 512M
         reservations:
           memory: 256M
+    cpu_shares: 512
     depends_on:
       redis:
         condition: service_healthy
@@ -170,10 +174,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "1.00"
+          cpus: "0.50"
           memory: 768M
         reservations:
           memory: 384M
+    cpu_shares: 512
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
       interval: 20s
@@ -206,10 +211,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.50"
+          cpus: "0.40"
           memory: 384M
         reservations:
           memory: 192M
+    cpu_shares: 1024
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/ || exit 1"]
       interval: 15s

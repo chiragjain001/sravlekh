@@ -119,4 +119,21 @@ describe('StorageService — development disk fallback', () => {
     expect(s3.isLocalFallbackActive()).toBe(false);
     expect(s3.isConfigured()).toBe(true);
   });
+
+  it('builds pending keys rooted with pending/ and copies files between storage paths', async () => {
+    const s = devService();
+    const pendingKey = s.buildPendingKey('inst-1', 'documents', 'bundle-1', 'upload.pdf');
+    expect(pendingKey).toBe('pending/institutes/inst-1/documents/bundle-1/upload.pdf');
+
+    await s.upload(pendingKey, Buffer.from('pending file contents'), 'application/pdf');
+    expect(await s.exists(pendingKey)).toBe(true);
+
+    const permanentKey = s.buildKey('inst-1', 'documents', 'doc-1', 'source.pdf');
+    await s.copy(pendingKey, permanentKey);
+
+    expect(await s.exists(permanentKey)).toBe(true);
+    await s.delete(pendingKey);
+    expect(await s.exists(pendingKey)).toBe(false);
+    expect(await s.exists(permanentKey)).toBe(true);
+  });
 });

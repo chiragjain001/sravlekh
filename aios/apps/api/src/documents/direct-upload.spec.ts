@@ -44,8 +44,11 @@ describe('Direct Document Upload & Confirmation Safeguards', () => {
 
     storageMock = {
       buildKey: jest.fn((inst, ...segs) => ['institutes', inst, ...segs].join('/')),
+      buildPendingKey: jest.fn((inst, ...segs) => ['pending', 'institutes', inst, ...segs].join('/')),
       getSignedUploadUrl: jest.fn().mockResolvedValue('https://s3.example.com/presigned-put'),
       exists: jest.fn().mockResolvedValue(true),
+      copy: jest.fn().mockResolvedValue(undefined),
+      delete: jest.fn().mockResolvedValue(undefined),
     };
 
     cacheMock = {
@@ -82,8 +85,33 @@ describe('Direct Document Upload & Confirmation Safeguards', () => {
     );
   });
 
+  describe('getUploadUrl', () => {
+    it('returns a presigned upload URL with pending prefix', async () => {
+      prismaMock.documentBundle.findUnique.mockResolvedValueOnce({
+        id: 'bundle-1',
+        assessmentDelivery: { assessment: { instituteId: 'inst-1' } },
+      });
+
+      const result = await service.getUploadUrl(
+        'inst-1',
+        'bundle-1',
+        { filename: 'math-exam.pdf', mimeType: 'application/pdf' },
+        actor,
+      );
+
+      expect(result.uploadUrl).toBe('https://s3.example.com/presigned-put');
+      expect(result.key).toMatch(/^pending\/institutes\/inst-1\/documents\/bundle-1\/[a-f0-9-]+\.pdf$/);
+      expect(storageMock.buildPendingKey).toHaveBeenCalledWith(
+        'inst-1',
+        'documents',
+        'bundle-1',
+        expect.stringMatching(/\.pdf$/),
+      );
+    });
+  });
+
   describe('confirmUpload', () => {
-    const validKey = 'institutes/inst-1/documents/pending/bundle-1/upload-123.pdf';
+    const validKey = 'pending/institutes/inst-1/documents/bundle-1/upload-123.pdf';
 
     const validDto = { key: validKey, mimeType: 'application/pdf' };
 
@@ -92,7 +120,7 @@ describe('Direct Document Upload & Confirmation Safeguards', () => {
         service.confirmUpload(
           'inst-1',
           'bundle-1',
-          { key: 'institutes/inst-2/documents/pending/bundle-2/evil.pdf', mimeType: 'application/pdf' },
+          { key: 'pending/institutes/inst-2/documents/bundle-2/evil.pdf', mimeType: 'application/pdf' },
           actor,
         ),
       ).rejects.toThrow(BadRequestException);
@@ -159,7 +187,16 @@ describe('Direct Document Upload & Confirmation Safeguards', () => {
 
       expect(result.documentId).toBe('new-doc-1');
       expect(result.status).toBe('PAGE_PROCESSING');
-      expect(prismaMock.document.create).toHaveBeenCalled();
+      expect(storageMock.copy).toHaveBeenCalledWith(
+        validKey,
+        'institutes/inst-1/documents/bundle-1/upload-123.pdf',
+      );
+      expect(storageMock.delete).toHaveBeenCalledWith(validKey);
+      expect(prismaMock.document.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          sourceFileKey: 'institutes/inst-1/documents/bundle-1/upload-123.pdf',
+        }),
+      });
       expect(queueMock.add).toHaveBeenCalledWith(
         'split',
         expect.objectContaining({ documentId: 'new-doc-1', instituteId: 'inst-1' }),
