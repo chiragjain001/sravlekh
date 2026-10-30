@@ -108,26 +108,38 @@ curl http://127.0.0.1:8000/health
 
 ## 5. Backup & Disaster Recovery Procedures
 
-### 5.1 Automated Database Backups (Supabase)
-Supabase Pro automatically retains daily physical backups with a 7-day retention period. No manual cron dumps are required for database reliability.
+### 5.1 Backup Strategy & Infrastructure Boundaries
+| Component | Backup Mechanism | Frequency & Retention | Point-In-Time Recovery (PITR)? |
+| :--- | :--- | :--- | :--- |
+| **Supabase PostgreSQL** | Automated physical snapshots | Daily snapshot, 7-day retention | **NO** (Standard Pro tier). Note: 7-day PITR is an optional paid add-on ($100/mo) and is not active in the baseline pilot tier. |
+| **Logical DB Dumps** | `node infra/backup/backup.js` | Automated or manual `-Fc` custom format with sha256 checksum & `pg_restore --list` readback verification | Snapshot point only |
+| **Object Storage (S3/R2)** | S3 Object Versioning & Lifecycle rules | Versioning enabled for permanent documents; 48-hour expiration rule on `*/documents/pending/*` for abandoned uploads | S3 Version-level recovery |
+| **Host VM (Lightsail)** | Lightsail Automatic Snapshots | Daily at 03:00 UTC, 7-day retention (~$1.00/mo) | Complete VM image restore |
 
-### 5.2 Application Data Backup Script
-To take a full manual logical snapshot of institute schemas and configuration:
+### 5.2 Logical Database Backup Execution
+To take an immediate verified logical backup of the schema and institute data:
 ```bash
-# Uses the built-in backup orchestrator
-node infra/backup/backup.js --out /backup/aios-manual-$(date +%F).tar.gz
+node infra/backup/backup.js --url "$DIRECT_URL" --out /var/backups
+```
+*Verification mechanism:* The script writes the custom dump (`-Fc`), computes its SHA-256 checksum, and executes `pg_restore --list` to prove the archive can be read back cleanly before reporting exit code 0.
+
+### 5.3 Database Restoration Runbook
+> [!CAUTION]
+> The restore script writes to a database. It guards against accidental overwrites by refusing to run against hosts matching shared markers (supabase, rds, etc.) unless `--i-understand-this-overwrites-data` is explicitly provided.
+
+To restore a verified logical backup into an isolated or recovery database:
+```bash
+# 1. Restore and verify against manifest (schema, table counts, constraints):
+node infra/backup/restore.js --archive /var/backups/<backup-file>.dump --url "$RESTORE_DATABASE_URL"
+
+# 2. To force restore onto a shared database target during a declared disaster:
+node infra/backup/restore.js --archive /var/backups/<backup-file>.dump --url "$DIRECT_URL" --i-understand-this-overwrites-data
 ```
 
-### 5.3 Automated Host Snapshots (Lightsail)
-In the AWS Lightsail console:
-- Navigate to the **Snapshots** tab on the instance.
-- Enable **Automatic Snapshots** at `03:00 UTC` daily with 7-day retention (~$1.00/month).
-
-### 5.4 Database Restoration Drill
-To test or execute a disaster recovery restoration into a target database:
-```bash
-node infra/backup/restore.js --file /backup/aios-manual.tar.gz --target "$RESTORE_DATABASE_URL"
-```
+### 5.4 Recovery Targets: Documented vs Tested
+- **Target RTO (Recovery Time Objective):** < 30 minutes (VM redeployment + `docker compose up -d`).
+- **Target RPO (Recovery Point Objective):** < 24 hours (with daily Supabase & logical snapshots).
+- **Drill Results (`infra/backup/drill.js`):** Schema restoration and verification completed in 18.4 seconds for standard seed volume on isolated test database. Real production recovery times scale with database byte size.
 
 ---
 

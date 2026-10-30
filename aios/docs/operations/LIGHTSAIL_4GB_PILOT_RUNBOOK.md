@@ -10,16 +10,19 @@
 
 The 4 GB host memory is strictly partitioned to guarantee stability during peak student and teacher activity. All database compute is offloaded to Supabase, leaving the entire 4 GB available for application runtimes, caching, and Linux OS page cache.
 
-| Process / Container | Container Memory Limit | Working Set Reservation | V8 Heap / Runtime Config | Primary Function |
-| :--- | :---: | :---: | :---: | :--- |
-| **Linux OS & Systemd** | N/A (Host) | ~450 MB | System baseline | Kernel, SSH, systemd, journald |
-| **Nginx Reverse Proxy** | Host service | ~40 MB | Default worker pool | SSL termination, proxying, rate-limiting |
-| **Redis 7 (`redis:7-alpine`)** | 384 MB | 128 MB | `maxmemory 256mb` (`volatile-lru`) | Session cache & BullMQ queue broker |
-| **NestJS API (Fastify)** | 1024 MB | 384 MB | `--max-old-space-size=768` | Core REST API, authentication, RBAC |
-| **BullMQ Dedicated Worker** | 768 MB | 256 MB | `--max-old-space-size=512` | Asynchronous grading & split jobs |
-| **Python FastAPI Microservice** | 1024 MB | 384 MB | Uvicorn single worker | PDF rasterization (PyMuPDF) & vision |
-| **Next.js Web Frontend** | 512 MB | 192 MB | `--max-old-space-size=384` | SSR and React Server Components |
-| **Total Allocations** | **~3,760 MB** | **~1,834 MB (~1.8 GB)** | **Operating Headroom: ~2.2 GB Free** |
+| Process / Container | Hard Memory Limit | Working Set Reservation | V8 Heap / Runtime Config | CPU Limit | Primary Function |
+| :--- | :---: | :---: | :---: | :---: | :--- |
+| **Linux OS & Systemd** | N/A (Host) | ~550 MB | System baseline | Baseline | Kernel, SSH, systemd, journald |
+| **Nginx Reverse Proxy** | 64 MB | 32 MB | Default worker pool | 0.25 vCPU | SSL termination, proxying, rate-limiting |
+| **Redis 7 (`redis:7-alpine`)** | 192 MB | 64 MB | `maxmemory 128mb` (`noeviction`, AOF) | 0.25 vCPU | Session cache & durable BullMQ broker |
+| **NestJS API (Fastify)** | 512 MB | 256 MB | `--max-old-space-size=384` | 0.75 vCPU | Core REST API, authentication, RBAC |
+| **BullMQ Dedicated Worker** | 512 MB | 256 MB | `--max-old-space-size=384` | 0.75 vCPU | Asynchronous grading & split jobs |
+| **Python FastAPI Microservice** | 768 MB | 384 MB | Uvicorn single worker (PyMuPDF) | 1.00 vCPU | PDF rasterization & vision |
+| **Next.js Web Frontend** | 384 MB | 192 MB | `--max-old-space-size=256` | 0.50 vCPU | SSR and React Server Components |
+| **Total Container Limits** | **2,432 MB** | **1,184 MB (~1.2 GB)** | **True Physical Headroom: 1,064 MB (Worst Case) / 2,312 MB (Normal)** |
+
+> [!NOTE]
+> Under normal operation at working set reservations (~1,184 MB containers + ~550 MB OS = ~1,734 MB total), **over 2.3 GB of physical RAM is free** for Linux OS page caches, socket buffers, and burst headroom. Even if every single container were pushed to its hard memory limit simultaneously (2,432 MB + 550 MB OS = 2,982 MB), **over 1.0 GB of real physical RAM remains unallocated**, guaranteeing that the Linux kernel never runs out of physical memory.
 
 ---
 

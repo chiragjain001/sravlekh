@@ -30,5 +30,10 @@ describe('resolveTrustProxy', () => {
     const result = resolveTrustProxy('127.0.0.1, 172.26.0.0/16, 10.0.0.0/8', 'production');
     expect(result).toEqual(['127.0.0.1', '172.26.0.0/16', '10.0.0.0/8']);
   });
+
+  it('correctly parses Docker bridge network CIDRs alongside loopback for multi-container deployments', () => {
+    const result = resolveTrustProxy('172.28.0.0/16, 127.0.0.1', 'production');
+    expect(result).toEqual(['172.28.0.0/16', '127.0.0.1']);
+  });
 });
 
